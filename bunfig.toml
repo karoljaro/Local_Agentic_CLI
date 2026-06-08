@@ -1,0 +1,19 @@
+[install]
+# supply-chain safety
+minimumReleaseAge = 604800 # 7 days in seconds
+minimumReleaseAgeExcludes = [
+  "@types/bun",
+  "typescript"
+]
+
+# Detect phantom dependencies
+linker = "isolated"
+
+# faster reinstalls
+globalStore = true
+
+# eslint/prettier easier to find plugins
+publicHoistPattern = [
+  "*eslint*",
+  "*prettier*"
+]
