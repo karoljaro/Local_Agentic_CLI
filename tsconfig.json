@@ -9,7 +9,7 @@
 
     "jsx": "react-jsx",
     "allowJs": true,
-    "types": ["bun"],
+    "types": ["bun", "react"],
 
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
