@@ -11,6 +11,10 @@
     "allowJs": true,
     "types": ["bun", "react"],
 
+    "paths": {
+      "@/*": ["./src/*"]
+    },
+
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
