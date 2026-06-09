@@ -1,5 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Box, Text, useInput, useStdin } from 'ink';
+import { Marked } from 'marked';
+import type { MarkedExtension } from 'marked';
+import * as markedTerminalModule from 'marked-terminal';
 
 import { createRuntime } from '@/composition/createRuntime';
 import type { Runtime } from '@/composition/createRuntime';
@@ -9,6 +12,18 @@ type TranscriptEntry = {
 	role: 'user' | 'assistant' | 'error';
 	content: string;
 };
+
+const markdownParser = new Marked(
+	(markedTerminalModule as unknown as {
+		markedTerminal: (options: {
+			reflowText: boolean;
+			showSectionPrefix: boolean;
+		}) => MarkedExtension;
+	}).markedTerminal({
+		reflowText: false,
+		showSectionPrefix: false,
+	}),
+);
 
 export function App() {
 	const runtime = useMemo(() => createRuntime(), []);
@@ -171,9 +186,31 @@ const TranscriptLine = ({ entry }: TranscriptLineProps) => {
 	}
 
 	return (
-		<Box>
-			<Text color="cyan">Assistant: </Text>
-			<Text>{entry.content}</Text>
+		<Box flexDirection="column">
+			<Text color="cyan">Assistant:</Text>
+			<MarkdownText content={entry.content} />
 		</Box>
 	);
+};
+
+type MarkdownTextProps = {
+	content: string;
+};
+
+const MarkdownText = ({ content }: MarkdownTextProps) => {
+	return <Text>{renderMarkdown(content)}</Text>;
+};
+
+const renderMarkdown = (content: string): string => {
+	try {
+		const rendered = markdownParser.parse(content);
+
+		if (typeof rendered !== 'string') {
+			return content;
+		}
+
+		return rendered;
+	} catch {
+		return content;
+	}
 };
