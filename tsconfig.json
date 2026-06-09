@@ -12,7 +12,8 @@
     "types": ["bun", "react"],
 
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@domain/*": ["./src/domain/*"],
     },
 
     "allowImportingTsExtensions": true,
