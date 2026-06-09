@@ -19,3 +19,12 @@ export type AgentErrorState = {
 	code?: string;
 	recoverable: boolean;
 };
+
+export const createInitialAgentState = (sessionId: SessionId): AgentState => {
+	return {
+		sessionId,
+		messages: [],
+		toolResults: [],
+		errors: [],
+	};
+};
