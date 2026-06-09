@@ -13,7 +13,10 @@ export type Runtime = {
 
 export const createRuntime = (): Runtime => {
 	const sessionStore = new JsonlSessionStore();
-	const model = new OllamaModelAdapter();
+	const model = new OllamaModelAdapter(
+		readOptionalEnv('OLLAMA_BASE_URL') ?? 'http://localhost:11434',
+		readOptionalEnv('OLLAMA_MODEL') ?? 'gemma4:12b-it-qat',
+	);
 	const idGenerator = new BunUuidV7IdGenerator();
 	const clock = new TemporalClock();
 	const contextBuilder = new ContextBuilder({
@@ -30,4 +33,10 @@ export const createRuntime = (): Runtime => {
 			idGenerator,
 		}),
 	};
+};
+
+const readOptionalEnv = (name: string): string | undefined => {
+	const value = Bun.env[name]?.trim();
+
+	return value === undefined || value.length === 0 ? undefined : value;
 };
