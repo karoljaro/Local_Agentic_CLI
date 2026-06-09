@@ -1,4 +1,8 @@
-import type { AssistantMessageCompleted, PromptSubmitted } from '@/domain/AgentEvent';
+import type {
+	AgentErrorOccurred,
+	AssistantMessageCompleted,
+	PromptSubmitted,
+} from '@/domain/AgentEvent';
 import type { SessionId } from '@/domain/Ids';
 import { reduceAgentState } from '../services/SessionReducer';
 import { ContextBuilder } from '../services/ContextBuilder';
@@ -30,6 +34,10 @@ export class RunAgentTurn {
 	async *run(input: RunAgentTurnInput): AsyncIterable<AgentTurnChunk> {
 		const { sessionId, prompt } = input;
 
+		if (prompt.trim().length === 0) {
+			throw new Error('Prompt cannot be empty.');
+		}
+
 		const promptEvent: PromptSubmitted = {
 			id: this.dependencies.idGenerator.nextEventId(),
 			messageId: this.dependencies.idGenerator.nextMessageId(),
@@ -48,10 +56,40 @@ export class RunAgentTurn {
 		const { messages } = this.dependencies.contextBuilder.build(reducedState);
 		let assistantContent = '';
 
-		for await (const chunk of this.dependencies.model.streamChat({ messages })) {
-			assistantContent += chunk.contentDelta;
+		try {
+			for await (const chunk of this.dependencies.model.streamChat({ messages })) {
+				assistantContent += chunk.contentDelta;
 
-			yield { contentDelta: chunk.contentDelta };
+				yield { contentDelta: chunk.contentDelta };
+			}
+		} catch (caughtError) {
+			const error =
+				caughtError instanceof Error
+					? caughtError
+					: new Error(String(caughtError));
+
+			const errorEvent: AgentErrorOccurred = {
+				id: this.dependencies.idGenerator.nextEventId(),
+				sessionId,
+				type: 'agent.error',
+				timestamp: this.dependencies.clock.now(),
+				error: {
+					message: error.message,
+					code: 'MODEL_STREAM_FAILED',
+					recoverable: true,
+					details: {
+						name: error.name,
+					},
+				},
+			};
+
+			try {
+				await this.dependencies.sessionStore.appendSessionEvent(errorEvent);
+			} catch {
+				// Preserve the original model error; storage failure is secondary here.
+			}
+
+			throw error;
 		}
 
 		const completedEvent: AssistantMessageCompleted = {

@@ -42,6 +42,12 @@ class FakeModel implements ModelPort {
 	}
 }
 
+class FailingModel implements ModelPort {
+	async *streamChat(): AsyncIterable<ModelStreamChunk> {
+		throw new Error('model failed');
+	}
+}
+
 class FixedClock implements ClockPort {
 	now(): ISODateTime {
 		return asISODateTime('2026-06-09T12:00:00.000Z');
@@ -125,4 +131,77 @@ describe('RunAgentTurn', () => {
 			},
 		]);
 	});
+
+	test('rejects empty prompts before storing events', async () => {
+		const sessionStore = new InMemorySessionStore();
+		const useCase = new RunAgentTurn({
+			sessionStore,
+			model: new FakeModel(),
+			contextBuilder: new ContextBuilder({
+				systemPrompt: 'You are a local coding agent.',
+			}),
+			clock: new FixedClock(),
+			idGenerator: new SequenceIdGenerator(),
+		});
+
+		await expect(
+			collectTurn(useCase.run({ sessionId: asSessionId('session-1'), prompt: ' ' })),
+		).rejects.toThrow('Prompt cannot be empty.');
+		expect(sessionStore.events).toEqual([]);
+	});
+
+	test('stores agent error when model streaming fails', async () => {
+		const sessionStore = new InMemorySessionStore();
+		const sessionId = asSessionId('session-1');
+		const useCase = new RunAgentTurn({
+			sessionStore,
+			model: new FailingModel(),
+			contextBuilder: new ContextBuilder({
+				systemPrompt: 'You are a local coding agent.',
+			}),
+			clock: new FixedClock(),
+			idGenerator: new SequenceIdGenerator(),
+		});
+
+		await expect(
+			collectTurn(useCase.run({ sessionId, prompt: 'Say hello' })),
+		).rejects.toThrow('model failed');
+
+		expect(sessionStore.events).toEqual([
+			{
+				id: asEventId('event-1'),
+				messageId: asMessageId('message-2'),
+				sessionId,
+				prompt: 'Say hello',
+				type: 'prompt.submitted',
+				timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
+			},
+			{
+				id: asEventId('event-3'),
+				sessionId,
+				type: 'agent.error',
+				timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
+				error: {
+					message: 'model failed',
+					code: 'MODEL_STREAM_FAILED',
+					recoverable: true,
+					details: {
+						name: 'Error',
+					},
+				},
+			},
+		]);
+	});
 });
+
+const collectTurn = async (
+	stream: AsyncIterable<ModelStreamChunk>,
+): Promise<ModelStreamChunk[]> => {
+	const chunks: ModelStreamChunk[] = [];
+
+	for await (const chunk of stream) {
+		chunks.push(chunk);
+	}
+
+	return chunks;
+};
