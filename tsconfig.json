@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "lib": ["ESNext", "DOM"],
+    "lib": ["ESNext", "ESNext.Temporal", "DOM"],
     "target": "ESNext",
 
     "module": "Preserve",
