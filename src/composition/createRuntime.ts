@@ -26,8 +26,8 @@ export const createRuntime = (): Runtime => {
 			sessionStore,
 			model,
 			contextBuilder,
-            clock,
-            idGenerator,
+			clock,
+			idGenerator,
 		}),
 	};
 };
