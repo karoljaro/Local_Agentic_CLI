@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,12 +16,14 @@ import { JsonlSessionStore } from "./JsonlSessionStore";
 
 const createTempStore = async (): Promise<{
 	store: JsonlSessionStore;
+	directory: string;
 	cleanup: () => Promise<void>;
 }> => {
 	const directory = await mkdtemp(join(tmpdir(), "jsonl-session-store-"));
 
 	return {
 		store: new JsonlSessionStore(directory),
+		directory,
 		cleanup: () => rm(directory, { recursive: true, force: true }),
 	};
 };
@@ -68,6 +70,39 @@ describe("JsonlSessionStore", () => {
 			const events = await store.readSessionEvents(sessionId);
 
 			expect(events).toEqual([firstEvent, secondEvent]);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("reports the line number for malformed JSONL", async () => {
+		const { store, directory, cleanup } = await createTempStore();
+		const sessionId = asSessionId("session-1");
+		const sessionDirectory = join(directory, sessionId);
+
+		try {
+			await mkdir(sessionDirectory, { recursive: true });
+			await writeFile(
+				join(sessionDirectory, "events.jsonl"),
+				'{"type":"prompt.submitted"}\nnot-json\n',
+				"utf8",
+			);
+
+			await expect(store.readSessionEvents(sessionId)).rejects.toThrow(
+				"line 2",
+			);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("rejects session ids that are unsafe path segments", async () => {
+		const { store, cleanup } = await createTempStore();
+
+		try {
+			await expect(
+				store.readSessionEvents(asSessionId("../outside")),
+			).rejects.toThrow("Invalid session id");
 		} finally {
 			await cleanup();
 		}
