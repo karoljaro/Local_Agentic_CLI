@@ -1,0 +1,147 @@
+import { describe, expect, test } from "bun:test";
+
+import { asMessageId } from "@/domain/Ids";
+import type { ModelStreamChunk } from "@/application/ports/ModelPort";
+
+import { OllamaModelAdapter } from "./OllamaModelAdapter";
+
+type FetchInput = Parameters<typeof fetch>[0];
+type FetchInit = Parameters<typeof fetch>[1];
+
+const collectStream = async (
+	stream: AsyncIterable<ModelStreamChunk>,
+): Promise<ModelStreamChunk[]> => {
+	const chunks: ModelStreamChunk[] = [];
+
+	for await (const chunk of stream) {
+		chunks.push(chunk);
+	}
+
+	return chunks;
+};
+
+describe("OllamaModelAdapter", () => {
+	test("posts chat messages and yields content deltas", async () => {
+		const originalFetch = globalThis.fetch;
+		let requestUrl = "";
+		let requestBody: unknown;
+
+		globalThis.fetch = (async (input: FetchInput, init?: FetchInit) => {
+			requestUrl = String(input);
+			requestBody = JSON.parse(String(init?.body));
+
+			return new Response(
+				'{"message":{"content":"Hello"},"done":false}\n{"message":{"content":" there"},"done":false}\n{"done":true}\n',
+				{ status: 200 },
+			);
+			}) as unknown as typeof fetch;
+
+		try {
+			const adapter = new OllamaModelAdapter(
+				"http://localhost:11434/",
+				" test-model ",
+			);
+
+			const chunks = await collectStream(
+				adapter.streamChat({
+					messages: [
+						{
+							role: "system",
+							content: "System prompt",
+						},
+						{
+							id: asMessageId("message-1"),
+							role: "user",
+							content: "Hello",
+						},
+					],
+				}),
+			);
+
+			expect(requestUrl).toBe("http://localhost:11434/api/chat");
+			expect(requestBody).toEqual({
+				model: "test-model",
+				messages: [
+					{
+						role: "system",
+						content: "System prompt",
+					},
+					{
+						role: "user",
+						content: "Hello",
+					},
+				],
+				stream: true,
+			});
+			expect(chunks).toEqual([
+				{ contentDelta: "Hello" },
+				{ contentDelta: " there" },
+			]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("throws a bounded error for non-ok responses", async () => {
+		const originalFetch = globalThis.fetch;
+
+		globalThis.fetch = (async () => {
+			return new Response("model not found", { status: 404 });
+			}) as unknown as typeof fetch;
+
+		try {
+			const adapter = new OllamaModelAdapter();
+
+			await expect(
+				collectStream(adapter.streamChat({ messages: [] })),
+			).rejects.toThrow("Ollama request failed with status 404");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("throws when the stream contains malformed JSON", async () => {
+		const originalFetch = globalThis.fetch;
+
+		globalThis.fetch = (async () => {
+			return new Response("not-json\n", { status: 200 });
+			}) as unknown as typeof fetch;
+
+		try {
+			const adapter = new OllamaModelAdapter();
+
+			await expect(
+				collectStream(adapter.streamChat({ messages: [] })),
+			).rejects.toThrow("Invalid Ollama stream JSON");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("throws when Ollama streams an error event", async () => {
+		const originalFetch = globalThis.fetch;
+
+		globalThis.fetch = (async () => {
+			return new Response('{"error":"model failed"}\n', { status: 200 });
+			}) as unknown as typeof fetch;
+
+		try {
+			const adapter = new OllamaModelAdapter();
+
+			await expect(
+				collectStream(adapter.streamChat({ messages: [] })),
+			).rejects.toThrow("Ollama stream failed: model failed");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("rejects empty configuration values", () => {
+		expect(() => new OllamaModelAdapter(" ", "model")).toThrow(
+			"Ollama base URL cannot be empty.",
+		);
+		expect(() => new OllamaModelAdapter("http://localhost:11434", " ")).toThrow(
+			"Ollama model name cannot be empty.",
+		);
+	});
+});

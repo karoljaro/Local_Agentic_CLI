@@ -8,14 +8,32 @@ type OllamaChatStreamResponse = {
 	message?: {
 		content?: string;
 	};
+	error?: string;
 	done?: boolean;
 };
 
 export class OllamaModelAdapter implements ModelPort {
+	private readonly baseUrl: string;
+	private readonly modelName: string;
+
 	constructor(
-		private readonly baseUrl: string = 'http://localhost:11434',
-		private readonly modelName: string = 'gemma4:12b-it-qat'
-	) {}
+		baseUrl: string = 'http://localhost:11434',
+		modelName: string = 'gemma4:12b-it-qat'
+	) {
+		const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, '');
+		const normalizedModelName = modelName.trim();
+
+		if (normalizedBaseUrl.length === 0) {
+			throw new Error('Ollama base URL cannot be empty.');
+		}
+
+		if (normalizedModelName.length === 0) {
+			throw new Error('Ollama model name cannot be empty.');
+		}
+
+		this.baseUrl = normalizedBaseUrl;
+		this.modelName = normalizedModelName;
+	}
 
 	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
 		const response = await fetch(`${this.baseUrl}/api/chat`, {
@@ -35,7 +53,7 @@ export class OllamaModelAdapter implements ModelPort {
 
 		if (!response.ok) {
 			throw new Error(
-				`Ollama request failed with status ${response.status}: ${await response.text()}`
+				`Ollama request failed with status ${response.status}: ${await readBoundedResponseText(response)}`
 			);
 		}
 
@@ -67,6 +85,10 @@ export class OllamaModelAdapter implements ModelPort {
 						continue;
 					}
 
+					if (chunk.error !== undefined) {
+						throw new Error(`Ollama stream failed: ${chunk.error}`);
+					}
+
 					const contentDelta = chunk.message?.content;
 
 					if (contentDelta !== undefined && contentDelta.length > 0) {
@@ -80,6 +102,10 @@ export class OllamaModelAdapter implements ModelPort {
 			const finalChunk = parseOllamaStreamLine(buffer);
 
 			if (finalChunk?.done !== true) {
+				if (finalChunk?.error !== undefined) {
+					throw new Error(`Ollama stream failed: ${finalChunk.error}`);
+				}
+
 				const contentDelta = finalChunk?.message?.content;
 
 				if (contentDelta !== undefined && contentDelta.length > 0) {
@@ -92,6 +118,16 @@ export class OllamaModelAdapter implements ModelPort {
 	}
 }
 
+const readBoundedResponseText = async (response: Response): Promise<string> => {
+	try {
+		const text = await response.text();
+
+		return text.length <= 1000 ? text : `${text.slice(0, 1000)}...`;
+	} catch (caughtError) {
+		return caughtError instanceof Error ? caughtError.message : String(caughtError);
+	}
+};
+
 const parseOllamaStreamLine = (
 	line: string
 ): OllamaChatStreamResponse | null => {
@@ -101,5 +137,12 @@ const parseOllamaStreamLine = (
 		return null;
 	}
 
-	return JSON.parse(trimmedLine) as OllamaChatStreamResponse;
+	try {
+		return JSON.parse(trimmedLine) as OllamaChatStreamResponse;
+	} catch (caughtError) {
+		const message =
+			caughtError instanceof Error ? caughtError.message : String(caughtError);
+
+		throw new Error(`Invalid Ollama stream JSON: ${message}`);
+	}
 };
