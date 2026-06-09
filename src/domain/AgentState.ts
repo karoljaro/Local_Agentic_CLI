@@ -1,4 +1,4 @@
-import type { SessionId } from './Ids';
+import type { SessionId, ToolCallId } from './Ids';
 import type { ModelMessage } from './ModelMessage';
 
 export type AgentState = {
@@ -9,7 +9,7 @@ export type AgentState = {
 };
 
 export type AgentToolResultState = {
-	toolCallId: string;
+	toolCallId: ToolCallId;
 	toolName: string;
 	output: unknown;
 };
@@ -18,6 +18,7 @@ export type AgentErrorState = {
 	message: string;
 	code?: string;
 	recoverable: boolean;
+	details?: unknown;
 };
 
 export const createInitialAgentState = (sessionId: SessionId): AgentState => {
