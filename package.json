@@ -1,8 +1,11 @@
 {
   "name": "local_agentic_cli",
-  "module": "index.ts",
+  "module": "index.tsx",
   "type": "module",
   "private": true,
+  "scripts": {
+    "start": "bun run index.tsx"
+  },
   "devDependencies": {
     "@types/bun": "^1.3.14",
     "@types/react": "^19.2.16"
