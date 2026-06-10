@@ -540,43 +540,27 @@ type MessageRowProps = {
 };
 
 const MessageRow = ({ entry }: MessageRowProps) => {
-	const label = getMessageLabel(entry.role);
+	if (entry.role === 'user') {
+		return (
+			<Box backgroundColor={INPUT_BACKGROUND} paddingX={2} paddingY={1}>
+				<Text color="white">&gt; {entry.content}</Text>
+			</Box>
+		);
+	}
+
+	if (entry.role === 'error') {
+		return (
+			<Box paddingLeft={2}>
+				<Text color="red">{entry.content}</Text>
+			</Box>
+		);
+	}
 
 	return (
-		<Box flexDirection="column">
-			<Text bold color={label.color}>
-				{label.text}
-			</Text>
-			<Box paddingLeft={2}>
-				<MessageContent entry={entry} />
-			</Box>
+		<Box paddingLeft={2}>
+			<Text>{entry.content}</Text>
 		</Box>
 	);
-};
-
-type MessageContentProps = {
-	entry: TranscriptEntry;
-};
-
-const MessageContent = ({ entry }: MessageContentProps) => {
-	if (entry.role === 'error') {
-		return <Text color="red">{entry.content}</Text>;
-	}
-
-	return <Text>{entry.content}</Text>;
-};
-
-const getMessageLabel = (
-	role: TranscriptEntry['role'],
-): { color: 'cyan' | 'green' | 'red'; text: string } => {
-	switch (role) {
-		case 'user':
-			return { color: 'green', text: 'You' };
-		case 'assistant':
-			return { color: 'cyan', text: 'Assistant' };
-		case 'error':
-			return { color: 'red', text: 'Error' };
-	}
 };
 
 type ComposerProps = {
