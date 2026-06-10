@@ -203,6 +203,7 @@ const AppShell = ({ children, sessionId, status, statusText }: AppShellProps) =>
 		<Box flexDirection="column" gap={1} paddingX={1} paddingY={1}>
 			<Header sessionId={sessionId} status={status} statusText={statusText} />
 			{children}
+			<Text color="gray">Press Ctrl+C to exit.</Text>
 		</Box>
 	);
 };
