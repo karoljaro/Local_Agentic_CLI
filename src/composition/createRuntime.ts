@@ -7,11 +7,13 @@ import { BunUuidV7IdGenerator } from '@/infrastructure/runtime/BunUuidV7IdGenera
 import { TemporalClock } from '@/infrastructure/runtime/TemporalClock';
 import { readConfig, type AppConfig } from '@/composition/config';
 import { LoadSession } from '@/application/use-cases/LoadSession';
+import { ListSessionEvents } from '@/application/use-cases/ListSessionEvents';
 import { ListSessions } from '@/application/use-cases/ListSessions';
 
 export type Runtime = {
 	runAgentTurn: RunAgentTurn;
 	loadSession: LoadSession;
+	listSessionEvents: ListSessionEvents;
 	listSessions: ListSessions;
 	idGenerator: IdGeneratorPort;
 };
@@ -39,9 +41,14 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 		sessionStore,
 	});
 
+	const listSessionEvents = new ListSessionEvents({
+		sessionStore,
+	});
+
 	return {
 		idGenerator,
 		loadSession,
+		listSessionEvents,
 		listSessions,
 		runAgentTurn: new RunAgentTurn({
 			sessionStore,

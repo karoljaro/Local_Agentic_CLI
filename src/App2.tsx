@@ -1,7 +1,8 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Box, Text, useInput, useStdin } from 'ink';
 
 import { createRuntime, type Runtime } from '@/composition/createRuntime';
+import type { ListedSessionEvent } from '@/application/use-cases/ListSessionEvents';
 import { asSessionId, type SessionId } from '@/domain/Ids';
 
 type TranscriptEntry = {
@@ -9,7 +10,7 @@ type TranscriptEntry = {
 	content: string;
 };
 
-type Status = 'idle' | 'streaming';
+type Status = 'idle' | 'loading' | 'streaming';
 
 const APP_TITLE = 'Local Agentic CLI';
 const INPUT_PLACEHOLDER = 'Ask local model...';
@@ -60,7 +61,42 @@ const InteractiveApp = ({ runtime, sessionId }: InteractiveAppProps) => {
 	const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
 	const [streamingContent, setStreamingContent] = useState('');
 
-	const isStreaming = status === 'streaming';
+	const isBusy = status !== 'idle';
+
+	useEffect(() => {
+		let isCancelled = false;
+
+		const loadTranscript = async (): Promise<void> => {
+			setStatus('loading');
+
+			try {
+				const result = await runtime.listSessionEvents.list({ sessionId });
+
+				if (!isCancelled) {
+					setTranscript(sessionEventsToTranscript(result.events));
+				}
+			} catch (caughtError) {
+				const error =
+					caughtError instanceof Error
+						? caughtError
+						: new Error(String(caughtError));
+
+				if (!isCancelled) {
+					setTranscript([{ role: 'error', content: error.message }]);
+				}
+			} finally {
+				if (!isCancelled) {
+					setStatus('idle');
+				}
+			}
+		};
+
+		void loadTranscript();
+
+		return () => {
+			isCancelled = true;
+		};
+	}, [runtime, sessionId]);
 
 	const runPrompt = async (prompt: string): Promise<void> => {
 		setStatus('streaming');
@@ -178,14 +214,14 @@ const InteractiveApp = ({ runtime, sessionId }: InteractiveAppProps) => {
 				setCursorIndex((currentIndex) => currentIndex + value.length);
 			}
 		},
-		{ isActive: !isStreaming },
+		{ isActive: !isBusy },
 	);
 
 	return (
 		<AppShell
 			sessionId={sessionId}
 			status={status}
-			statusText={isStreaming ? 'model is streaming' : 'ready'}
+			statusText={getStatusText(status)}
 		>
 			<TranscriptView
 				streamingContent={streamingContent}
@@ -195,10 +231,23 @@ const InteractiveApp = ({ runtime, sessionId }: InteractiveAppProps) => {
 			<Composer
 				cursorIndex={cursorIndex}
 				input={input}
-				isDisabled={isStreaming}
+				isDisabled={isBusy}
+				status={status}
 			/>
 		</AppShell>
 	);
+};
+
+const sessionEventsToTranscript = (
+	events: ListedSessionEvent[],
+): TranscriptEntry[] => {
+	return events.map((event) => {
+		if (event.type === 'prompt.submitted') {
+			return { role: 'user', content: event.prompt };
+		}
+
+		return { role: 'assistant', content: event.content };
+	});
 };
 
 type AppShellProps = {
@@ -245,9 +294,22 @@ type StatusPillProps = {
 };
 
 const StatusPill = ({ status, text }: StatusPillProps) => {
-	return (
-		<Text color={status === 'streaming' ? 'yellow' : 'green'}>{text}</Text>
-	);
+	return <Text color={getStatusColor(status)}>{text}</Text>;
+};
+
+const getStatusText = (status: Status): string => {
+	switch (status) {
+		case 'idle':
+			return 'ready';
+		case 'loading':
+			return 'loading session';
+		case 'streaming':
+			return 'model is streaming';
+	}
+};
+
+const getStatusColor = (status: Status): 'green' | 'yellow' => {
+	return status === 'idle' ? 'green' : 'yellow';
 };
 
 type TranscriptViewProps = {
@@ -326,19 +388,26 @@ type ComposerProps = {
 	cursorIndex: number;
 	input: string;
 	isDisabled: boolean;
+	status: Status;
 };
 
-const Composer = ({ cursorIndex, input, isDisabled }: ComposerProps) => {
+const Composer = ({ cursorIndex, input, isDisabled, status }: ComposerProps) => {
 	return (
 		<Box flexDirection="column" gap={1}>
 			<Text color="gray">
-				{isDisabled ? 'Waiting for model response...' : 'Enter to send'}
+				{status === 'loading'
+					? 'Loading previous messages...'
+					: isDisabled
+						? 'Waiting for model response...'
+						: 'Enter to send'}
 			</Text>
 
 			<Box backgroundColor={INPUT_BACKGROUND} paddingX={2} paddingY={1}>
 				<Text color="white">&gt; </Text>
 				{isDisabled ? (
-					<Text color="gray">streaming response</Text>
+					<Text color="gray">
+						{status === 'loading' ? 'loading session' : 'streaming response'}
+					</Text>
 				) : (
 					<InputText cursorIndex={cursorIndex} value={input} />
 				)}
