@@ -5,22 +5,26 @@ import { OllamaModelAdapter } from '@/infrastructure/model/OllamaModelAdapter';
 import { JsonlSessionStore } from '@/infrastructure/persistence/JsonlSessionStore';
 import { BunUuidV7IdGenerator } from '@/infrastructure/runtime/BunUuidV7IdGenerator';
 import { TemporalClock } from '@/infrastructure/runtime/TemporalClock';
+import { readConfig, type AppConfig } from '@/composition/config';
 
 export type Runtime = {
 	runAgentTurn: RunAgentTurn;
 	idGenerator: IdGeneratorPort;
 };
 
-export const createRuntime = (): Runtime => {
+export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 	const sessionStore = new JsonlSessionStore();
+
 	const model = new OllamaModelAdapter(
-		readOptionalEnv('OLLAMA_BASE_URL') ?? 'http://localhost:11434',
-		readOptionalEnv('OLLAMA_MODEL') ?? 'gemma4:12b-it-qat',
+		config.OLLAMA_BASE_URL,
+		config.OLLAMA_MODEL
 	);
+
 	const idGenerator = new BunUuidV7IdGenerator();
 	const clock = new TemporalClock();
+
 	const contextBuilder = new ContextBuilder({
-		systemPrompt: 'You are a local coding agent.',
+		systemPrompt: config.SYSTEM_PROMPT,
 	});
 
 	return {
@@ -33,10 +37,4 @@ export const createRuntime = (): Runtime => {
 			idGenerator,
 		}),
 	};
-};
-
-const readOptionalEnv = (name: string): string | undefined => {
-	const value = Bun.env[name]?.trim();
-
-	return value === undefined || value.length === 0 ? undefined : value;
 };
