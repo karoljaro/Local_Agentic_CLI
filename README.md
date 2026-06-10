@@ -1,6 +1,8 @@
 # Local Agentic CLI
-<img width="1315" height="710" alt="obraz" src="https://github.com/user-attachments/assets/4690f3b8-67df-47fc-bfe4-3e5d1311ef4c" />
+<img width="1571" height="818" alt="obraz" src="https://github.com/user-attachments/assets/317d8f06-5a94-4e8f-8c9d-b1b49c59c889" />
 
+<br>
+<br>
 
 > [!NOTE]
 > ⚠️ **Status**: Work in Progress - Early Development Stage
