@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Box, Text, useInput, useStdin } from 'ink';
 
+import type { StoredSession } from '@/application/ports/SessionStorePort';
 import { createRuntime, type Runtime } from '@/composition/createRuntime';
 import type { ListedSessionEvent } from '@/application/use-cases/ListSessionEvents';
-import { asSessionId, type SessionId } from '@/domain/Ids';
+import type { SessionId } from '@/domain/Ids';
 
 type TranscriptEntry = {
 	role: 'user' | 'assistant' | 'error';
@@ -20,9 +21,7 @@ const PANEL_BACKGROUND = '#1f1f1f';
 export function App2() {
 	const runtime = useMemo(() => createRuntime(), []);
 	const { isRawModeSupported } = useStdin();
-	const [sessionId] = useState(
-		() => readSessionIdFromEnv() ?? runtime.idGenerator.nextSessionId(),
-	);
+	const [sessionId, setSessionId] = useState<SessionId | undefined>();
 
 	if (!isRawModeSupported) {
 		return (
@@ -38,20 +37,214 @@ export function App2() {
 		);
 	}
 
-	return <InteractiveApp runtime={runtime} sessionId={sessionId} />;
+	if (sessionId === undefined) {
+		return <SessionPicker onSelectSession={setSessionId} runtime={runtime} />;
+	}
+
+	return (
+		<InteractiveApp
+			key={String(sessionId)}
+			runtime={runtime}
+			sessionId={sessionId}
+		/>
+	);
 }
-
-const readSessionIdFromEnv = (): SessionId | undefined => {
-	const sessionId = Bun.env['SESSION_ID']?.trim();
-
-	return sessionId === undefined || sessionId.length === 0
-		? undefined
-		: asSessionId(sessionId);
-};
 
 type InteractiveAppProps = {
 	runtime: Runtime;
 	sessionId: SessionId;
+};
+
+type SessionPickerOption =
+	| {
+			type: 'new';
+	  }
+	| {
+			type: 'existing';
+			sessionId: SessionId;
+	  };
+
+type SessionPickerProps = {
+	runtime: Runtime;
+	onSelectSession: (sessionId: SessionId) => void;
+};
+
+const SessionPicker = ({ runtime, onSelectSession }: SessionPickerProps) => {
+	const [sessions, setSessions] = useState<StoredSession[]>([]);
+	const [selectedIndex, setSelectedIndex] = useState(0);
+	const [status, setStatus] = useState<Status>('loading');
+	const [errorMessage, setErrorMessage] = useState<string | undefined>();
+
+	const options = useMemo<SessionPickerOption[]>(() => {
+		return [
+			{ type: 'new' },
+			...sessions.map((session) => ({
+				type: 'existing' as const,
+				sessionId: session.sessionId,
+			})),
+		];
+	}, [sessions]);
+
+	useEffect(() => {
+		let isCancelled = false;
+
+		const loadSessions = async (): Promise<void> => {
+			setStatus('loading');
+			setErrorMessage(undefined);
+
+			try {
+				const result = await runtime.listSessions.list();
+
+				if (!isCancelled) {
+					setSessions(result.sessions);
+				}
+			} catch (caughtError) {
+				const error =
+					caughtError instanceof Error
+						? caughtError
+						: new Error(String(caughtError));
+
+				if (!isCancelled) {
+					setSessions([]);
+					setErrorMessage(error.message);
+				}
+			} finally {
+				if (!isCancelled) {
+					setStatus('idle');
+				}
+			}
+		};
+
+		void loadSessions();
+
+		return () => {
+			isCancelled = true;
+		};
+	}, [runtime]);
+
+	useEffect(() => {
+		setSelectedIndex((currentIndex) =>
+			Math.min(currentIndex, Math.max(0, options.length - 1)),
+		);
+	}, [options.length]);
+
+	useInput(
+		(_value, key) => {
+			if (key.upArrow) {
+				setSelectedIndex((currentIndex) => Math.max(0, currentIndex - 1));
+				return;
+			}
+
+			if (key.downArrow) {
+				setSelectedIndex((currentIndex) =>
+					Math.min(options.length - 1, currentIndex + 1),
+				);
+				return;
+			}
+
+			if (key.return) {
+				const selectedOption = options[selectedIndex];
+
+				if (selectedOption === undefined) {
+					return;
+				}
+
+				if (selectedOption.type === 'new') {
+					onSelectSession(runtime.idGenerator.nextSessionId());
+					return;
+				}
+
+				onSelectSession(selectedOption.sessionId);
+			}
+		},
+		{ isActive: status === 'idle' },
+	);
+
+	return (
+		<AppShell
+			sessionId={undefined}
+			status={status}
+			statusText={status === 'loading' ? 'loading sessions' : 'choose session'}
+		>
+			<Box
+				backgroundColor={PANEL_BACKGROUND}
+				flexDirection="column"
+				paddingX={2}
+				paddingY={1}
+			>
+				<SessionPickerList
+					errorMessage={errorMessage}
+					options={options}
+					selectedIndex={selectedIndex}
+				/>
+			</Box>
+		</AppShell>
+	);
+};
+
+type SessionPickerListProps = {
+	errorMessage: string | undefined;
+	options: SessionPickerOption[];
+	selectedIndex: number;
+};
+
+const SessionPickerList = ({
+	errorMessage,
+	options,
+	selectedIndex,
+}: SessionPickerListProps) => {
+	return (
+		<Box flexDirection="column" gap={1}>
+			<Box flexDirection="column">
+				{options.map((option, index) => (
+					<SessionPickerRow
+						isSelected={index === selectedIndex}
+						key={getSessionPickerOptionKey(option)}
+						option={option}
+					/>
+				))}
+			</Box>
+
+			{options.length === 1 ? (
+				<Text color="gray">No saved sessions.</Text>
+			) : null}
+
+			{errorMessage === undefined ? null : (
+				<Text color="red">{errorMessage}</Text>
+			)}
+		</Box>
+	);
+};
+
+type SessionPickerRowProps = {
+	isSelected: boolean;
+	option: SessionPickerOption;
+};
+
+const SessionPickerRow = ({ isSelected, option }: SessionPickerRowProps) => {
+	const prefix = isSelected ? '> ' : '  ';
+
+	if (option.type === 'new') {
+		return (
+			<Text color={isSelected ? 'cyan' : 'white'}>
+				{prefix}New chat
+			</Text>
+		);
+	}
+
+	return (
+		<Text color={isSelected ? 'cyan' : 'white'}>
+			{prefix}{option.sessionId}
+		</Text>
+	);
+};
+
+const getSessionPickerOptionKey = (option: SessionPickerOption): string => {
+	if (option.type === 'new') {
+		return 'new-chat';
+	}
+
+	return String(option.sessionId);
 };
 
 const InteractiveApp = ({ runtime, sessionId }: InteractiveAppProps) => {
@@ -252,7 +445,7 @@ const sessionEventsToTranscript = (
 
 type AppShellProps = {
 	children: ReactNode;
-	sessionId: SessionId;
+	sessionId: SessionId | undefined;
 	status: Status;
 	statusText: string;
 };
@@ -268,7 +461,7 @@ const AppShell = ({ children, sessionId, status, statusText }: AppShellProps) =>
 };
 
 type HeaderProps = {
-	sessionId: SessionId;
+	sessionId: SessionId | undefined;
 	status: Status;
 	statusText: string;
 };
@@ -283,7 +476,9 @@ const Header = ({ sessionId, status, statusText }: HeaderProps) => {
 				<StatusPill status={status} text={statusText} />
 			</Box>
 
-			<Text color="gray">session {sessionId}</Text>
+			<Text color="gray">
+				{sessionId === undefined ? 'session not selected' : `session ${sessionId}`}
+			</Text>
 		</Box>
 	);
 };
