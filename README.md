@@ -1,38 +1,103 @@
 # Local Agentic CLI
+
 <img width="1571" height="818" alt="obraz" src="https://github.com/user-attachments/assets/317d8f06-5a94-4e8f-8c9d-b1b49c59c889" />
 
 <br>
 <br>
 
 > [!NOTE]
-> ⚠️ **Status**: Work in Progress - Early Development Stage
+> Status: work in progress. At this stage, the project behaves more like a local terminal chatbot. The session layer and foundation for future tools are being built, but there are no tools yet and no full agentic behavior yet.
 
-A command-line interface for interacting with local AI models. Local Agentic CLI is designed to bring the capabilities of open-source LLMs (initially Ollama) to your terminal, similar to Claude Code CLI but running entirely on your machine.
+Local Agentic CLI is an experimental CLI for working with local AI models. The long-term goal is to provide a simple terminal-based local agent, but the current focus is a stable MVP: chat with a model through Ollama, persist sessions, and continue previous conversations.
 
-## 🎯 What is This?
+## Current State
 
-Local Agentic CLI is a TypeScript-based CLI tool that allows you to interact with local language models directly from your terminal. Instead of relying on cloud APIs, all processing happens on your local machine, giving you full privacy and control.
+Currently implemented:
 
-**Core Idea**: Use agentic LLMs from the comfort of your terminal using models running locally via Ollama.
+- terminal UI built with Ink,
+- streamed responses from Ollama,
+- env-based configuration,
+- session picker on startup,
+- `New chat` option,
+- session event persistence in JSONL,
+- saved session listing,
+- loading previous session history into the chat,
+- basic domain, application, port, and infrastructure layers,
+- tests for config, sessions, reducer, context builder, Ollama adapter, and runtime helpers.
 
-## 🏠 Why Local?
+Not implemented yet:
 
-- **Privacy** - Your data stays on your machine
-- **No API costs** - Run open-source models for free
-- **Offline capability** - Works without internet connection
-- **Full control** - Customize models and parameters as needed
+- model-executed tools,
+- tool call approval flow,
+- real agentic loop,
+- file operations driven by the model,
+- history pagination,
+- final UI.
 
-## 🛠️ Tech Stack
+## How It Works
 
-- **Language**: TypeScript
-- **Runtime**: Bun / Node.js
-- **Terminal UI**: React + Ink
-- **LLM Provider**: Ollama (primary)
+The conversation is stored as JSONL events. Each session has its own directory:
 
-## 📌 Current Phase
+```text
+.agent/sessions/<session-id>/events.jsonl
+```
 
-This project is in early development. The basic structure is set up, but features are still being built out.
+The chat currently restores only these event types:
 
----
+- `prompt.submitted`
+- `assistant.message.completed`
 
-**More details coming soon as the project develops.**
+Other event types already exist in the domain mainly as preparation for future tools and error handling.
+
+## Running
+
+Requirements:
+
+- Bun
+- running Ollama
+- a pulled model matching the configured model name
+
+Start Ollama:
+
+```bash
+ollama serve
+```
+
+Start the CLI:
+
+```bash
+bun run start
+```
+
+On startup, the app shows a temporary session picker:
+
+- `New chat` creates a new session,
+- choosing an existing session loads previous messages and continues that chat.
+
+## Configuration
+
+Configuration is read from env. You can use a `.env` file.
+
+```env
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=gemma4:12b-it-qat
+SYSTEM_PROMPT=You are a local coding agent.
+```
+
+Default values are defined in `src/composition/config.ts`.
+
+## Tests
+
+```bash
+bun test
+```
+
+Type checking:
+
+```bash
+bun run tsc --noEmit
+```
+
+## Next Direction
+
+The current priority is closing the session and simple chat flow. The next larger stage is tools: ports, tool implementations, tool call handling, and only after that a more complete agentic mode.
