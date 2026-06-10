@@ -326,7 +326,7 @@ const Composer = ({ cursorIndex, input, isDisabled }: ComposerProps) => {
 			</Text>
 
 			<Box backgroundColor={INPUT_BACKGROUND} paddingX={2} paddingY={1}>
-				<Text color="green">› </Text>
+				<Text color="white">&gt; </Text>
 				{isDisabled ? (
 					<Text color="gray">streaming response</Text>
 				) : (
