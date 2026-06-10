@@ -1,5 +1,6 @@
 # Local Agentic CLI
-<img width="2172" height="724" alt="ChatGPT Image 10 cze 2026, 21_18_07" src="https://github.com/user-attachments/assets/2a778465-f904-4d8a-bc8b-d50ccffe718f" />
+<img width="2172" height="724" alt="ChatGPT Image 10 cze 2026, 21_30_29" src="https://github.com/user-attachments/assets/541a568d-bf91-4940-aba0-077aa6ccb202" />
+
 
 <br>
 <br>
