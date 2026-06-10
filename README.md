@@ -1,7 +1,5 @@
 # Local Agentic CLI
-
-<img width="1418" height="1003" alt="obraz" src="https://github.com/user-attachments/assets/ee71aa7a-8fe8-45ae-8624-5ad28c4568e0" />
-
+<img width="2172" height="724" alt="ChatGPT Image 10 cze 2026, 21_18_07" src="https://github.com/user-attachments/assets/2a778465-f904-4d8a-bc8b-d50ccffe718f" />
 
 <br>
 <br>
@@ -34,6 +32,11 @@ Not implemented yet:
 - file operations driven by the model,
 - history pagination,
 - final UI.
+
+  
+### Screenshot of the program
+
+<img width="1418" height="1003" alt="obraz" src="https://github.com/user-attachments/assets/ee71aa7a-8fe8-45ae-8624-5ad28c4568e0" />
 
 ## How It Works
 
