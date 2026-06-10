@@ -29,6 +29,58 @@ const createTempStore = async (): Promise<{
 };
 
 describe("JsonlSessionStore", () => {
+	test("returns empty sessions for a missing sessions directory", async () => {
+		const { store, cleanup } = await createTempStore();
+
+		try {
+			await cleanup();
+
+			const sessions = await store.listSessions();
+
+			expect(sessions).toEqual([]);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("lists sessions with event files in descending id order", async () => {
+		const { store, directory, cleanup } = await createTempStore();
+		const timestamp = asISODateTime("2026-06-09T12:00:00.000Z");
+		const firstSessionId = asSessionId("session-1");
+		const secondSessionId = asSessionId("session-2");
+
+		try {
+			await mkdir(join(directory, "empty-session"), { recursive: true });
+			await writeFile(join(directory, "not-a-session.txt"), "ignored", "utf8");
+
+			await store.appendSessionEvent({
+				id: asEventId("event-1"),
+				sessionId: firstSessionId,
+				type: "prompt.submitted",
+				timestamp,
+				messageId: asMessageId("message-1"),
+				prompt: "Hello",
+			});
+			await store.appendSessionEvent({
+				id: asEventId("event-2"),
+				sessionId: secondSessionId,
+				type: "prompt.submitted",
+				timestamp,
+				messageId: asMessageId("message-2"),
+				prompt: "Hi",
+			});
+
+			const sessions = await store.listSessions();
+
+			expect(sessions).toEqual([
+				{ sessionId: secondSessionId },
+				{ sessionId: firstSessionId },
+			]);
+		} finally {
+			await cleanup();
+		}
+	});
+
 	test("returns empty events for a missing session", async () => {
 		const { store, cleanup } = await createTempStore();
 

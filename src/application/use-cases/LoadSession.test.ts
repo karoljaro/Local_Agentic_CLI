@@ -8,11 +8,18 @@ import {
 	asSessionId,
 	type SessionId,
 } from '@/domain/Ids';
-import type { SessionStorePort } from '../ports/SessionStorePort';
+import type {
+	SessionStorePort,
+	StoredSession,
+} from '../ports/SessionStorePort';
 import { LoadSession } from './LoadSession';
 
 class InMemorySessionStore implements SessionStorePort {
 	constructor(private readonly events: AgentEvent[] = []) {}
+
+	async listSessions(): Promise<StoredSession[]> {
+		return [];
+	}
 
 	async readSessionEvents(sessionId: SessionId): Promise<AgentEvent[]> {
 		return this.events.filter((event) => event.sessionId === sessionId);

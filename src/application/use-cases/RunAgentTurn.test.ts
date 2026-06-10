@@ -15,12 +15,19 @@ import {
 import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
 import type { ModelChatInput, ModelPort, ModelStreamChunk } from '../ports/ModelPort';
-import type { SessionStorePort } from '../ports/SessionStorePort';
+import type {
+	SessionStorePort,
+	StoredSession,
+} from '../ports/SessionStorePort';
 import { ContextBuilder } from '../services/ContextBuilder';
 import { RunAgentTurn } from './RunAgentTurn';
 
 class InMemorySessionStore implements SessionStorePort {
 	readonly events: AgentEvent[] = [];
+
+	async listSessions(): Promise<StoredSession[]> {
+		return [];
+	}
 
 	async readSessionEvents(sessionId: SessionId): Promise<AgentEvent[]> {
 		return this.events.filter((event) => event.sessionId === sessionId);

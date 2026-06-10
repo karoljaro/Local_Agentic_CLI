@@ -1,9 +1,12 @@
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { SessionStorePort } from "@/application/ports/SessionStorePort";
+import type {
+	SessionStorePort,
+	StoredSession,
+} from "@/application/ports/SessionStorePort";
 import type { AgentEvent } from "@/domain/AgentEvent";
-import type { SessionId } from "@/domain/Ids";
+import { asSessionId, type SessionId } from "@/domain/Ids";
 
 export class JsonlSessionStore implements SessionStorePort {
 	private readonly sessionsDirectory: string;
@@ -16,6 +19,41 @@ export class JsonlSessionStore implements SessionStorePort {
 		this.sessionsDirectory = sessionsDirectory;
 	}
 
+	async listSessions(): Promise<StoredSession[]> {
+		let entries;
+
+		try {
+			entries = await readdir(this.sessionsDirectory, { withFileTypes: true });
+		} catch (caughtError) {
+			if (isNodeErrorCode(caughtError, "ENOENT")) {
+				return [];
+			}
+
+			throw caughtError;
+		}
+
+		const sessions: StoredSession[] = [];
+
+		for (const entry of entries) {
+			if (!entry.isDirectory() || !isSafeSessionPathSegment(entry.name)) {
+				continue;
+			}
+
+			try {
+				await access(join(this.sessionsDirectory, entry.name, "events.jsonl"));
+				sessions.push({ sessionId: asSessionId(entry.name) });
+			} catch (caughtError) {
+				if (!isNodeErrorCode(caughtError, "ENOENT")) {
+					throw caughtError;
+				}
+			}
+		}
+
+		return sessions.sort((left, right) =>
+			String(right.sessionId).localeCompare(String(left.sessionId)),
+		);
+	}
+
 	async readSessionEvents(sessionId: SessionId): Promise<AgentEvent[]> {
 		const eventsFilePath = this.getEventsFilePath(sessionId);
 
@@ -24,9 +62,7 @@ export class JsonlSessionStore implements SessionStorePort {
 
 			return parseJsonlEvents(content, eventsFilePath);
 		} catch (caughtError) {
-			const error = caughtError as { code?: unknown };
-
-			if (error.code === "ENOENT") {
+			if (isNodeErrorCode(caughtError, "ENOENT")) {
 				return [];
 			}
 
@@ -81,16 +117,29 @@ const parseJsonlEvents = (content: string, filePath: string): AgentEvent[] => {
 const toSafeSessionPathSegment = (sessionId: SessionId): string => {
 	const value = String(sessionId);
 
-	if (
-		value.length === 0 ||
-		value === "." ||
-		value === ".." ||
-		value.includes("/") ||
-		value.includes("\\") ||
-		value.includes("\0")
-	) {
+	if (!isSafeSessionPathSegment(value)) {
 		throw new Error(`Invalid session id for filesystem path: ${value}`);
 	}
 
 	return value;
+};
+
+const isSafeSessionPathSegment = (value: string): boolean => {
+	return (
+		value.length > 0 &&
+		value !== "." &&
+		value !== ".." &&
+		!value.includes("/") &&
+		!value.includes("\\") &&
+		!value.includes("\0")
+	);
+};
+
+const isNodeErrorCode = (error: unknown, code: string): boolean => {
+	return (
+		typeof error === "object" &&
+		error !== null &&
+		"code" in error &&
+		(error as { code?: unknown }).code === code
+	);
 };
