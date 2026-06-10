@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Box, Text, useInput, useStdin } from 'ink';
 
 import { createRuntime, type Runtime } from '@/composition/createRuntime';
-import type { SessionId } from '@/domain/Ids';
+import { asSessionId, type SessionId } from '@/domain/Ids';
 
 type TranscriptEntry = {
 	role: 'user' | 'assistant' | 'error';
@@ -19,7 +19,9 @@ const PANEL_BACKGROUND = '#1f1f1f';
 export function App2() {
 	const runtime = useMemo(() => createRuntime(), []);
 	const { isRawModeSupported } = useStdin();
-	const [sessionId] = useState(() => runtime.idGenerator.nextSessionId());
+	const [sessionId] = useState(
+		() => readSessionIdFromEnv() ?? runtime.idGenerator.nextSessionId(),
+	);
 
 	if (!isRawModeSupported) {
 		return (
@@ -37,6 +39,14 @@ export function App2() {
 
 	return <InteractiveApp runtime={runtime} sessionId={sessionId} />;
 }
+
+const readSessionIdFromEnv = (): SessionId | undefined => {
+	const sessionId = Bun.env['SESSION_ID']?.trim();
+
+	return sessionId === undefined || sessionId.length === 0
+		? undefined
+		: asSessionId(sessionId);
+};
 
 type InteractiveAppProps = {
 	runtime: Runtime;

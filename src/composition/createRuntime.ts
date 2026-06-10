@@ -6,9 +6,11 @@ import { JsonlSessionStore } from '@/infrastructure/persistence/JsonlSessionStor
 import { BunUuidV7IdGenerator } from '@/infrastructure/runtime/BunUuidV7IdGenerator';
 import { TemporalClock } from '@/infrastructure/runtime/TemporalClock';
 import { readConfig, type AppConfig } from '@/composition/config';
+import { LoadSession } from '@/application/use-cases/LoadSession';
 
 export type Runtime = {
 	runAgentTurn: RunAgentTurn;
+	loadSession: LoadSession;
 	idGenerator: IdGeneratorPort;
 };
 
@@ -27,8 +29,13 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 		systemPrompt: config.SYSTEM_PROMPT,
 	});
 
+	const loadSession = new LoadSession({
+		sessionStore,
+	});
+
 	return {
 		idGenerator,
+		loadSession,
 		runAgentTurn: new RunAgentTurn({
 			sessionStore,
 			model,
