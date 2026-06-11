@@ -6,7 +6,7 @@
 <br>
 
 > [!NOTE]
-> Status: work in progress. At this stage, the project behaves more like a local terminal chatbot. The session layer and foundation for future tools are being built, but there are no tools yet and no full agentic behavior yet.
+> Status: work in progress. At this stage, the project is still close to a local terminal chatbot, but the first tool-calling slice is now in place. It supports a minimal `read_file` tool through Ollama tool calls, without approval flow, patching, or a full agentic loop yet.
 
 Local Agentic CLI is an experimental CLI for working with local AI models. The long-term goal is to provide a simple terminal-based local agent, but the current focus is a stable MVP: chat with a model through Ollama, persist sessions, and continue previous conversations.
 
@@ -22,15 +22,17 @@ Currently implemented:
 - session event persistence in JSONL,
 - saved session listing,
 - loading previous session history into the chat,
+- first model-executed tool: `read_file`,
+- tool call events persisted in the session log,
 - basic domain, application, port, and infrastructure layers,
 - tests for config, sessions, reducer, context builder, Ollama adapter, and runtime helpers.
 
 Not implemented yet:
 
-- model-executed tools,
 - tool call approval flow,
-- real agentic loop,
-- file operations driven by the model,
+- multi-step agentic loop,
+- write/edit file operations driven by the model,
+- `search_code`, `git_diff`, and `apply_patch` tools,
 - history pagination,
 - final UI.
 
@@ -52,7 +54,12 @@ The chat currently restores only these event types:
 - `prompt.submitted`
 - `assistant.message.completed`
 
-Other event types already exist in the domain mainly as preparation for future tools and error handling.
+Tool-related events are also persisted when the model requests a tool:
+
+- `tool.call.requested`
+- `tool.call.started`
+- `tool.call.completed`
+- `tool.call.failed`
 
 ## Running
 
@@ -103,6 +110,20 @@ Type checking:
 bun run tsc --noEmit
 ```
 
+## Tools
+
+The first tool is `read_file`. It reads UTF-8 files from the current workspace and blocks paths outside the workspace.
+
+Tool calling currently uses a simple one-iteration flow:
+
+```text
+user prompt
+-> model may request a tool
+-> CLI executes the tool
+-> tool result is sent back to the model
+-> model returns the final answer
+```
+
 ## Next Direction
 
-The current priority is closing the session and simple chat flow. The next larger stage is tools: ports, tool implementations, tool call handling, and only after that a more complete agentic mode.
+The next larger stage is expanding tools: `search_code`, `git_diff`, approval flow, patch handling, and only after that a more complete agentic mode.
