@@ -1,13 +1,21 @@
-import type { ModelMessage } from "@/domain/ModelMessage";
+import type { ModelMessage } from '@/domain/ModelMessage';
+import type { ModelToolCall, ToolDefinition } from '@/domain/Tool';
 
 export type ModelChatInput = {
-    messages: ModelMessage[];
+	messages: ModelMessage[];
+	tools?: ToolDefinition[];
 };
 
 export type ModelStreamChunk = {
-    contentDelta: string;
+	contentDelta: string;
+};
+
+export type ModelChatResult = {
+	content: string;
+	toolCalls: ModelToolCall[];
 };
 
 export interface ModelPort {
-    streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk>;
+	chat(input: ModelChatInput): Promise<ModelChatResult>;
+	streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk>;
 }
