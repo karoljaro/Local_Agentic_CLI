@@ -2,14 +2,25 @@ import type {
 	AgentErrorOccurred,
 	AssistantMessageCompleted,
 	PromptSubmitted,
+	ToolCallCompleted,
+	ToolCallFailed,
+	ToolCallRequested,
+	ToolCallStarted,
 } from '@/domain/AgentEvent';
 import type { SessionId } from '@/domain/Ids';
+import type { ModelMessage } from '@/domain/ModelMessage';
+import type { ModelToolCall } from '@/domain/Tool';
 import { reduceAgentState } from '../services/SessionReducer';
 import { ContextBuilder } from '../services/ContextBuilder';
-import type { ModelPort } from '../ports/ModelPort';
+import type {
+	ModelChatInput,
+	ModelChatResult,
+	ModelPort,
+} from '../ports/ModelPort';
 import type { SessionStorePort } from '../ports/SessionStorePort';
 import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
+import type { ToolExecutorPort } from '../ports/ToolExecutorPort';
 
 export type RunAgentTurnInput = {
 	sessionId: SessionId;
@@ -26,6 +37,7 @@ export type RunAgentTurnDependencies = {
 	contextBuilder: ContextBuilder;
 	clock: ClockPort;
 	idGenerator: IdGeneratorPort;
+	toolExecutor?: ToolExecutorPort;
 };
 
 export class RunAgentTurn {
@@ -54,6 +66,19 @@ export class RunAgentTurn {
 
 		const reducedState = reduceAgentState(sessionId, sessionEvents);
 		const { messages } = this.dependencies.contextBuilder.build(reducedState);
+
+		if (this.dependencies.toolExecutor !== undefined) {
+			yield* this.runWithTools(sessionId, messages);
+			return;
+		}
+
+		yield* this.runStreamingModelTurn(sessionId, messages);
+	}
+
+	private async *runStreamingModelTurn(
+		sessionId: SessionId,
+		messages: ModelMessage[],
+	): AsyncIterable<AgentTurnChunk> {
 		let assistantContent = '';
 
 		try {
@@ -68,39 +93,263 @@ export class RunAgentTurn {
 					? caughtError
 					: new Error(String(caughtError));
 
-			const errorEvent: AgentErrorOccurred = {
-				id: this.dependencies.idGenerator.nextEventId(),
-				sessionId,
-				type: 'agent.error',
-				timestamp: this.dependencies.clock.now(),
-				error: {
-					message: error.message,
-					code: 'MODEL_STREAM_FAILED',
-					recoverable: true,
-					details: {
-						name: error.name,
-					},
-				},
-			};
-
-			try {
-				await this.dependencies.sessionStore.appendSessionEvent(errorEvent);
-			} catch {
-				// Preserve the original model error; storage failure is secondary here.
-			}
-
+			await this.tryAppendAgentError(sessionId, error, 'MODEL_STREAM_FAILED');
 			throw error;
 		}
 
+		await this.appendAssistantCompleted(sessionId, assistantContent);
+	}
+
+	private async *runWithTools(
+		sessionId: SessionId,
+		messages: ModelMessage[],
+	): AsyncIterable<AgentTurnChunk> {
+		const toolExecutor = this.dependencies.toolExecutor;
+
+		if (toolExecutor === undefined) {
+			return;
+		}
+
+		const tools = toolExecutor.listTools();
+
+		if (tools.length === 0) {
+			yield* this.runStreamingModelTurn(sessionId, messages);
+			return;
+		}
+
+		const firstResult = await this.chatWithErrorPersistence(sessionId, {
+			messages,
+			tools,
+		});
+
+		if (firstResult.toolCalls.length === 0) {
+			yield* this.completeAssistantResponse(sessionId, firstResult.content);
+			return;
+		}
+
+		const { toolCalls, toolMessages } = await this.executeToolCalls(
+			sessionId,
+			firstResult.toolCalls,
+			toolExecutor,
+		);
+
+		const finalResult = await this.chatWithErrorPersistence(sessionId, {
+			messages: [
+				...messages,
+				{
+					role: 'assistant',
+					content: firstResult.content,
+					toolCalls,
+				},
+				...toolMessages,
+			],
+		});
+
+		if (finalResult.toolCalls.length > 0) {
+			const error = new Error('Tool iteration limit reached.');
+
+			await this.tryAppendAgentError(
+				sessionId,
+				error,
+				'TOOL_ITERATION_LIMIT_REACHED',
+			);
+			throw error;
+		}
+
+		yield* this.completeAssistantResponse(sessionId, finalResult.content);
+	}
+
+	private async executeToolCalls(
+		sessionId: SessionId,
+		toolCalls: ModelToolCall[],
+		toolExecutor: ToolExecutorPort,
+	): Promise<{ toolCalls: ModelToolCall[]; toolMessages: ModelMessage[] }> {
+		const toolCallsWithIds: ModelToolCall[] = [];
+		const toolMessages: ModelMessage[] = [];
+
+		for (const toolCall of toolCalls) {
+			const toolCallId = this.dependencies.idGenerator.nextToolCallId();
+			const toolName = toolCall.name;
+
+			toolCallsWithIds.push({
+				id: toolCallId,
+				name: toolName,
+				arguments: toolCall.arguments,
+			});
+
+			const requestedEvent: ToolCallRequested = {
+				id: this.dependencies.idGenerator.nextEventId(),
+				sessionId,
+				type: 'tool.call.requested',
+				timestamp: this.dependencies.clock.now(),
+				toolCallId,
+				toolName,
+				toolInput: toolCall.arguments,
+				approvalRequired: false,
+			};
+			await this.dependencies.sessionStore.appendSessionEvent(requestedEvent);
+
+			const startedEvent: ToolCallStarted = {
+				id: this.dependencies.idGenerator.nextEventId(),
+				sessionId,
+				type: 'tool.call.started',
+				timestamp: this.dependencies.clock.now(),
+				toolCallId,
+				toolName,
+			};
+			await this.dependencies.sessionStore.appendSessionEvent(startedEvent);
+
+			try {
+				const result = await toolExecutor.execute({
+					toolName,
+					toolInput: toolCall.arguments,
+				});
+
+				const completedEvent: ToolCallCompleted = {
+					id: this.dependencies.idGenerator.nextEventId(),
+					sessionId,
+					type: 'tool.call.completed',
+					timestamp: this.dependencies.clock.now(),
+					toolCallId,
+					toolName,
+					output: result.output,
+				};
+				await this.dependencies.sessionStore.appendSessionEvent(completedEvent);
+
+				toolMessages.push({
+					role: 'tool',
+					toolCallId,
+					toolName,
+					content: stringifyToolOutput(result.output),
+				});
+			} catch (caughtError) {
+				const error =
+					caughtError instanceof Error
+						? caughtError
+						: new Error(String(caughtError));
+
+				const failedEvent: ToolCallFailed = {
+					id: this.dependencies.idGenerator.nextEventId(),
+					sessionId,
+					type: 'tool.call.failed',
+					timestamp: this.dependencies.clock.now(),
+					toolCallId,
+					toolName,
+					error: {
+						message: error.message,
+						code: 'TOOL_FAILED',
+						details: {
+							name: error.name,
+						},
+					},
+				};
+				await this.dependencies.sessionStore.appendSessionEvent(failedEvent);
+
+				toolMessages.push({
+					role: 'tool',
+					toolCallId,
+					toolName,
+					content: stringifyToolOutput({
+						error: {
+							message: error.message,
+						},
+					}),
+				});
+			}
+		}
+
+		return {
+			toolCalls: toolCallsWithIds,
+			toolMessages,
+		};
+	}
+
+	private async chatWithErrorPersistence(
+		sessionId: SessionId,
+		input: ModelChatInput,
+	): Promise<ModelChatResult> {
+		try {
+			return await this.dependencies.model.chat(input);
+		} catch (caughtError) {
+			const error =
+				caughtError instanceof Error
+					? caughtError
+					: new Error(String(caughtError));
+
+			await this.tryAppendAgentError(sessionId, error, 'MODEL_CHAT_FAILED');
+			throw error;
+		}
+	}
+
+	private async *completeAssistantResponse(
+		sessionId: SessionId,
+		content: string,
+	): AsyncIterable<AgentTurnChunk> {
+		if (content.length > 0) {
+			yield { contentDelta: content };
+		}
+
+		await this.appendAssistantCompleted(sessionId, content);
+	}
+
+	private async appendAssistantCompleted(
+		sessionId: SessionId,
+		content: string,
+	): Promise<void> {
 		const completedEvent: AssistantMessageCompleted = {
 			id: this.dependencies.idGenerator.nextEventId(),
 			messageId: this.dependencies.idGenerator.nextMessageId(),
 			sessionId,
 			type: 'assistant.message.completed',
 			timestamp: this.dependencies.clock.now(),
-			content: assistantContent,
+			content,
 		};
 
 		await this.dependencies.sessionStore.appendSessionEvent(completedEvent);
 	}
+
+	private async appendAgentError(
+		sessionId: SessionId,
+		error: Error,
+		code: string,
+	): Promise<void> {
+		const errorEvent: AgentErrorOccurred = {
+			id: this.dependencies.idGenerator.nextEventId(),
+			sessionId,
+			type: 'agent.error',
+			timestamp: this.dependencies.clock.now(),
+			error: {
+				message: error.message,
+				code,
+				recoverable: true,
+				details: {
+					name: error.name,
+				},
+			},
+		};
+
+		await this.dependencies.sessionStore.appendSessionEvent(errorEvent);
+	}
+
+	private async tryAppendAgentError(
+		sessionId: SessionId,
+		error: Error,
+		code: string,
+	): Promise<void> {
+		try {
+			await this.appendAgentError(sessionId, error, code);
+		} catch {
+			// Preserve the original error; storage failure is secondary here.
+		}
+	}
 }
+
+const stringifyToolOutput = (output: unknown): string => {
+	if (typeof output === 'string') {
+		return output;
+	}
+
+	const json = JSON.stringify(output);
+
+	return json ?? String(output);
+};
