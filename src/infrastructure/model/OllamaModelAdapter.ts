@@ -1,16 +1,16 @@
 import type {
 	ModelChatInput,
+	ModelChatResult,
 	ModelPort,
 	ModelStreamChunk,
 } from '@/application/ports/ModelPort';
-
-type OllamaChatStreamResponse = {
-	message?: {
-		content?: string;
-	};
-	error?: string;
-	done?: boolean;
-};
+import {
+	toModelChatResult,
+	toOllamaMessage,
+	toOllamaTool,
+	type OllamaChatResponse,
+	type OllamaChatStreamResponse,
+} from './mappers/OllamaChatMapper';
 
 export class OllamaModelAdapter implements ModelPort {
 	private readonly baseUrl: string;
@@ -35,6 +35,37 @@ export class OllamaModelAdapter implements ModelPort {
 		this.modelName = normalizedModelName;
 	}
 
+	async chat(input: ModelChatInput): Promise<ModelChatResult> {
+		const response = await fetch(`${this.baseUrl}/api/chat`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				model: this.modelName,
+				messages: input.messages.map(toOllamaMessage),
+				...(input.tools === undefined || input.tools.length === 0
+					? {}
+					: { tools: input.tools.map(toOllamaTool) }),
+				stream: false,
+			}),
+		});
+
+		if (!response.ok) {
+			throw new Error(
+				`Ollama request failed with status ${response.status}: ${await readBoundedResponseText(response)}`
+			);
+		}
+
+		const body = (await response.json()) as OllamaChatResponse;
+
+		if (body.error !== undefined) {
+			throw new Error(`Ollama chat failed: ${body.error}`);
+		}
+
+		return toModelChatResult(body);
+	}
+
 	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
 		const response = await fetch(`${this.baseUrl}/api/chat`, {
 			method: 'POST',
@@ -43,10 +74,7 @@ export class OllamaModelAdapter implements ModelPort {
 			},
 			body: JSON.stringify({
 				model: this.modelName,
-				messages: input.messages.map((message) => ({
-					role: message.role,
-					content: message.content,
-				})),
+				messages: input.messages.map(toOllamaMessage),
 				stream: true,
 			}),
 		});
