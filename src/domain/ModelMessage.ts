@@ -1,4 +1,5 @@
 import type { MessageId, ToolCallId } from './Ids';
+import type { ModelToolCall } from './Tool';
 
 export type ModelMessageRole = 'system' | 'user' | 'assistant' | 'tool';
 
@@ -21,9 +22,10 @@ export type UserModelMessage = {
 };
 
 export type AssistantModelMessage = {
-	id: MessageId;
+	id?: MessageId;
 	role: 'assistant';
 	content: string;
+	toolCalls?: ModelToolCall[];
 };
 
 export type ToolModelMessage = {
