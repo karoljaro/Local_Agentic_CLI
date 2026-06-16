@@ -51,7 +51,7 @@ describe('LocalToolExecutor', () => {
 						query: {
 							type: 'string',
 							description:
-								'Literal text to search for in the current workspace.',
+								'Exact text to search for. Use simple | alternatives for related terms.',
 						},
 					},
 				},
@@ -334,6 +334,11 @@ describe('LocalToolExecutor', () => {
 					matches: [
 						{
 							path: 'src/calculator.py',
+							line: 1,
+							text: pythonFunctionSignature('add'),
+						},
+						{
+							path: 'src/calculator.py',
 							line: 4,
 							text: pythonFunctionSignature('subtract'),
 						},
@@ -346,11 +351,6 @@ describe('LocalToolExecutor', () => {
 							path: 'src/calculator.py',
 							line: 10,
 							text: pythonFunctionSignature('divide'),
-						},
-						{
-							path: 'src/calculator.py',
-							line: 1,
-							text: pythonFunctionSignature('add'),
 						},
 					],
 					truncated: false,

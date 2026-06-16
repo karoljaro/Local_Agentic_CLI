@@ -90,7 +90,7 @@ export class SearchFileProvider {
 					query: {
 						type: 'string',
 						description:
-							'Literal text to search for in the current workspace.',
+							'Exact text to search for. Use simple | alternatives for related terms.',
 					},
 				},
 			},
@@ -99,46 +99,20 @@ export class SearchFileProvider {
 
 	async execute(toolInput: unknown): Promise<ToolExecutionResult> {
 		const input = parseSearchFileInput(toolInput);
-		const fallbackStdout = input.query.includes('|')
-			? await runFallbackRipgrep({
-					query: input.query,
-					workspaceRoot: this.workspaceRoot,
-					timeoutMs: this.searchTimeoutMs,
-				})
-			: undefined;
 
-		if (fallbackStdout !== undefined) {
-			return {
-				toolName: SEARCH_FILE_TOOL_NAME,
-				output: parseRipgrepJsonOutput({
-					query: input.query,
-					stdout: fallbackStdout,
-					workspaceRoot: this.workspaceRoot,
-					maxMatches: this.maxSearchMatches,
-					maxMatchTextLength: this.maxMatchTextLength,
-				}),
-			};
-		}
-
-		const result = await runRipgrep({
-			query: input.query,
-			workspaceRoot: this.workspaceRoot,
-			timeoutMs: this.searchTimeoutMs,
-		});
-
-		if (result.exitCode === 1) {
-			const fallbackStdoutAfterLiteralSearch = await runFallbackRipgrep({
-				query: input.query,
+		for (const queries of buildQueryGroups(input.query)) {
+			const result = await runRipgrep({
+				queries,
 				workspaceRoot: this.workspaceRoot,
 				timeoutMs: this.searchTimeoutMs,
 			});
 
-			if (fallbackStdoutAfterLiteralSearch !== undefined) {
+			if (result.exitCode === 0) {
 				return {
 					toolName: SEARCH_FILE_TOOL_NAME,
 					output: parseRipgrepJsonOutput({
 						query: input.query,
-						stdout: fallbackStdoutAfterLiteralSearch,
+						stdout: result.stdout,
 						workspaceRoot: this.workspaceRoot,
 						maxMatches: this.maxSearchMatches,
 						maxMatchTextLength: this.maxMatchTextLength,
@@ -146,27 +120,16 @@ export class SearchFileProvider {
 				};
 			}
 
-			return {
-				toolName: SEARCH_FILE_TOOL_NAME,
-				output: createEmptySearchOutput(input.query),
-			};
-		}
-
-		if (result.exitCode !== 0) {
-			throw new Error(
-				`search_file failed: ${result.stderr.trim() || `rg exited with code ${result.exitCode}`}`
-			);
+			if (result.exitCode !== 1) {
+				throw new Error(
+					`search_file failed: ${result.stderr.trim() || `rg exited with code ${result.exitCode}`}`
+				);
+			}
 		}
 
 		return {
 			toolName: SEARCH_FILE_TOOL_NAME,
-			output: parseRipgrepJsonOutput({
-				query: input.query,
-				stdout: result.stdout,
-				workspaceRoot: this.workspaceRoot,
-				maxMatches: this.maxSearchMatches,
-				maxMatchTextLength: this.maxMatchTextLength,
-			}),
+			output: createEmptySearchOutput(input.query),
 		};
 	}
 }
@@ -207,24 +170,24 @@ const selectFallbackTokens = (query: string): string[] => {
 		.slice(0, MAX_FALLBACK_TOKENS);
 };
 
-const selectFallbackQueryGroups = (query: string): string[][] => {
+const buildQueryGroups = (query: string): string[][] => {
 	const tokens = selectFallbackTokens(query);
 
 	if (!query.includes('|')) {
-		return tokens.length > 0 ? [tokens] : [];
+		return tokens.length > 0 ? [[query], tokens] : [[query]];
 	}
 
 	const definitionQueries = tokens.flatMap((token) =>
 		DEFINITION_FALLBACK_PREFIXES.map((prefix) => `${prefix} ${token}`),
 	);
 
-	return definitionQueries.length > 0
-		? [definitionQueries, tokens]
-		: [];
+	return [definitionQueries, tokens, [query]].filter(
+		(queries) => queries.length > 0,
+	);
 };
 
 type RipgrepRunInput = {
-	query: string;
+	queries: string[];
 	workspaceRoot: string;
 	timeoutMs: number;
 };
@@ -238,6 +201,7 @@ type RipgrepRunResult = {
 const runRipgrep = async (
 	input: RipgrepRunInput
 ): Promise<RipgrepRunResult> => {
+	const queryArgs = input.queries.flatMap((query) => ['--regexp', query]);
 	const subprocess = Bun.spawn({
 		cmd: [
 			rgPath,
@@ -252,7 +216,7 @@ const runRipgrep = async (
 			'!.git/**',
 			'--glob',
 			'!.agent/**',
-			input.query,
+			...queryArgs,
 			input.workspaceRoot,
 		],
 		stdout: 'pipe',
@@ -282,38 +246,6 @@ const runRipgrep = async (
 	} finally {
 		clearTimeout(timeout);
 	}
-};
-
-const runFallbackRipgrep = async (
-	input: RipgrepRunInput
-): Promise<string | undefined> => {
-	for (const queries of selectFallbackQueryGroups(input.query)) {
-		const stdoutParts: string[] = [];
-
-		for (const query of queries) {
-			const result = await runRipgrep({
-				...input,
-				query,
-			});
-
-			if (result.exitCode === 0) {
-				stdoutParts.push(result.stdout);
-				continue;
-			}
-
-			if (result.exitCode !== 1) {
-				throw new Error(
-					`search_file failed: ${result.stderr.trim() || `rg exited with code ${result.exitCode}`}`
-				);
-			}
-		}
-
-		if (stdoutParts.length > 0) {
-			return stdoutParts.join('\n');
-		}
-	}
-
-	return undefined;
 };
 
 type SearchFileOutput = {
@@ -362,6 +294,7 @@ const parseRipgrepJsonOutput = (
 ): SearchFileOutput => {
 	const matches: SearchFileMatch[] = [];
 	const fileMatchCounts = new Map<string, number>();
+	const seenMatches = new Set<string>();
 	let matchCount = 0;
 
 	for (const line of input.stdout.split('\n')) {
@@ -389,6 +322,13 @@ const parseRipgrepJsonOutput = (
 		}
 
 		const path = toWorkspaceRelativePath(input.workspaceRoot, rawPath);
+		const matchKey = `${path}\0${lineNumber}\0${text}`;
+
+		if (seenMatches.has(matchKey)) {
+			continue;
+		}
+
+		seenMatches.add(matchKey);
 		fileMatchCounts.set(path, (fileMatchCounts.get(path) ?? 0) + 1);
 		matchCount += 1;
 
@@ -409,9 +349,18 @@ const parseRipgrepJsonOutput = (
 		fileCount: fileMatchCounts.size,
 		topFiles: [...fileMatchCounts.entries()]
 			.map(([path, count]) => ({ path, matchCount: count }))
-			.sort((left, right) => right.matchCount - left.matchCount)
+			.sort(
+				(left, right) =>
+					right.matchCount - left.matchCount || left.path.localeCompare(right.path),
+			)
 			.slice(0, MAX_TOP_FILES),
-		matches,
+		matches: matches.sort(
+			(left, right) =>
+				(fileMatchCounts.get(right.path) ?? 0) -
+					(fileMatchCounts.get(left.path) ?? 0) ||
+				left.path.localeCompare(right.path) ||
+				left.line - right.line,
+		),
 		truncated: matchCount > matches.length,
 	};
 };
