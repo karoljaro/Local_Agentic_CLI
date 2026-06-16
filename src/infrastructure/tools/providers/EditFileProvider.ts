@@ -91,7 +91,9 @@ export class EditFileProvider {
 		}
 
 		const content = await readFile(realTargetPath, 'utf8');
-		const matchCount = content.split(input.oldText).length - 1;
+		const oldText = normalizeEscapedLineBreaks(input.oldText);
+		const newText = normalizeEscapedLineBreaks(input.newText);
+		const matchCount = content.split(oldText).length - 1;
 
 		if (matchCount === 0) {
 			throw new Error(`oldText was not found in file: ${input.path}`);
@@ -105,7 +107,7 @@ export class EditFileProvider {
 
 		await writeFile(
 			realTargetPath,
-			content.replace(input.oldText, input.newText),
+			content.replace(oldText, newText),
 			'utf8',
 		);
 
@@ -148,6 +150,13 @@ const parseEditFileInput = (input: unknown): EditFileInput => {
 		oldText,
 		newText,
 	};
+};
+
+const normalizeEscapedLineBreaks = (text: string): string => {
+	return text
+		.replaceAll('\\r\\n', '\n')
+		.replaceAll('\\n', '\n')
+		.replaceAll('\\r', '\n');
 };
 
 const isPathInside = (parentPath: string, childPath: string): boolean => {

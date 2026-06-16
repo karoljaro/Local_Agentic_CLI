@@ -499,6 +499,50 @@ describe('LocalToolExecutor', () => {
 		}
 	});
 
+	test('normalizes escaped newlines in edit text', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await writeFile(
+				join(directory, 'demo.py'),
+				[
+					'def find_user_by_email(self, email):',
+					'    for user in self.users:',
+					'        if user.email == email:',
+					'            return user',
+					'    return None',
+					'',
+				].join('\n'),
+				'utf8',
+			);
+
+			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			await executor.execute({
+				toolName: 'edit_file',
+				toolInput: {
+					path: 'demo.py',
+					oldText:
+						'def find_user_by_email(self, email):\\n    for user in self.users:\\n        if user.email == email:\\n            return user\\n    return None',
+					newText:
+						'def find_user_by_email(self, email):\\n    for user in self.users:\\n        if user.email.lower() == email.lower():\\n            return user\\n    return None',
+				},
+			});
+
+			await expect(readFile(join(directory, 'demo.py'), 'utf8')).resolves.toBe(
+				[
+					'def find_user_by_email(self, email):',
+					'    for user in self.users:',
+					'        if user.email.lower() == email.lower():',
+					'            return user',
+					'    return None',
+					'',
+				].join('\n'),
+			);
+		} finally {
+			await cleanup();
+		}
+	});
+
 	test('rejects edit when oldText is missing', async () => {
 		const { directory, cleanup } = await createTempWorkspace();
 
