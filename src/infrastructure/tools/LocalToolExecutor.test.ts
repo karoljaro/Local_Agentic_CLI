@@ -19,7 +19,7 @@ const createTempWorkspace = async (): Promise<{
 };
 
 describe('LocalToolExecutor', () => {
-	test('lists the read_file tool definition', () => {
+	test('lists local tool definitions', () => {
 		const executor = new LocalToolExecutor();
 
 		expect(executor.listTools()).toEqual([
@@ -35,6 +35,23 @@ describe('LocalToolExecutor', () => {
 						path: {
 							type: 'string',
 							description: 'Relative path to a file in the current workspace.',
+						},
+					},
+				},
+			},
+			{
+				name: 'search_file',
+				description:
+					'Find relevant content in a workspace. Use this tool to locate files, code, symbols, strings, configuration values, TODOs, errors, logs, and patterns before opening or reading files. Returns matching file paths, line numbers, and excerpts.',
+				parameters: {
+					type: 'object',
+					required: ['query'],
+					additionalProperties: false,
+					properties: {
+						query: {
+							type: 'string',
+							description:
+								'Literal text to search for in the current workspace.',
 						},
 					},
 				},
@@ -140,6 +157,151 @@ describe('LocalToolExecutor', () => {
 					toolInput: { path: 'large.txt' },
 				}),
 			).rejects.toThrow('File is too large');
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('searches workspace files with ripgrep', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await mkdir(join(directory, 'src'));
+			await writeFile(
+				join(directory, 'src', 'first.ts'),
+				'const needle = true;\n',
+				'utf8',
+			);
+			await writeFile(
+				join(directory, 'src', 'second.ts'),
+				'const other = "value";\n',
+				'utf8',
+			);
+
+			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const result = await executor.execute({
+				toolName: 'search_file',
+				toolInput: { query: 'needle' },
+			});
+
+			expect(result).toEqual({
+				toolName: 'search_file',
+				output: {
+					query: 'needle',
+					matchCount: 1,
+					fileCount: 1,
+					topFiles: [
+						{
+							path: 'src/first.ts',
+							matchCount: 1,
+						},
+					],
+					matches: [
+						{
+							path: 'src/first.ts',
+							line: 1,
+							text: 'const needle = true;',
+						},
+					],
+					truncated: false,
+				},
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('returns empty search output when ripgrep finds no matches', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await writeFile(join(directory, 'file.txt'), 'hello', 'utf8');
+
+			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const result = await executor.execute({
+				toolName: 'search_file',
+				toolInput: { query: 'missing' },
+			});
+
+			expect(result).toEqual({
+				toolName: 'search_file',
+				output: {
+					query: 'missing',
+					matchCount: 0,
+					fileCount: 0,
+					topFiles: [],
+					matches: [],
+					truncated: false,
+				},
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('rejects empty search queries', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+
+			await expect(
+				executor.execute({
+					toolName: 'search_file',
+					toolInput: { query: ' ' },
+				}),
+			).rejects.toThrow('search_file requires a non-empty string query.');
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('limits returned search matches while preserving total counts', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await writeFile(
+				join(directory, 'file.txt'),
+				'needle one\nneedle two\nneedle three\n',
+				'utf8',
+			);
+
+			const executor = new LocalToolExecutor({
+				workspaceRoot: directory,
+				maxSearchMatches: 2,
+			});
+			const result = await executor.execute({
+				toolName: 'search_file',
+				toolInput: { query: 'needle' },
+			});
+
+			expect(result).toEqual({
+				toolName: 'search_file',
+				output: {
+					query: 'needle',
+					matchCount: 3,
+					fileCount: 1,
+					topFiles: [
+						{
+							path: 'file.txt',
+							matchCount: 3,
+						},
+					],
+					matches: [
+						{
+							path: 'file.txt',
+							line: 1,
+							text: 'needle one',
+						},
+						{
+							path: 'file.txt',
+							line: 2,
+							text: 'needle two',
+						},
+					],
+					truncated: true,
+				},
+			});
 		} finally {
 			await cleanup();
 		}

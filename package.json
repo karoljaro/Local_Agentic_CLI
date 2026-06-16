@@ -15,6 +15,7 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
+    "@vscode/ripgrep": "^1.18.0",
     "ink": "^7.0.5",
     "marked": "^9.1.6",
     "marked-terminal": "^6.3.0",

@@ -7,11 +7,19 @@ import type {
 	ToolExecutorPort,
 } from '@/application/ports/ToolExecutorPort';
 import type { ToolDefinition } from '@/domain/Tool';
+import {
+	SEARCH_FILE_TOOL_NAME,
+	SearchFileProvider,
+	type SearchFileProviderOptions,
+} from './providers/SearchFileProvider';
 
 const READ_FILE_TOOL_NAME = 'read_file';
 const DEFAULT_MAX_FILE_BYTES = 200_000;
 
-type LocalToolExecutorOptions = {
+type LocalToolExecutorOptions = Omit<
+	SearchFileProviderOptions,
+	'workspaceRoot'
+> & {
 	workspaceRoot?: string;
 	maxFileBytes?: number;
 };
@@ -19,12 +27,25 @@ type LocalToolExecutorOptions = {
 export class LocalToolExecutor implements ToolExecutorPort {
 	private readonly workspaceRoot: string;
 	private readonly maxFileBytes: number;
+	private readonly searchFileProvider: SearchFileProvider;
 
 	constructor(options: LocalToolExecutorOptions = {}) {
 		const workspaceRoot = options.workspaceRoot ?? process.cwd();
 
 		this.workspaceRoot = resolve(workspaceRoot);
 		this.maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+		this.searchFileProvider = new SearchFileProvider({
+			workspaceRoot: this.workspaceRoot,
+			...(options.maxSearchMatches === undefined
+				? {}
+				: { maxSearchMatches: options.maxSearchMatches }),
+			...(options.maxMatchTextLength === undefined
+				? {}
+				: { maxMatchTextLength: options.maxMatchTextLength }),
+			...(options.searchTimeoutMs === undefined
+				? {}
+				: { searchTimeoutMs: options.searchTimeoutMs }),
+		});
 
 		if (this.maxFileBytes <= 0) {
 			throw new Error('Max file size must be greater than zero.');
@@ -49,6 +70,7 @@ export class LocalToolExecutor implements ToolExecutorPort {
 					},
 				},
 			},
+			this.searchFileProvider.getToolDefinition(),
 		];
 	}
 
@@ -58,6 +80,8 @@ export class LocalToolExecutor implements ToolExecutorPort {
 		switch (request.toolName) {
 			case READ_FILE_TOOL_NAME:
 				return this.readFile(request.toolInput);
+			case SEARCH_FILE_TOOL_NAME:
+				return this.searchFileProvider.execute(request.toolInput);
 			default:
 				throw new Error(`Unknown tool: ${request.toolName}`);
 		}
