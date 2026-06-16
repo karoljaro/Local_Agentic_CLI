@@ -128,7 +128,22 @@ Build the CLI:
 bun run build
 ```
 
-The build output is placed in `dist/`.
+The build output is placed in `dist/local-agentic-cli`.
+
+To run the built CLI from any folder, add the `dist` directory to your shell `PATH`:
+
+```bash
+echo 'export PATH="$PATH:/home/karoljaron/Projects/Local_Agentic_CLI/dist"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+After that, open any workspace folder and run:
+
+```bash
+local-agentic-cli
+```
+
+The CLI uses the current terminal directory as the workspace, so file tools operate on the folder where `local-agentic-cli` is started.
 
 ## Configuration
 
