@@ -1,73 +1,111 @@
 # Local Agentic CLI
+
 <img width="2172" height="724" alt="ChatGPT Image 10 cze 2026, 21_30_29" src="https://github.com/user-attachments/assets/541a568d-bf91-4940-aba0-077aa6ccb202" />
 
 
 <br>
 <br>
 
-> [!NOTE]
-> Status: work in progress. At this stage, the project is still close to a local terminal chatbot, but the first tool-calling slice is now in place. It supports a minimal `read_file` tool through Ollama tool calls, without approval flow, patching, or a full agentic loop yet.
+Local Agentic CLI is a local terminal coding agent for Ollama models. It is an MVP focused on a simple working loop: chat with a local model, let the model inspect the current workspace, approve file edits, and persist the session as JSONL events.
 
-Local Agentic CLI is an experimental CLI for working with local AI models. The long-term goal is to provide a simple terminal-based local agent, but the current focus is a stable MVP: chat with a model through Ollama, persist sessions, and continue previous conversations.
+This project is intentionally small. The current goal is a practical local agentic CLI, not a full Codex replacement or a large framework.
 
 ## Current State
 
-Currently implemented:
+Implemented:
 
-- terminal UI built with Ink,
-- streamed responses from Ollama,
-- env-based configuration,
-- session picker on startup,
-- `New chat` option,
-- session event persistence in JSONL,
-- saved session listing,
-- loading previous session history into the chat,
-- first model-executed tool: `read_file`,
-- tool call events persisted in the session log,
-- basic domain, application, port, and infrastructure layers,
-- tests for config, sessions, reducer, context builder, Ollama adapter, and runtime helpers.
+- Ink-based terminal UI
+- Ollama chat integration with streaming final responses
+- model switching from the CLI with `/model <name>`
+- current model and workspace path shown under the input
+- session picker with `New chat`
+- persisted sessions in `.agent/sessions/<session-id>/events.jsonl`
+- loading previous chat messages when continuing a session
+- tool calling through Ollama
+- multi-step tool loop with an iteration limit
+- workspace tools:
+  - `search_file`
+  - `read_file`
+  - `edit_file`
+- approval prompt before `edit_file`
+- path safety checks for file tools
+- tests for config, sessions, runtime, Ollama adapter, tools, and agent turn flow
 
 Not implemented yet:
 
-- tool call approval flow,
-- multi-step agentic loop,
-- write/edit file operations driven by the model,
-- `search_code`, `git_diff`, and `apply_patch` tools,
-- history pagination,
-- final UI.
+- command execution tool
+- visible tool event timeline in the UI
+- diff preview before edit approval
+- settings screen or persistent model configuration
+- final UI polish
 
-  
-### Screenshot of the program
+## Agent Loop
 
-<img width="1418" height="1003" alt="obraz" src="https://github.com/user-attachments/assets/ee71aa7a-8fe8-45ae-8624-5ad28c4568e0" />
+The current MVP loop is:
 
-## How It Works
+```text
+user prompt
+-> model may request search_file/read_file/edit_file
+-> CLI executes safe read/search tools automatically
+-> CLI asks for approval before edit_file
+-> approved edits are applied to workspace files
+-> events are persisted to the current session
+-> model returns the final answer
+```
 
-The conversation is stored as JSONL events. Each session has its own directory:
+If an edit is denied, the turn ends immediately. This prevents the model from repeatedly requesting the same edit until the tool iteration limit is reached.
+
+## Tools
+
+### `search_file`
+
+Searches the current workspace with ripgrep and returns paths, line numbers, and text excerpts. It ignores common internal directories such as `.git`, `.agent`, and `node_modules`.
+
+### `read_file`
+
+Reads a UTF-8 file from the current workspace. It requires a relative path and rejects paths outside the workspace.
+
+### `edit_file`
+
+Replaces exact text in a UTF-8 file:
+
+```ts
+{
+  path: string;
+  oldText: string;
+  newText: string;
+}
+```
+
+The edit is applied only when `oldText` appears exactly once. The tool also normalizes escaped line breaks like `\\n` when models provide multiline edits as escaped text.
+
+`edit_file` requires interactive approval. Press `y` to approve, `n` or `Esc` to deny.
+
+## Sessions
+
+Each session is stored as JSONL:
 
 ```text
 .agent/sessions/<session-id>/events.jsonl
 ```
 
-The chat currently restores only these event types:
+Persisted events include:
 
 - `prompt.submitted`
 - `assistant.message.completed`
-
-Tool-related events are also persisted when the model requests a tool:
-
 - `tool.call.requested`
 - `tool.call.started`
 - `tool.call.completed`
 - `tool.call.failed`
+- `agent.error`
 
-## Running
+The chat UI currently restores user and assistant messages. Tool events are persisted, but they are not yet shown as a dedicated timeline in the UI.
 
-Requirements:
+## Requirements
 
 - Bun
-- running Ollama
-- a pulled model matching the configured model name
+- Ollama
+- a pulled local model matching the configured model name
 
 Start Ollama:
 
@@ -75,20 +113,23 @@ Start Ollama:
 ollama serve
 ```
 
-Start the CLI:
+Run the CLI in development:
 
 ```bash
 bun run start
 ```
 
-On startup, the app shows a temporary session picker:
+Build the CLI:
 
-- `New chat` creates a new session,
-- choosing an existing session loads previous messages and continues that chat.
+```bash
+bun run build
+```
+
+The build output is placed in `dist/`.
 
 ## Configuration
 
-Configuration is read from env. You can use a `.env` file.
+Configuration is read from environment variables. A `.env` file can be used.
 
 ```env
 OLLAMA_BASE_URL=http://localhost:11434
@@ -96,34 +137,46 @@ OLLAMA_MODEL=gemma4:12b-it-qat
 SYSTEM_PROMPT=You are a local coding agent.
 ```
 
-Default values are defined in `src/composition/config.ts`.
+Defaults are defined in `src/composition/config.ts`.
+
+The default model is still configured in code for now. It should move to user settings once settings exist.
+
+## CLI Commands
+
+Inside the chat:
+
+```text
+/model
+/model <ollama-model-name>
+```
+
+`/model` shows the current model. `/model <name>` switches the model for subsequent turns.
 
 ## Tests
+
+Run all tests:
 
 ```bash
 bun test
 ```
 
-Type checking:
+Type check:
 
 ```bash
 bun run tsc --noEmit
 ```
 
-## Tools
+Build check:
 
-The first tool is `read_file`. It reads UTF-8 files from the current workspace and blocks paths outside the workspace.
-
-Tool calling currently uses a simple one-iteration flow:
-
-```text
-user prompt
--> model may request a tool
--> CLI executes the tool
--> tool result is sent back to the model
--> model returns the final answer
+```bash
+bun run build
 ```
 
-## Next Direction
+## Next Steps
 
-The next larger stage is expanding tools: `search_code`, `git_diff`, approval flow, patch handling, and only after that a more complete agentic mode.
+Likely next work:
+
+- show tool events in the UI
+- add a guarded `run_command` tool with an allowlist
+- show a compact diff before edit approval
+- move model defaults into settings
