@@ -4,7 +4,8 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "bun run index.tsx"
+    "start": "bun run index.tsx",
+    "build": "bun run scripts/build.ts"
   },
   "devDependencies": {
     "@types/marked-terminal": "^3.1.7",
