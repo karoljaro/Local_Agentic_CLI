@@ -6,6 +6,9 @@
 <br>
 <br>
 
+> [!NOTE]
+> This CLI is intentionally in a simple MVP state. It does not include extra UI polish, rich tool timelines, diff previews, command execution, or settings yet. The focus is the simplest working local agent loop.
+
 Local Agentic CLI is a local terminal coding agent for Ollama models. It is an MVP focused on a simple working loop: chat with a local model, let the model inspect the current workspace, approve file edits, and persist the session as JSONL events.
 
 This project is intentionally small. The current goal is a practical local agentic CLI, not a full Codex replacement or a large framework.
