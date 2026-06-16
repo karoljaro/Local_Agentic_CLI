@@ -10,6 +10,33 @@ const DEFAULT_MAX_SEARCH_MATCHES = 50;
 const DEFAULT_MAX_MATCH_TEXT_LENGTH = 300;
 const DEFAULT_SEARCH_TIMEOUT_MS = 5_000;
 const MAX_TOP_FILES = 10;
+const MAX_FALLBACK_TOKENS = 6;
+const DEFINITION_FALLBACK_PREFIXES = ['def', 'function', 'class', 'const'];
+const SEARCH_FALLBACK_STOP_WORDS = new Set([
+	'a',
+	'all',
+	'an',
+	'and',
+	'are',
+	'do',
+	'does',
+	'file',
+	'files',
+	'find',
+	'for',
+	'how',
+	'in',
+	'is',
+	'of',
+	'related',
+	'test',
+	'tests',
+	'the',
+	'to',
+	'what',
+	'where',
+	'with',
+]);
 
 export type SearchFileProviderOptions = {
 	workspaceRoot: string;
@@ -72,6 +99,27 @@ export class SearchFileProvider {
 
 	async execute(toolInput: unknown): Promise<ToolExecutionResult> {
 		const input = parseSearchFileInput(toolInput);
+		const fallbackStdout = input.query.includes('|')
+			? await runFallbackRipgrep({
+					query: input.query,
+					workspaceRoot: this.workspaceRoot,
+					timeoutMs: this.searchTimeoutMs,
+				})
+			: undefined;
+
+		if (fallbackStdout !== undefined) {
+			return {
+				toolName: SEARCH_FILE_TOOL_NAME,
+				output: parseRipgrepJsonOutput({
+					query: input.query,
+					stdout: fallbackStdout,
+					workspaceRoot: this.workspaceRoot,
+					maxMatches: this.maxSearchMatches,
+					maxMatchTextLength: this.maxMatchTextLength,
+				}),
+			};
+		}
+
 		const result = await runRipgrep({
 			query: input.query,
 			workspaceRoot: this.workspaceRoot,
@@ -79,6 +127,25 @@ export class SearchFileProvider {
 		});
 
 		if (result.exitCode === 1) {
+			const fallbackStdoutAfterLiteralSearch = await runFallbackRipgrep({
+				query: input.query,
+				workspaceRoot: this.workspaceRoot,
+				timeoutMs: this.searchTimeoutMs,
+			});
+
+			if (fallbackStdoutAfterLiteralSearch !== undefined) {
+				return {
+					toolName: SEARCH_FILE_TOOL_NAME,
+					output: parseRipgrepJsonOutput({
+						query: input.query,
+						stdout: fallbackStdoutAfterLiteralSearch,
+						workspaceRoot: this.workspaceRoot,
+						maxMatches: this.maxSearchMatches,
+						maxMatchTextLength: this.maxMatchTextLength,
+					}),
+				};
+			}
+
 			return {
 				toolName: SEARCH_FILE_TOOL_NAME,
 				output: createEmptySearchOutput(input.query),
@@ -118,6 +185,42 @@ const parseSearchFileInput = (toolInput: unknown): SearchFileToolInput => {
 	return {
 		query: toolInput.query.trim(),
 	};
+};
+
+const selectFallbackTokens = (query: string): string[] => {
+	const seen = new Set<string>();
+
+	return query
+		.split(/[\s|]+/)
+		.map((token) => token.replace(/^[^\w./-]+|[^\w./-]+$/g, ''))
+		.filter((token) => token.length >= 3)
+		.filter((token) => !SEARCH_FALLBACK_STOP_WORDS.has(token.toLowerCase()))
+		.filter((token) => {
+			if (seen.has(token) || token === query) {
+				return false;
+			}
+
+			seen.add(token);
+			return true;
+		})
+		.sort((left, right) => right.length - left.length)
+		.slice(0, MAX_FALLBACK_TOKENS);
+};
+
+const selectFallbackQueryGroups = (query: string): string[][] => {
+	const tokens = selectFallbackTokens(query);
+
+	if (!query.includes('|')) {
+		return tokens.length > 0 ? [tokens] : [];
+	}
+
+	const definitionQueries = tokens.flatMap((token) =>
+		DEFINITION_FALLBACK_PREFIXES.map((prefix) => `${prefix} ${token}`),
+	);
+
+	return definitionQueries.length > 0
+		? [definitionQueries, tokens]
+		: [];
 };
 
 type RipgrepRunInput = {
@@ -179,6 +282,38 @@ const runRipgrep = async (
 	} finally {
 		clearTimeout(timeout);
 	}
+};
+
+const runFallbackRipgrep = async (
+	input: RipgrepRunInput
+): Promise<string | undefined> => {
+	for (const queries of selectFallbackQueryGroups(input.query)) {
+		const stdoutParts: string[] = [];
+
+		for (const query of queries) {
+			const result = await runRipgrep({
+				...input,
+				query,
+			});
+
+			if (result.exitCode === 0) {
+				stdoutParts.push(result.stdout);
+				continue;
+			}
+
+			if (result.exitCode !== 1) {
+				throw new Error(
+					`search_file failed: ${result.stderr.trim() || `rg exited with code ${result.exitCode}`}`
+				);
+			}
+		}
+
+		if (stdoutParts.length > 0) {
+			return stdoutParts.join('\n');
+		}
+	}
+
+	return undefined;
 };
 
 type SearchFileOutput = {

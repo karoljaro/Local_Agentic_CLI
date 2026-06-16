@@ -239,6 +239,128 @@ describe('LocalToolExecutor', () => {
 		}
 	});
 
+	test('falls back to a relevant token when literal search finds no matches', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await mkdir(join(directory, 'tests'));
+			await writeFile(
+				join(directory, 'tests', 'users.test.ts'),
+				'const repo = new UserRepository();\n',
+				'utf8',
+			);
+
+			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const result = await executor.execute({
+				toolName: 'search_file',
+				toolInput: { query: 'UserRepository tests' },
+			});
+
+			expect(result).toEqual({
+				toolName: 'search_file',
+				output: {
+					query: 'UserRepository tests',
+					matchCount: 1,
+					fileCount: 1,
+					topFiles: [
+						{
+							path: 'tests/users.test.ts',
+							matchCount: 1,
+						},
+					],
+					matches: [
+						{
+							path: 'tests/users.test.ts',
+							line: 1,
+							text: 'const repo = new UserRepository();',
+						},
+					],
+					truncated: false,
+				},
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('falls back to pipe-separated query tokens', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			const functionNames = ['add', 'subtract', 'multiply', 'divide'];
+			const query = [...functionNames, 'calculate', 'arithmetic'].join('|');
+			const pythonFunctionSignature = (name: string): string =>
+				`def ${name}(a: float, b: float) -> float:`;
+
+			await mkdir(join(directory, 'src'));
+			await writeFile(
+				join(directory, 'src', 'calculator.py'),
+				[
+					pythonFunctionSignature('add'),
+					'    return a + b',
+					'',
+					pythonFunctionSignature('subtract'),
+					'    return a - b',
+					'',
+					pythonFunctionSignature('multiply'),
+					'    return a * b',
+					'',
+					pythonFunctionSignature('divide'),
+					'    return a / b',
+				].join('\n'),
+				'utf8',
+			);
+
+			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const result = await executor.execute({
+				toolName: 'search_file',
+				toolInput: {
+					query,
+				},
+			});
+
+			expect(result).toEqual({
+				toolName: 'search_file',
+				output: {
+					query,
+					matchCount: 4,
+					fileCount: 1,
+					topFiles: [
+						{
+							path: 'src/calculator.py',
+							matchCount: 4,
+						},
+					],
+					matches: [
+						{
+							path: 'src/calculator.py',
+							line: 4,
+							text: pythonFunctionSignature('subtract'),
+						},
+						{
+							path: 'src/calculator.py',
+							line: 7,
+							text: pythonFunctionSignature('multiply'),
+						},
+						{
+							path: 'src/calculator.py',
+							line: 10,
+							text: pythonFunctionSignature('divide'),
+						},
+						{
+							path: 'src/calculator.py',
+							line: 1,
+							text: pythonFunctionSignature('add'),
+						},
+					],
+					truncated: false,
+				},
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
 	test('rejects empty search queries', async () => {
 		const { directory, cleanup } = await createTempWorkspace();
 

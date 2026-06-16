@@ -22,6 +22,8 @@ import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
 import type { ToolExecutorPort } from '../ports/ToolExecutorPort';
 
+const MAX_TOOL_ITERATIONS = 3;
+
 export type RunAgentTurnInput = {
 	sessionId: SessionId;
 	prompt: string;
@@ -117,46 +119,44 @@ export class RunAgentTurn {
 			return;
 		}
 
-		const firstResult = await this.chatWithErrorPersistence(sessionId, {
-			messages,
-			tools,
-		});
+		let currentMessages = messages;
 
-		if (firstResult.toolCalls.length === 0) {
-			yield* this.completeAssistantResponse(sessionId, firstResult.content);
-			return;
-		}
+		for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
+			const result = await this.chatWithErrorPersistence(sessionId, {
+				messages: currentMessages,
+				tools,
+			});
 
-		const { toolCalls, toolMessages } = await this.executeToolCalls(
-			sessionId,
-			firstResult.toolCalls,
-			toolExecutor,
-		);
+			if (result.toolCalls.length === 0) {
+				yield* this.completeAssistantResponse(sessionId, result.content);
+				return;
+			}
 
-		const finalResult = await this.chatWithErrorPersistence(sessionId, {
-			messages: [
-				...messages,
+			const { toolCalls, toolMessages } = await this.executeToolCalls(
+				sessionId,
+				result.toolCalls,
+				toolExecutor,
+			);
+
+			currentMessages = [
+				...currentMessages,
 				{
 					role: 'assistant',
-					content: firstResult.content,
+					content: result.content,
 					toolCalls,
 				},
 				...toolMessages,
-			],
-		});
-
-		if (finalResult.toolCalls.length > 0) {
-			const error = new Error('Tool iteration limit reached.');
-
-			await this.tryAppendAgentError(
-				sessionId,
-				error,
-				'TOOL_ITERATION_LIMIT_REACHED',
-			);
-			throw error;
+			];
 		}
 
-		yield* this.completeAssistantResponse(sessionId, finalResult.content);
+		const error = new Error('Tool iteration limit reached.');
+
+		await this.tryAppendAgentError(
+			sessionId,
+			error,
+			'TOOL_ITERATION_LIMIT_REACHED',
+		);
+		throw error;
 	}
 
 	private async executeToolCalls(
