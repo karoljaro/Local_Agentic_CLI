@@ -1,4 +1,5 @@
 import type { IdGeneratorPort } from '@/application/ports/IdGeneratorPort';
+import type { ModelPort } from '@/application/ports/ModelPort';
 import { ContextBuilder } from '@/application/services/ContextBuilder';
 import { RunAgentTurn } from '@/application/use-cases/RunAgentTurn';
 import { OllamaModelAdapter } from '@/infrastructure/model/OllamaModelAdapter';
@@ -17,15 +18,24 @@ export type Runtime = {
 	listSessionEvents: ListSessionEvents;
 	listSessions: ListSessions;
 	idGenerator: IdGeneratorPort;
+	workspacePath: string;
+	getModelName: () => string;
+	switchModel: (modelName: string) => string;
 };
 
 export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 	const sessionStore = new JsonlSessionStore();
 
-	const model = new OllamaModelAdapter(
+	let currentModelName = normalizeModelName(config.OLLAMA_MODEL);
+	let currentModel = new OllamaModelAdapter(
 		config.OLLAMA_BASE_URL,
-		config.OLLAMA_MODEL
+		currentModelName,
 	);
+
+	const model: ModelPort = {
+		chat: (input) => currentModel.chat(input),
+		streamChat: (input) => currentModel.streamChat(input),
+	};
 
 	const idGenerator = new BunUuidV7IdGenerator();
 	const clock = new TemporalClock();
@@ -52,6 +62,17 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 		loadSession,
 		listSessionEvents,
 		listSessions,
+		workspacePath: process.cwd(),
+		getModelName: () => currentModelName,
+		switchModel: (modelName) => {
+			currentModelName = normalizeModelName(modelName);
+			currentModel = new OllamaModelAdapter(
+				config.OLLAMA_BASE_URL,
+				currentModelName,
+			);
+
+			return currentModelName;
+		},
 		runAgentTurn: new RunAgentTurn({
 			sessionStore,
 			model,
@@ -61,4 +82,14 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 			toolExecutor,
 		}),
 	};
+};
+
+const normalizeModelName = (modelName: string): string => {
+	const normalizedModelName = modelName.trim();
+
+	if (normalizedModelName.length === 0) {
+		throw new Error('Ollama model name cannot be empty.');
+	}
+
+	return normalizedModelName;
 };

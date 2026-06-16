@@ -17,11 +17,13 @@ const APP_TITLE = 'Local Agentic CLI';
 const INPUT_PLACEHOLDER = 'Ask local model...';
 const INPUT_BACKGROUND = '#2b2b2b';
 const PANEL_BACKGROUND = '#1f1f1f';
+const MODEL_COMMAND = '/model';
 
 export function App2() {
 	const runtime = useMemo(() => createRuntime(), []);
 	const { isRawModeSupported } = useStdin();
 	const [sessionId, setSessionId] = useState<SessionId | undefined>();
+	const [modelName, setModelName] = useState(() => runtime.getModelName());
 
 	if (!isRawModeSupported) {
 		return (
@@ -38,12 +40,19 @@ export function App2() {
 	}
 
 	if (sessionId === undefined) {
-		return <SessionPicker onSelectSession={setSessionId} runtime={runtime} />;
+		return (
+			<SessionPicker
+				onSelectSession={setSessionId}
+				runtime={runtime}
+			/>
+		);
 	}
 
 	return (
 		<InteractiveApp
 			key={String(sessionId)}
+			modelName={modelName}
+			onModelNameChange={setModelName}
 			runtime={runtime}
 			sessionId={sessionId}
 		/>
@@ -51,6 +60,8 @@ export function App2() {
 }
 
 type InteractiveAppProps = {
+	modelName: string;
+	onModelNameChange: (modelName: string) => void;
 	runtime: Runtime;
 	sessionId: SessionId;
 };
@@ -69,7 +80,10 @@ type SessionPickerProps = {
 	onSelectSession: (sessionId: SessionId) => void;
 };
 
-const SessionPicker = ({ runtime, onSelectSession }: SessionPickerProps) => {
+const SessionPicker = ({
+	runtime,
+	onSelectSession,
+}: SessionPickerProps) => {
 	const [sessions, setSessions] = useState<StoredSession[]>([]);
 	const [selectedIndex, setSelectedIndex] = useState(0);
 	const [status, setStatus] = useState<Status>('loading');
@@ -247,7 +261,12 @@ const getSessionPickerOptionKey = (option: SessionPickerOption): string => {
 	return String(option.sessionId);
 };
 
-const InteractiveApp = ({ runtime, sessionId }: InteractiveAppProps) => {
+const InteractiveApp = ({
+	modelName,
+	onModelNameChange,
+	runtime,
+	sessionId,
+}: InteractiveAppProps) => {
 	const [input, setInput] = useState('');
 	const [cursorIndex, setCursorIndex] = useState(0);
 	const [status, setStatus] = useState<Status>('idle');
@@ -292,6 +311,13 @@ const InteractiveApp = ({ runtime, sessionId }: InteractiveAppProps) => {
 	}, [runtime, sessionId]);
 
 	const runPrompt = async (prompt: string): Promise<void> => {
+		const modelCommand = parseModelCommand(prompt);
+
+		if (modelCommand !== null) {
+			handleModelCommand(modelCommand);
+			return;
+		}
+
 		setStatus('streaming');
 		setStreamingContent('');
 		setTranscript((currentTranscript) => [
@@ -324,6 +350,35 @@ const InteractiveApp = ({ runtime, sessionId }: InteractiveAppProps) => {
 		} finally {
 			setStreamingContent('');
 			setStatus('idle');
+		}
+	};
+
+	const handleModelCommand = (command: ModelCommand): void => {
+		if (command.type === 'show') {
+			setTranscript((currentTranscript) => [
+				...currentTranscript,
+				{ role: 'assistant', content: `Current model: ${modelName}` },
+			]);
+			return;
+		}
+
+		try {
+			const nextModelName = runtime.switchModel(command.modelName);
+			onModelNameChange(nextModelName);
+			setTranscript((currentTranscript) => [
+				...currentTranscript,
+				{ role: 'assistant', content: `Model switched to ${nextModelName}.` },
+			]);
+		} catch (caughtError) {
+			const error =
+				caughtError instanceof Error
+					? caughtError
+					: new Error(String(caughtError));
+
+			setTranscript((currentTranscript) => [
+				...currentTranscript,
+				{ role: 'error', content: error.message },
+			]);
 		}
 	};
 
@@ -425,7 +480,9 @@ const InteractiveApp = ({ runtime, sessionId }: InteractiveAppProps) => {
 				cursorIndex={cursorIndex}
 				input={input}
 				isDisabled={isBusy}
+				modelName={modelName}
 				status={status}
+				workspacePath={runtime.workspacePath}
 			/>
 		</AppShell>
 	);
@@ -450,10 +507,19 @@ type AppShellProps = {
 	statusText: string;
 };
 
-const AppShell = ({ children, sessionId, status, statusText }: AppShellProps) => {
+const AppShell = ({
+	children,
+	sessionId,
+	status,
+	statusText,
+}: AppShellProps) => {
 	return (
 		<Box flexDirection="column" gap={1} paddingX={1} paddingY={1}>
-			<Header sessionId={sessionId} status={status} statusText={statusText} />
+			<Header
+				sessionId={sessionId}
+				status={status}
+				statusText={statusText}
+			/>
 			{children}
 			<Text color="gray">Press Ctrl+C to exit.</Text>
 		</Box>
@@ -466,7 +532,11 @@ type HeaderProps = {
 	statusText: string;
 };
 
-const Header = ({ sessionId, status, statusText }: HeaderProps) => {
+const Header = ({
+	sessionId,
+	status,
+	statusText,
+}: HeaderProps) => {
 	return (
 		<Box flexDirection="column">
 			<Box justifyContent="space-between">
@@ -505,6 +575,49 @@ const getStatusText = (status: Status): string => {
 
 const getStatusColor = (status: Status): 'green' | 'yellow' => {
 	return status === 'idle' ? 'green' : 'yellow';
+};
+
+const formatWorkspacePath = (workspacePath: string): string => {
+	const homeDirectory = process.env['HOME'];
+
+	if (homeDirectory === undefined) {
+		return workspacePath;
+	}
+
+	if (workspacePath === homeDirectory) {
+		return '~';
+	}
+
+	if (workspacePath.startsWith(`${homeDirectory}/`)) {
+		return `~/${workspacePath.slice(homeDirectory.length + 1)}`;
+	}
+
+	return workspacePath;
+};
+
+type ModelCommand =
+	| {
+			type: 'show';
+	  }
+	| {
+			type: 'switch';
+			modelName: string;
+	  };
+
+const parseModelCommand = (prompt: string): ModelCommand | null => {
+	const trimmedPrompt = prompt.trim();
+
+	if (trimmedPrompt === MODEL_COMMAND) {
+		return { type: 'show' };
+	}
+
+	if (!trimmedPrompt.startsWith(`${MODEL_COMMAND} `)) {
+		return null;
+	}
+
+	const modelName = trimmedPrompt.slice(MODEL_COMMAND.length).trim();
+
+	return modelName.length === 0 ? { type: 'show' } : { type: 'switch', modelName };
 };
 
 type TranscriptViewProps = {
@@ -567,10 +680,19 @@ type ComposerProps = {
 	cursorIndex: number;
 	input: string;
 	isDisabled: boolean;
+	modelName: string;
 	status: Status;
+	workspacePath: string;
 };
 
-const Composer = ({ cursorIndex, input, isDisabled, status }: ComposerProps) => {
+const Composer = ({
+	cursorIndex,
+	input,
+	isDisabled,
+	modelName,
+	status,
+	workspacePath,
+}: ComposerProps) => {
 	return (
 		<Box flexDirection="column" gap={1}>
 			<Text color="gray">
@@ -578,7 +700,7 @@ const Composer = ({ cursorIndex, input, isDisabled, status }: ComposerProps) => 
 					? 'Loading previous messages...'
 					: isDisabled
 						? 'Waiting for model response...'
-						: 'Enter to send'}
+						: 'Enter to send | /model <name>'}
 			</Text>
 
 			<Box backgroundColor={INPUT_BACKGROUND} paddingX={2} paddingY={1}>
@@ -591,6 +713,10 @@ const Composer = ({ cursorIndex, input, isDisabled, status }: ComposerProps) => 
 					<InputText cursorIndex={cursorIndex} value={input} />
 				)}
 			</Box>
+
+			<Text color="white">
+				{modelName} · {formatWorkspacePath(workspacePath)}
+			</Text>
 		</Box>
 	);
 };
