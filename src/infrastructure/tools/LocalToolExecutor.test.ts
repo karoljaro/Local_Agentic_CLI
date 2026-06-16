@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import {
+	mkdir,
+	mkdtemp,
+	readFile,
+	rm,
+	symlink,
+	writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -52,6 +59,32 @@ describe('LocalToolExecutor', () => {
 							type: 'string',
 							description:
 								'Exact text to search for. Use simple | alternatives for related terms.',
+						},
+					},
+				},
+			},
+			{
+				name: 'edit_file',
+				description:
+					'Replace exact text in a UTF-8 file in the current workspace. Use this after reading the target file.',
+				parameters: {
+					type: 'object',
+					required: ['path', 'oldText', 'newText'],
+					additionalProperties: false,
+					properties: {
+						path: {
+							type: 'string',
+							description:
+								'The path to the file to edit, relative to the workspace root.',
+						},
+						newText: {
+							type: 'string',
+							description: 'The replacement text. May be empty to remove oldText.',
+						},
+						oldText: {
+							type: 'string',
+							description:
+								'The exact text to replace. The edit will only be applied if this text appears exactly once.',
 						},
 					},
 				},
@@ -424,6 +457,110 @@ describe('LocalToolExecutor', () => {
 					truncated: true,
 				},
 			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('edits a UTF-8 file in the workspace', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await mkdir(join(directory, 'src'));
+			await writeFile(
+				join(directory, 'src', 'file.ts'),
+				'const value = 1;\n',
+				'utf8',
+			);
+
+			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const result = await executor.execute({
+				toolName: 'edit_file',
+				toolInput: {
+					path: 'src/file.ts',
+					oldText: 'const value = 1;',
+					newText: 'const value = 2;',
+				},
+			});
+
+			expect(result).toEqual({
+				toolName: 'edit_file',
+				output: {
+					path: 'src/file.ts',
+					replaced: true,
+					matchCount: 1,
+				},
+			});
+			await expect(readFile(join(directory, 'src', 'file.ts'), 'utf8')).resolves.toBe(
+				'const value = 2;\n',
+			);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('rejects edit when oldText is missing', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await writeFile(join(directory, 'file.txt'), 'hello\n', 'utf8');
+
+			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+
+			await expect(
+				executor.execute({
+					toolName: 'edit_file',
+					toolInput: {
+						path: 'file.txt',
+						oldText: 'missing',
+						newText: 'value',
+					},
+				}),
+			).rejects.toThrow('oldText was not found in file');
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('rejects edit when oldText appears more than once', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await writeFile(join(directory, 'file.txt'), 'hello\nhello\n', 'utf8');
+
+			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+
+			await expect(
+				executor.execute({
+					toolName: 'edit_file',
+					toolInput: {
+						path: 'file.txt',
+						oldText: 'hello',
+						newText: 'hi',
+					},
+				}),
+			).rejects.toThrow('oldText appears multiple times in file');
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('rejects edit paths outside the workspace', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+
+			await expect(
+				executor.execute({
+					toolName: 'edit_file',
+					toolInput: {
+						path: '../outside.txt',
+						oldText: 'hello',
+						newText: 'hi',
+					},
+				}),
+			).rejects.toThrow('Cannot edit file outside workspace');
 		} finally {
 			await cleanup();
 		}

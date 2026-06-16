@@ -8,6 +8,10 @@ import type {
 } from '@/application/ports/ToolExecutorPort';
 import type { ToolDefinition } from '@/domain/Tool';
 import {
+	EDIT_FILE_TOOL_NAME,
+	EditFileProvider,
+} from './providers/EditFileProvider';
+import {
 	SEARCH_FILE_TOOL_NAME,
 	SearchFileProvider,
 	type SearchFileProviderOptions,
@@ -27,6 +31,7 @@ type LocalToolExecutorOptions = Omit<
 export class LocalToolExecutor implements ToolExecutorPort {
 	private readonly workspaceRoot: string;
 	private readonly maxFileBytes: number;
+	private readonly editFileProvider: EditFileProvider;
 	private readonly searchFileProvider: SearchFileProvider;
 
 	constructor(options: LocalToolExecutorOptions = {}) {
@@ -34,6 +39,10 @@ export class LocalToolExecutor implements ToolExecutorPort {
 
 		this.workspaceRoot = resolve(workspaceRoot);
 		this.maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+		this.editFileProvider = new EditFileProvider({
+			workspaceRoot: this.workspaceRoot,
+			maxFileBytes: this.maxFileBytes,
+		});
 		this.searchFileProvider = new SearchFileProvider({
 			workspaceRoot: this.workspaceRoot,
 			...(options.maxSearchMatches === undefined
@@ -71,6 +80,7 @@ export class LocalToolExecutor implements ToolExecutorPort {
 				},
 			},
 			this.searchFileProvider.getToolDefinition(),
+			this.editFileProvider.getToolDefinition(),
 		];
 	}
 
@@ -82,6 +92,8 @@ export class LocalToolExecutor implements ToolExecutorPort {
 				return this.readFile(request.toolInput);
 			case SEARCH_FILE_TOOL_NAME:
 				return this.searchFileProvider.execute(request.toolInput);
+			case EDIT_FILE_TOOL_NAME:
+				return this.editFileProvider.execute(request.toolInput);
 			default:
 				throw new Error(`Unknown tool: ${request.toolName}`);
 		}
