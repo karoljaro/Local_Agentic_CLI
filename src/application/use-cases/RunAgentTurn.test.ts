@@ -31,7 +31,7 @@ import type {
 	ToolExecutorPort,
 } from '../ports/ToolExecutorPort';
 import { ContextBuilder } from '../services/ContextBuilder';
-import { RunAgentTurn } from './RunAgentTurn';
+import { RunAgentTurn, type ToolApprovalRequest } from './RunAgentTurn';
 
 class InMemorySessionStore implements SessionStorePort {
 	readonly events: AgentEvent[] = [];
@@ -99,6 +99,39 @@ class ToolCallingModel implements ModelPort {
 
 		return {
 			content: 'The file contains hello.',
+			toolCalls: [],
+		};
+	}
+
+	async *streamChat(): AsyncIterable<ModelStreamChunk> {
+		throw new Error('streamChat should not be used in this test.');
+	}
+}
+
+class EditToolCallingModel implements ModelPort {
+	readonly receivedInputs: ModelChatInput[] = [];
+
+	async chat(input: ModelChatInput): Promise<ModelChatResult> {
+		this.receivedInputs.push(input);
+
+		if (this.receivedInputs.length === 1) {
+			return {
+				content: '',
+				toolCalls: [
+					{
+						name: 'edit_file',
+						arguments: {
+							path: 'src/file.ts',
+							oldText: 'const value = 1;',
+							newText: 'const value = 2;',
+						},
+					},
+				],
+			};
+		}
+
+		return {
+			content: 'Edit handled.',
 			toolCalls: [],
 		};
 	}
@@ -227,6 +260,50 @@ class FakeToolExecutor implements ToolExecutorPort {
 			output: {
 				path: 'README.md',
 				content: 'hello',
+			},
+		};
+	}
+}
+
+class EditToolExecutor implements ToolExecutorPort {
+	readonly receivedRequests: ToolExecutionRequest[] = [];
+
+	listTools() {
+		return [
+			{
+				name: 'edit_file',
+				description: 'Edit a file',
+				requiresApproval: true,
+				parameters: {
+					type: 'object',
+					required: ['path', 'oldText', 'newText'],
+					properties: {
+						path: {
+							type: 'string',
+						},
+						oldText: {
+							type: 'string',
+						},
+						newText: {
+							type: 'string',
+						},
+					},
+				},
+			},
+		];
+	}
+
+	async execute(
+		request: ToolExecutionRequest,
+	): Promise<ToolExecutionResult> {
+		this.receivedRequests.push(request);
+
+		return {
+			toolName: request.toolName,
+			output: {
+				path: 'src/file.ts',
+				replaced: true,
+				matchCount: 1,
 			},
 		};
 	}
@@ -619,6 +696,119 @@ describe('RunAgentTurn', () => {
 				content: 'The file contains hello.',
 			},
 		]);
+	});
+
+	test('requires approval before executing a mutating tool call', async () => {
+		const sessionStore = new InMemorySessionStore();
+		const model = new EditToolCallingModel();
+		const toolExecutor = new EditToolExecutor();
+		const approvalRequests: ToolApprovalRequest[] = [];
+		const sessionId = asSessionId('session-1');
+		const useCase = new RunAgentTurn({
+			sessionStore,
+			model,
+			contextBuilder: new ContextBuilder({
+				systemPrompt: 'You are a local coding agent.',
+			}),
+			clock: new FixedClock(),
+			idGenerator: new SequenceIdGenerator(),
+			toolExecutor,
+			approveToolCall: async (request) => {
+				approvalRequests.push(request);
+				return true;
+			},
+		});
+
+		const chunks = await collectTurn(
+			useCase.run({ sessionId, prompt: 'Edit file' }),
+		);
+
+		expect(chunks).toEqual([{ contentDelta: 'Edit handled.' }]);
+		expect(approvalRequests).toEqual([
+			{
+				sessionId,
+				toolCallId: asToolCallId('tool-call-3'),
+				toolName: 'edit_file',
+				toolInput: {
+					path: 'src/file.ts',
+					oldText: 'const value = 1;',
+					newText: 'const value = 2;',
+				},
+			},
+		]);
+		expect(toolExecutor.receivedRequests).toEqual([
+			{
+				toolName: 'edit_file',
+				toolInput: {
+					path: 'src/file.ts',
+					oldText: 'const value = 1;',
+					newText: 'const value = 2;',
+				},
+			},
+		]);
+		expect(sessionStore.events.map((event) => event.type)).toEqual([
+			'prompt.submitted',
+			'tool.call.requested',
+			'tool.call.started',
+			'tool.call.completed',
+			'assistant.message.completed',
+		]);
+		expect(sessionStore.events[1]).toMatchObject({
+			type: 'tool.call.requested',
+			toolName: 'edit_file',
+			approvalRequired: true,
+		});
+	});
+
+	test('does not execute a mutating tool call when approval is denied', async () => {
+		const sessionStore = new InMemorySessionStore();
+		const model = new EditToolCallingModel();
+		const toolExecutor = new EditToolExecutor();
+		const sessionId = asSessionId('session-1');
+		const useCase = new RunAgentTurn({
+			sessionStore,
+			model,
+			contextBuilder: new ContextBuilder({
+				systemPrompt: 'You are a local coding agent.',
+			}),
+			clock: new FixedClock(),
+			idGenerator: new SequenceIdGenerator(),
+			toolExecutor,
+			approveToolCall: async () => false,
+		});
+
+		const chunks = await collectTurn(
+			useCase.run({ sessionId, prompt: 'Edit file' }),
+		);
+
+		expect(chunks).toEqual([
+			{ contentDelta: 'Tool call was not approved: edit_file' },
+		]);
+		expect(toolExecutor.receivedRequests).toEqual([]);
+		expect(model.receivedInputs).toHaveLength(1);
+		expect(sessionStore.events.map((event) => event.type)).toEqual([
+			'prompt.submitted',
+			'tool.call.requested',
+			'tool.call.failed',
+			'assistant.message.completed',
+		]);
+		expect(sessionStore.events[1]).toMatchObject({
+			type: 'tool.call.requested',
+			toolName: 'edit_file',
+			approvalRequired: true,
+		});
+		expect(sessionStore.events[2]).toMatchObject({
+			type: 'tool.call.failed',
+			toolName: 'edit_file',
+			error: {
+				message: 'Tool call was not approved: edit_file',
+				code: 'TOOL_APPROVAL_DENIED',
+			},
+		});
+		expect(sessionStore.events[3]).toMatchObject({
+			type: 'assistant.message.completed',
+			content: 'Tool call was not approved: edit_file',
+		});
 	});
 
 	test('allows the model to chain search and read tool calls before answering', async () => {

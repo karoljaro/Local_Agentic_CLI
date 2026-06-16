@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Box, Text, useInput, useStdin } from 'ink';
 
 import type { StoredSession } from '@/application/ports/SessionStorePort';
 import { createRuntime, type Runtime } from '@/composition/createRuntime';
 import type { ListedSessionEvent } from '@/application/use-cases/ListSessionEvents';
+import type { ToolApprovalRequest } from '@/application/use-cases/RunAgentTurn';
 import type { SessionId } from '@/domain/Ids';
 
 type TranscriptEntry = {
@@ -272,8 +273,27 @@ const InteractiveApp = ({
 	const [status, setStatus] = useState<Status>('idle');
 	const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
 	const [streamingContent, setStreamingContent] = useState('');
+	const [pendingApproval, setPendingApproval] =
+		useState<ToolApprovalRequest | null>(null);
+	const approvalResolveRef = useRef<((approved: boolean) => void) | null>(null);
 
 	const isBusy = status !== 'idle';
+
+	useEffect(() => {
+		const unregister = runtime.setToolApprovalHandler((request) => {
+			return new Promise<boolean>((resolve) => {
+				approvalResolveRef.current?.(false);
+				approvalResolveRef.current = resolve;
+				setPendingApproval(request);
+			});
+		});
+
+		return () => {
+			unregister();
+			approvalResolveRef.current?.(false);
+			approvalResolveRef.current = null;
+		};
+	}, [runtime]);
 
 	useEffect(() => {
 		let isCancelled = false;
@@ -382,6 +402,34 @@ const InteractiveApp = ({
 		}
 	};
 
+	const resolveToolApproval = (approved: boolean): void => {
+		const resolve = approvalResolveRef.current;
+
+		approvalResolveRef.current = null;
+		setPendingApproval(null);
+		resolve?.(approved);
+	};
+
+	useInput(
+		(value, key) => {
+			if (pendingApproval === null) {
+				return;
+			}
+
+			const normalizedValue = value.toLowerCase();
+
+			if (normalizedValue === 'y') {
+				resolveToolApproval(true);
+				return;
+			}
+
+			if (normalizedValue === 'n' || key.escape) {
+				resolveToolApproval(false);
+			}
+		},
+		{ isActive: pendingApproval !== null },
+	);
+
 	useInput(
 		(value, key) => {
 			if (key.return) {
@@ -462,19 +510,25 @@ const InteractiveApp = ({
 				setCursorIndex((currentIndex) => currentIndex + value.length);
 			}
 		},
-		{ isActive: !isBusy },
+		{ isActive: !isBusy && pendingApproval === null },
 	);
 
 	return (
 		<AppShell
 			sessionId={sessionId}
 			status={status}
-			statusText={getStatusText(status)}
+			statusText={
+				pendingApproval === null ? getStatusText(status) : 'approval required'
+			}
 		>
 			<TranscriptView
 				streamingContent={streamingContent}
 				transcript={transcript}
 			/>
+
+			{pendingApproval === null ? null : (
+				<ApprovalPrompt request={pendingApproval} />
+			)}
 
 			<Composer
 				cursorIndex={cursorIndex}
@@ -674,6 +728,68 @@ const MessageRow = ({ entry }: MessageRowProps) => {
 			<Text>{entry.content}</Text>
 		</Box>
 	);
+};
+
+type ApprovalPromptProps = {
+	request: ToolApprovalRequest;
+};
+
+const ApprovalPrompt = ({ request }: ApprovalPromptProps) => {
+	return (
+		<Box
+			backgroundColor={PANEL_BACKGROUND}
+			flexDirection="column"
+			paddingX={2}
+			paddingY={1}
+		>
+			<Text color="yellow">Approve {request.toolName}? y/n</Text>
+			{formatApprovalInput(request.toolInput).map((line, index) => (
+				<Text color="gray" key={`${index}-${line}`}>
+					{line}
+				</Text>
+			))}
+		</Box>
+	);
+};
+
+const formatApprovalInput = (toolInput: unknown): string[] => {
+	if (typeof toolInput !== 'object' || toolInput === null) {
+		return [`input ${String(toolInput)}`];
+	}
+
+	const input = toolInput as {
+		path?: unknown;
+		oldText?: unknown;
+		newText?: unknown;
+	};
+	const lines: string[] = [];
+
+	if (typeof input.path === 'string') {
+		lines.push(`path ${input.path}`);
+	}
+
+	if (typeof input.oldText === 'string') {
+		lines.push(`old ${formatInlinePreview(input.oldText)}`);
+	}
+
+	if (typeof input.newText === 'string') {
+		lines.push(`new ${formatInlinePreview(input.newText)}`);
+	}
+
+	const fallbackInput = JSON.stringify(toolInput);
+
+	return lines.length > 0
+		? lines
+		: [`input ${fallbackInput ?? String(toolInput)}`];
+};
+
+const formatInlinePreview = (text: string): string => {
+	const normalizedText = text.replaceAll('\n', '\\n');
+	const maxLength = 120;
+
+	return normalizedText.length <= maxLength
+		? normalizedText
+		: `${normalizedText.slice(0, maxLength)}...`;
 };
 
 type ComposerProps = {

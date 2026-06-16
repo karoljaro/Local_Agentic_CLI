@@ -34,6 +34,7 @@ export class EditFileProvider {
 			name: EDIT_FILE_TOOL_NAME,
 			description:
 				'Replace exact text in a UTF-8 file in the current workspace. Use this after reading the target file.',
+			requiresApproval: true,
 			parameters: {
 				type: 'object',
 				required: ['path', 'oldText', 'newText'],

@@ -1,7 +1,10 @@
 import type { IdGeneratorPort } from '@/application/ports/IdGeneratorPort';
 import type { ModelPort } from '@/application/ports/ModelPort';
 import { ContextBuilder } from '@/application/services/ContextBuilder';
-import { RunAgentTurn } from '@/application/use-cases/RunAgentTurn';
+import {
+	RunAgentTurn,
+	type ToolApprovalHandler,
+} from '@/application/use-cases/RunAgentTurn';
 import { OllamaModelAdapter } from '@/infrastructure/model/OllamaModelAdapter';
 import { JsonlSessionStore } from '@/infrastructure/persistence/JsonlSessionStore';
 import { BunUuidV7IdGenerator } from '@/infrastructure/runtime/BunUuidV7IdGenerator';
@@ -21,6 +24,7 @@ export type Runtime = {
 	workspacePath: string;
 	getModelName: () => string;
 	switchModel: (modelName: string) => string;
+	setToolApprovalHandler: (handler: ToolApprovalHandler) => () => void;
 };
 
 export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
@@ -40,6 +44,7 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 	const idGenerator = new BunUuidV7IdGenerator();
 	const clock = new TemporalClock();
 	const toolExecutor = new LocalToolExecutor();
+	let currentToolApprovalHandler: ToolApprovalHandler = async () => false;
 
 	const contextBuilder = new ContextBuilder({
 		systemPrompt: config.SYSTEM_PROMPT,
@@ -73,6 +78,15 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 
 			return currentModelName;
 		},
+		setToolApprovalHandler: (handler) => {
+			currentToolApprovalHandler = handler;
+
+			return () => {
+				if (currentToolApprovalHandler === handler) {
+					currentToolApprovalHandler = async () => false;
+				}
+			};
+		},
 		runAgentTurn: new RunAgentTurn({
 			sessionStore,
 			model,
@@ -80,6 +94,7 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 			clock,
 			idGenerator,
 			toolExecutor,
+			approveToolCall: (request) => currentToolApprovalHandler(request),
 		}),
 	};
 };
