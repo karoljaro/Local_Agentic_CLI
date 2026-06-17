@@ -13,6 +13,8 @@ import {
 } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 
+import { isPathInside } from './isPathInside';
+
 type ResolvedWorkspaceFile = {
 	realTargetPath: string;
 	relativePath: string;
@@ -72,7 +74,7 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 		const realWorkspaceRoot = await realpath(this.workspaceRoot);
 		const targetPath = resolve(realWorkspaceRoot, inputPath);
 
-		if (!this.isPathInside(realWorkspaceRoot, targetPath)) {
+		if (!isPathInside(realWorkspaceRoot, targetPath)) {
 			throw new Error(
 				`Cannot access file outside workspace: ${inputPath}`
 			);
@@ -80,7 +82,7 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 
 		const realTargetPath = await realpath(targetPath);
 
-		if (!this.isPathInside(realWorkspaceRoot, realTargetPath)) {
+		if (!isPathInside(realWorkspaceRoot, realTargetPath)) {
 			throw new Error(
 				`Cannot access file outside workspace: ${inputPath}`
 			);
@@ -102,12 +104,4 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 		};
 	}
 
-	private isPathInside(parentPath: string, childPath: string): boolean {
-		const relativePath = relative(parentPath, childPath);
-
-		return (
-			relativePath === '' ||
-			(!relativePath.startsWith('..') && !isAbsolute(relativePath))
-		);
-	}
 }

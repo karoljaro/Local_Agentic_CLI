@@ -395,6 +395,64 @@ describe('LocalToolExecutor', () => {
 		}
 	});
 
+	test('searches pipe-separated terms without definition-only fallback', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await mkdir(join(directory, 'src'));
+			await writeFile(
+				join(directory, 'src', 'calculator.py'),
+				['def add(a, b):', '    return a + b', ''].join('\n'),
+				'utf8',
+			);
+			await writeFile(
+				join(directory, 'src', 'usage.ts'),
+				'calculator.divide(10, 2);\n',
+				'utf8',
+			);
+
+			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const result = await executor.execute({
+				toolName: 'search_file',
+				toolInput: { query: 'add|divide' },
+			});
+
+			expect(result).toEqual({
+				toolName: 'search_file',
+				output: {
+					query: 'add|divide',
+					matchCount: 2,
+					fileCount: 2,
+					topFiles: [
+						{
+							path: 'src/calculator.py',
+							matchCount: 1,
+						},
+						{
+							path: 'src/usage.ts',
+							matchCount: 1,
+						},
+					],
+					matches: [
+						{
+							path: 'src/calculator.py',
+							line: 1,
+							text: 'def add(a, b):',
+						},
+						{
+							path: 'src/usage.ts',
+							line: 1,
+							text: 'calculator.divide(10, 2);',
+						},
+					],
+					truncated: false,
+				},
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
 	test('rejects empty search queries', async () => {
 		const { directory, cleanup } = await createTempWorkspace();
 
