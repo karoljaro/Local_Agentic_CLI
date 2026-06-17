@@ -44,16 +44,21 @@ export class LocalToolExecutor implements ToolExecutorPort {
 
 		this.workspaceRoot = resolve(workspaceRoot);
 		this.maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+		const workspaceFiles = new NodeWorkspaceFileSystem(this.workspaceRoot);
+
 		this.readFileProvider = new ReadFileProvider(
-			new ReadWorkspaceFile(new NodeWorkspaceFileSystem(this.workspaceRoot)),
+			new ReadWorkspaceFile(workspaceFiles),
 			{
 				maxFileBytes: this.maxFileBytes,
 			},
 		);
+
 		this.editFileProvider = new EditFileProvider({
 			workspaceRoot: this.workspaceRoot,
 			maxFileBytes: this.maxFileBytes,
+			workspaceFiles,
 		});
+		
 		this.searchFileProvider = new SearchFileProvider({
 			workspaceRoot: this.workspaceRoot,
 			...(options.maxSearchMatches === undefined

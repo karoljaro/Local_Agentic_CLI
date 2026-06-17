@@ -129,7 +129,7 @@ describe('LocalToolExecutor', () => {
 					toolName: 'read_file',
 					toolInput: { path: '../outside.txt' },
 				}),
-			).rejects.toThrow('Cannot read file outside workspace');
+			).rejects.toThrow('Cannot access file outside workspace');
 		} finally {
 			await cleanup();
 		}
@@ -167,7 +167,7 @@ describe('LocalToolExecutor', () => {
 					toolName: 'read_file',
 					toolInput: { path: 'link.txt' },
 				}),
-			).rejects.toThrow('Cannot read file outside workspace');
+			).rejects.toThrow('Cannot access file outside workspace');
 		} finally {
 			await cleanup();
 			await rm(outsideDirectory, { recursive: true, force: true });
@@ -605,7 +605,7 @@ describe('LocalToolExecutor', () => {
 						newText: 'hi',
 					},
 				}),
-			).rejects.toThrow('Cannot edit file outside workspace');
+			).rejects.toThrow('Cannot access file outside workspace');
 		} finally {
 			await cleanup();
 		}

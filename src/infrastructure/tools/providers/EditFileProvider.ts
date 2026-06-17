@@ -1,13 +1,15 @@
+import type { WorkspaceFilePort } from '@/application/ports/WorkspaceFilePort';
 import type { ToolExecutionResult } from '@/application/ports/ToolExecutorPort';
 import type { ToolDefinition } from '@/domain/Tool';
-import { readFile, realpath, stat, writeFile } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 
 export const EDIT_FILE_TOOL_NAME = 'edit_file';
 
 type EditFileProviderOptions = {
 	workspaceRoot: string;
 	maxFileBytes: number;
+	workspaceFiles: WorkspaceFilePort;
 };
 
 type EditFileInput = {
@@ -19,10 +21,12 @@ type EditFileInput = {
 export class EditFileProvider {
 	private readonly workspaceRoot: string;
 	private readonly maxFileBytes: number;
+	private readonly workspaceFiles: WorkspaceFilePort;
 
 	constructor(options: EditFileProviderOptions) {
 		this.workspaceRoot = resolve(options.workspaceRoot);
 		this.maxFileBytes = options.maxFileBytes;
+		this.workspaceFiles = options.workspaceFiles;
 
 		if (this.maxFileBytes <= 0) {
 			throw new Error('Max file size must be greater than zero.');
@@ -61,40 +65,13 @@ export class EditFileProvider {
 
 	async execute(toolInput: unknown): Promise<ToolExecutionResult> {
 		const input = parseEditFileInput(toolInput);
-
-		if (isAbsolute(input.path)) {
-			throw new Error('edit_file requires a relative path.');
-		}
-
-		const targetPath = resolve(this.workspaceRoot, input.path);
-
-		if (!isPathInside(this.workspaceRoot, targetPath)) {
-			throw new Error(`Cannot edit file outside workspace: ${input.path}`);
-		}
-
-		const realWorkspaceRoot = await realpath(this.workspaceRoot);
-		const realTargetPath = await realpath(targetPath);
-
-		if (!isPathInside(realWorkspaceRoot, realTargetPath)) {
-			throw new Error(`Cannot edit file outside workspace: ${input.path}`);
-		}
-
-		const fileStats = await stat(realTargetPath);
-
-		if (!fileStats.isFile()) {
-			throw new Error(`Path is not a file: ${input.path}`);
-		}
-
-		if (fileStats.size > this.maxFileBytes) {
-			throw new Error(
-				`File is too large: ${input.path} (${fileStats.size} bytes, max ${this.maxFileBytes})`,
-			);
-		}
-
-		const content = await readFile(realTargetPath, 'utf8');
+		const file = await this.workspaceFiles.readFile({
+			path: input.path,
+			maxFileBytes: this.maxFileBytes,
+		});
 		const oldText = normalizeEscapedLineBreaks(input.oldText);
 		const newText = normalizeEscapedLineBreaks(input.newText);
-		const matchCount = content.split(oldText).length - 1;
+		const matchCount = file.content.split(oldText).length - 1;
 
 		if (matchCount === 0) {
 			throw new Error(`oldText was not found in file: ${input.path}`);
@@ -107,15 +84,15 @@ export class EditFileProvider {
 		}
 
 		await writeFile(
-			realTargetPath,
-			content.replace(oldText, newText),
+			resolve(this.workspaceRoot, file.path),
+			file.content.replace(oldText, newText),
 			'utf8',
 		);
 
 		return {
 			toolName: EDIT_FILE_TOOL_NAME,
 			output: {
-				path: relative(realWorkspaceRoot, realTargetPath),
+				path: file.path,
 				replaced: true,
 				matchCount,
 			},
@@ -158,13 +135,4 @@ const normalizeEscapedLineBreaks = (text: string): string => {
 		.replaceAll('\\r\\n', '\n')
 		.replaceAll('\\n', '\n')
 		.replaceAll('\\r', '\n');
-};
-
-const isPathInside = (parentPath: string, childPath: string): boolean => {
-	const relativePath = relative(parentPath, childPath);
-
-	return (
-		relativePath.length === 0 ||
-		(!relativePath.startsWith('..') && !isAbsolute(relativePath))
-	);
 };

@@ -27,13 +27,13 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 		const targetPath = resolve(realWorkspaceRoot, input.path);
 
 		if (!this.isPathInside(realWorkspaceRoot, targetPath)) {
-			throw new Error(`Cannot read file outside workspace: ${input.path}`);
+			throw new Error(`Cannot access file outside workspace: ${input.path}`);
 		}
 
 		const realTargetPath = await realpath(targetPath);
 
 		if (!this.isPathInside(realWorkspaceRoot, realTargetPath)) {
-			throw new Error(`Cannot read file outside workspace: ${input.path}`);
+			throw new Error(`Cannot access file outside workspace: ${input.path}`);
 		}
 
 		const fileStats = await stat(realTargetPath);
