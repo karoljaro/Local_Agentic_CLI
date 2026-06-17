@@ -146,7 +146,7 @@ describe('LocalToolExecutor', () => {
 					toolName: 'read_file',
 					toolInput: { path: join(directory, 'file.txt') },
 				}),
-			).rejects.toThrow('read_file requires a relative path.');
+			).rejects.toThrow('Workspace file path must be relative.');
 		} finally {
 			await cleanup();
 		}

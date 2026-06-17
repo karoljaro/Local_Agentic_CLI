@@ -5,7 +5,9 @@ import type {
 	ToolExecutionResult,
 	ToolExecutorPort,
 } from '@/application/ports/ToolExecutorPort';
+import { ReadWorkspaceFile } from '@/application/use-cases/file-operations/ReadWorkspaceFile';
 import type { ToolDefinition } from '@/domain/Tool';
+import { NodeWorkspaceFileSystem } from '@/infrastructure/file-system/NodeWorkspaceFileSystem';
 import {
 	EDIT_FILE_TOOL_NAME,
 	EditFileProvider,
@@ -42,10 +44,12 @@ export class LocalToolExecutor implements ToolExecutorPort {
 
 		this.workspaceRoot = resolve(workspaceRoot);
 		this.maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
-		this.readFileProvider = new ReadFileProvider({
-			workspaceRoot: this.workspaceRoot,
-			maxFileBytes: this.maxFileBytes,
-		});
+		this.readFileProvider = new ReadFileProvider(
+			new ReadWorkspaceFile(new NodeWorkspaceFileSystem(this.workspaceRoot)),
+			{
+				maxFileBytes: this.maxFileBytes,
+			},
+		);
 		this.editFileProvider = new EditFileProvider({
 			workspaceRoot: this.workspaceRoot,
 			maxFileBytes: this.maxFileBytes,

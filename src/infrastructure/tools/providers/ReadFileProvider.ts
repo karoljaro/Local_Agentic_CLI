@@ -1,12 +1,10 @@
 import type { ToolExecutionResult } from '@/application/ports/ToolExecutorPort';
+import type { ReadWorkspaceFile } from '@/application/use-cases/file-operations/ReadWorkspaceFile';
 import type { ToolDefinition } from '@/domain/Tool';
-import { readFile, realpath, stat } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
 
 export const READ_FILE_TOOL_NAME = 'read_file';
 
 export type ReadFileProviderOptions = {
-	workspaceRoot: string;
 	maxFileBytes: number;
 };
 
@@ -15,17 +13,10 @@ type ReadFileInput = {
 };
 
 export class ReadFileProvider {
-	private readonly workspaceRoot: string;
-	private readonly maxFileBytes: number;
-
-	constructor(options: ReadFileProviderOptions) {
-		this.workspaceRoot = resolve(options.workspaceRoot);
-		this.maxFileBytes = options.maxFileBytes;
-
-		if (this.maxFileBytes <= 0) {
-			throw new Error('Max file size must be greater than zero.');
-		}
-	}
+	constructor(
+		private readonly readWorkspaceFile: ReadWorkspaceFile,
+		private readonly options: ReadFileProviderOptions
+	) {}
 
 	getToolDefinition(): ToolDefinition {
 		return {
@@ -39,7 +30,8 @@ export class ReadFileProvider {
 				properties: {
 					path: {
 						type: 'string',
-						description: 'Relative path to a file in the current workspace.',
+						description:
+							'Relative path to a file in the current workspace.',
 					},
 				},
 			},
@@ -49,43 +41,14 @@ export class ReadFileProvider {
 	async execute(toolInput: unknown): Promise<ToolExecutionResult> {
 		const input = parseReadFileInput(toolInput);
 
-		if (isAbsolute(input.path)) {
-			throw new Error('read_file requires a relative path.');
-		}
-
-		const targetPath = resolve(this.workspaceRoot, input.path);
-
-		if (!isPathInside(this.workspaceRoot, targetPath)) {
-			throw new Error(`Cannot read file outside workspace: ${input.path}`);
-		}
-
-		const realWorkspaceRoot = await realpath(this.workspaceRoot);
-		const realTargetPath = await realpath(targetPath);
-
-		if (!isPathInside(realWorkspaceRoot, realTargetPath)) {
-			throw new Error(`Cannot read file outside workspace: ${input.path}`);
-		}
-
-		const fileStats = await stat(realTargetPath);
-
-		if (!fileStats.isFile()) {
-			throw new Error(`Path is not a file: ${input.path}`);
-		}
-
-		if (fileStats.size > this.maxFileBytes) {
-			throw new Error(
-				`File is too large: ${input.path} (${fileStats.size} bytes, max ${this.maxFileBytes})`,
-			);
-		}
-
-		const content = await readFile(realTargetPath, 'utf8');
+		const file = await this.readWorkspaceFile.execute({
+			path: input.path,
+			maxFileBytes: this.options.maxFileBytes,
+		});
 
 		return {
 			toolName: READ_FILE_TOOL_NAME,
-			output: {
-				path: relative(realWorkspaceRoot, realTargetPath),
-				content,
-			},
+			output: file,
 		};
 	}
 }
@@ -104,13 +67,4 @@ const parseReadFileInput = (toolInput: unknown): ReadFileInput => {
 	return {
 		path: toolInput.path.trim(),
 	};
-};
-
-const isPathInside = (parentPath: string, childPath: string): boolean => {
-	const relativePath = relative(parentPath, childPath);
-
-	return (
-		relativePath.length === 0 ||
-		(!relativePath.startsWith('..') && !isAbsolute(relativePath))
-	);
 };
