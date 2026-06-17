@@ -979,9 +979,9 @@ describe('RunAgentTurn', () => {
 			collectTurn(useCase.run({ sessionId, prompt: 'Keep reading' })),
 		).rejects.toThrow('Tool iteration limit reached.');
 
-		expect(toolExecutor.receivedRequests).toHaveLength(6);
+		expect(toolExecutor.receivedRequests).toHaveLength(12);
 		expect(sessionStore.events.at(-1)).toEqual({
-			id: asEventId('event-27'),
+			id: asEventId('event-51'),
 			sessionId,
 			type: 'agent.error',
 			timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),

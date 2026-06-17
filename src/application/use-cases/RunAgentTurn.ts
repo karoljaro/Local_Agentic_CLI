@@ -22,7 +22,7 @@ import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
 import type { ToolExecutorPort } from '../ports/ToolExecutorPort';
 
-const MAX_TOOL_ITERATIONS = 6;
+const MAX_TOOL_ITERATIONS = 12;
 
 export type RunAgentTurnInput = {
 	sessionId: SessionId;

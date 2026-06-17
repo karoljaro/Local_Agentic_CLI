@@ -49,19 +49,18 @@ describe('LocalToolExecutor', () => {
 			{
 				name: 'search_file',
 				description:
-					'Find relevant content in a workspace. Use this tool to locate files, code, symbols, strings, configuration values, TODOs, errors, logs, and patterns before opening or reading files. Returns matching file paths, line numbers, and excerpts.',
+					'Search workspace files for exact text. Use | for alternatives. Returns matching paths, line numbers, and excerpts.',
 				parameters: {
 					type: 'object',
 					required: ['query'],
 					additionalProperties: false,
 					properties: {
-						query: {
-							type: 'string',
-							description:
-								'Exact text to search for. Use simple | alternatives for related terms.',
-						},
+					query: {
+						type: 'string',
+						description: 'Exact text or | separated alternatives.',
 					},
 				},
+			},
 			},
 			{
 				name: 'edit_file',
@@ -221,15 +220,8 @@ describe('LocalToolExecutor', () => {
 			expect(result).toEqual({
 				toolName: 'search_file',
 				output: {
-					query: 'needle',
 					matchCount: 1,
 					fileCount: 1,
-					topFiles: [
-						{
-							path: 'src/first.ts',
-							matchCount: 1,
-						},
-					],
 					matches: [
 						{
 							path: 'src/first.ts',
@@ -260,10 +252,8 @@ describe('LocalToolExecutor', () => {
 			expect(result).toEqual({
 				toolName: 'search_file',
 				output: {
-					query: 'missing',
 					matchCount: 0,
 					fileCount: 0,
-					topFiles: [],
 					matches: [],
 					truncated: false,
 				},
@@ -273,7 +263,7 @@ describe('LocalToolExecutor', () => {
 		}
 	});
 
-	test('falls back to a relevant token when literal search finds no matches', async () => {
+	test('does not split natural-language queries into fallback tokens', async () => {
 		const { directory, cleanup } = await createTempWorkspace();
 
 		try {
@@ -293,22 +283,9 @@ describe('LocalToolExecutor', () => {
 			expect(result).toEqual({
 				toolName: 'search_file',
 				output: {
-					query: 'UserRepository tests',
-					matchCount: 1,
-					fileCount: 1,
-					topFiles: [
-						{
-							path: 'tests/users.test.ts',
-							matchCount: 1,
-						},
-					],
-					matches: [
-						{
-							path: 'tests/users.test.ts',
-							line: 1,
-							text: 'const repo = new UserRepository();',
-						},
-					],
+					matchCount: 0,
+					fileCount: 0,
+					matches: [],
 					truncated: false,
 				},
 			});
@@ -317,7 +294,7 @@ describe('LocalToolExecutor', () => {
 		}
 	});
 
-	test('falls back to pipe-separated query tokens', async () => {
+	test('searches pipe-separated alternatives', async () => {
 		const { directory, cleanup } = await createTempWorkspace();
 
 		try {
@@ -356,15 +333,8 @@ describe('LocalToolExecutor', () => {
 			expect(result).toEqual({
 				toolName: 'search_file',
 				output: {
-					query,
 					matchCount: 4,
 					fileCount: 1,
-					topFiles: [
-						{
-							path: 'src/calculator.py',
-							matchCount: 4,
-						},
-					],
 					matches: [
 						{
 							path: 'src/calculator.py',
@@ -420,19 +390,8 @@ describe('LocalToolExecutor', () => {
 			expect(result).toEqual({
 				toolName: 'search_file',
 				output: {
-					query: 'add|divide',
 					matchCount: 2,
 					fileCount: 2,
-					topFiles: [
-						{
-							path: 'src/calculator.py',
-							matchCount: 1,
-						},
-						{
-							path: 'src/usage.ts',
-							matchCount: 1,
-						},
-					],
 					matches: [
 						{
 							path: 'src/calculator.py',
@@ -443,6 +402,43 @@ describe('LocalToolExecutor', () => {
 							path: 'src/usage.ts',
 							line: 1,
 							text: 'calculator.divide(10, 2);',
+						},
+					],
+					truncated: false,
+				},
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('excludes secret env files but includes safe env examples', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await writeFile(join(directory, '.env'), 'SECRET_TOKEN=hidden\n', 'utf8');
+			await writeFile(
+				join(directory, '.env.example'),
+				'SECRET_TOKEN=example\n',
+				'utf8',
+			);
+
+			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const result = await executor.execute({
+				toolName: 'search_file',
+				toolInput: { query: 'SECRET_TOKEN' },
+			});
+
+			expect(result).toEqual({
+				toolName: 'search_file',
+				output: {
+					matchCount: 1,
+					fileCount: 1,
+					matches: [
+						{
+							path: '.env.example',
+							line: 1,
+							text: 'SECRET_TOKEN=example',
 						},
 					],
 					truncated: false,
@@ -492,15 +488,8 @@ describe('LocalToolExecutor', () => {
 			expect(result).toEqual({
 				toolName: 'search_file',
 				output: {
-					query: 'needle',
 					matchCount: 3,
 					fileCount: 1,
-					topFiles: [
-						{
-							path: 'file.txt',
-							matchCount: 3,
-						},
-					],
 					matches: [
 						{
 							path: 'file.txt',
