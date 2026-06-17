@@ -544,6 +544,32 @@ describe('LocalToolExecutor', () => {
 		}
 	});
 
+	test('rejects edit when replacement exceeds the file size limit', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await writeFile(join(directory, 'file.txt'), 'short', 'utf8');
+
+			const executor = new LocalToolExecutor({
+				workspaceRoot: directory,
+				maxFileBytes: 8,
+			});
+
+			await expect(
+				executor.execute({
+					toolName: 'edit_file',
+					toolInput: {
+						path: 'file.txt',
+						oldText: 'short',
+						newText: 'long replacement',
+					},
+				}),
+			).rejects.toThrow('File content is too large');
+		} finally {
+			await cleanup();
+		}
+	});
+
 	test('rejects edit when oldText is missing', async () => {
 		const { directory, cleanup } = await createTempWorkspace();
 

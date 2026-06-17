@@ -1,13 +1,10 @@
 import type { WorkspaceFilePort } from '@/application/ports/WorkspaceFilePort';
 import type { ToolExecutionResult } from '@/application/ports/ToolExecutorPort';
 import type { ToolDefinition } from '@/domain/Tool';
-import { writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
 
 export const EDIT_FILE_TOOL_NAME = 'edit_file';
 
 type EditFileProviderOptions = {
-	workspaceRoot: string;
 	maxFileBytes: number;
 	workspaceFiles: WorkspaceFilePort;
 };
@@ -19,12 +16,10 @@ type EditFileInput = {
 };
 
 export class EditFileProvider {
-	private readonly workspaceRoot: string;
 	private readonly maxFileBytes: number;
 	private readonly workspaceFiles: WorkspaceFilePort;
 
 	constructor(options: EditFileProviderOptions) {
-		this.workspaceRoot = resolve(options.workspaceRoot);
 		this.maxFileBytes = options.maxFileBytes;
 		this.workspaceFiles = options.workspaceFiles;
 
@@ -83,16 +78,16 @@ export class EditFileProvider {
 			);
 		}
 
-		await writeFile(
-			resolve(this.workspaceRoot, file.path),
-			file.content.replace(oldText, newText),
-			'utf8',
-		);
+		const writtenFile = await this.workspaceFiles.writeFile({
+			path: file.path,
+			content: file.content.replace(oldText, newText),
+			maxFileBytes: this.maxFileBytes,
+		});
 
 		return {
 			toolName: EDIT_FILE_TOOL_NAME,
 			output: {
-				path: file.path,
+				path: writtenFile.path,
 				replaced: true,
 				matchCount,
 			},

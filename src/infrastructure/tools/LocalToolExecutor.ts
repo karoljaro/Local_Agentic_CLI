@@ -54,11 +54,10 @@ export class LocalToolExecutor implements ToolExecutorPort {
 		);
 
 		this.editFileProvider = new EditFileProvider({
-			workspaceRoot: this.workspaceRoot,
 			maxFileBytes: this.maxFileBytes,
 			workspaceFiles,
 		});
-		
+
 		this.searchFileProvider = new SearchFileProvider({
 			workspaceRoot: this.workspaceRoot,
 			...(options.maxSearchMatches === undefined
