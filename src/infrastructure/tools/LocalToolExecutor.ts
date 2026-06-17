@@ -5,6 +5,7 @@ import type {
 	ToolExecutionResult,
 	ToolExecutorPort,
 } from '@/application/ports/ToolExecutorPort';
+import { ListWorkspaceFiles } from '@/application/use-cases/file-operations/ListWorkspaceFiles';
 import { ReadWorkspaceFile } from '@/application/use-cases/file-operations/ReadWorkspaceFile';
 import type { ToolDefinition } from '@/domain/Tool';
 import { NodeWorkspaceFileSystem } from '@/infrastructure/file-system/NodeWorkspaceFileSystem';
@@ -12,6 +13,10 @@ import {
 	EDIT_FILE_TOOL_NAME,
 	EditFileProvider,
 } from './providers/EditFileProvider';
+import {
+	LIST_FILES_TOOL_NAME,
+	ListFilesProvider,
+} from './providers/ListFilesProvider';
 import {
 	READ_FILE_TOOL_NAME,
 	ReadFileProvider,
@@ -23,6 +28,7 @@ import {
 } from './providers/SearchFileProvider';
 
 const DEFAULT_MAX_FILE_BYTES = 200_000;
+const DEFAULT_MAX_LIST_FILES = 500;
 
 type LocalToolExecutorOptions = Omit<
 	SearchFileProviderOptions,
@@ -30,11 +36,13 @@ type LocalToolExecutorOptions = Omit<
 > & {
 	workspaceRoot?: string;
 	maxFileBytes?: number;
+	maxListFiles?: number;
 };
 
 export class LocalToolExecutor implements ToolExecutorPort {
 	private readonly workspaceRoot: string;
 	private readonly maxFileBytes: number;
+	private readonly listFilesProvider: ListFilesProvider;
 	private readonly readFileProvider: ReadFileProvider;
 	private readonly editFileProvider: EditFileProvider;
 	private readonly searchFileProvider: SearchFileProvider;
@@ -44,13 +52,21 @@ export class LocalToolExecutor implements ToolExecutorPort {
 
 		this.workspaceRoot = resolve(workspaceRoot);
 		this.maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+		const maxListFiles = options.maxListFiles ?? DEFAULT_MAX_LIST_FILES;
 		const workspaceFiles = new NodeWorkspaceFileSystem(this.workspaceRoot);
+
+		this.listFilesProvider = new ListFilesProvider(
+			new ListWorkspaceFiles(workspaceFiles),
+			{
+				maxEntries: maxListFiles,
+			}
+		);
 
 		this.readFileProvider = new ReadFileProvider(
 			new ReadWorkspaceFile(workspaceFiles),
 			{
 				maxFileBytes: this.maxFileBytes,
-			},
+			}
 		);
 
 		this.editFileProvider = new EditFileProvider({
@@ -74,16 +90,17 @@ export class LocalToolExecutor implements ToolExecutorPort {
 
 	listTools(): ToolDefinition[] {
 		return [
+			this.listFilesProvider.getToolDefinition(),
 			this.readFileProvider.getToolDefinition(),
 			this.searchFileProvider.getToolDefinition(),
 			this.editFileProvider.getToolDefinition(),
 		];
 	}
 
-	async execute(
-		request: ToolExecutionRequest,
-	): Promise<ToolExecutionResult> {
+	async execute(request: ToolExecutionRequest): Promise<ToolExecutionResult> {
 		switch (request.toolName) {
+			case LIST_FILES_TOOL_NAME:
+				return this.listFilesProvider.execute(request.toolInput);
 			case READ_FILE_TOOL_NAME:
 				return this.readFileProvider.execute(request.toolInput);
 			case SEARCH_FILE_TOOL_NAME:

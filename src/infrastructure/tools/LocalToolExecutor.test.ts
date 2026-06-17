@@ -31,6 +31,23 @@ describe('LocalToolExecutor', () => {
 
 		expect(executor.listTools()).toEqual([
 			{
+				name: 'list_files',
+				description:
+					'Recursively list file paths in the workspace or under an optional relative path. Use this to discover project structure or locate files by name or extension. Do not use it to search file contents; use search_file instead.',
+				parameters: {
+					type: 'object',
+					required: [],
+					additionalProperties: false,
+					properties: {
+						path: {
+							type: 'string',
+							description:
+								'Optional relative file or directory path. Defaults to the workspace root.',
+						},
+					},
+				},
+			},
+			{
 				name: 'read_file',
 				description:
 					'Read a UTF-8 text file from the current workspace. Use relative paths.',
@@ -55,12 +72,12 @@ describe('LocalToolExecutor', () => {
 					required: ['query'],
 					additionalProperties: false,
 					properties: {
-					query: {
-						type: 'string',
-						description: 'Exact text or | separated alternatives.',
+						query: {
+							type: 'string',
+							description: 'Exact text or | separated alternatives.',
+						},
 					},
 				},
-			},
 			},
 			{
 				name: 'edit_file',
@@ -90,6 +107,194 @@ describe('LocalToolExecutor', () => {
 				},
 			},
 		]);
+	});
+
+	test('lists workspace file paths', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await mkdir(join(directory, 'src', 'nested'), { recursive: true });
+			await writeFile(join(directory, 'src', 'first.ts'), 'first', 'utf8');
+			await writeFile(
+				join(directory, 'src', 'nested', 'second.ts'),
+				'second',
+				'utf8',
+			);
+
+			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const result = await executor.execute({
+				toolName: 'list_files',
+				toolInput: {},
+			});
+
+			expect(result).toEqual({
+				toolName: 'list_files',
+				output: {
+					files: ['src/first.ts', 'src/nested/second.ts'],
+					truncated: false,
+				},
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('lists files from a relative directory', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await mkdir(join(directory, 'src'));
+			await mkdir(join(directory, 'tests'));
+			await writeFile(join(directory, 'src', 'file.ts'), 'source', 'utf8');
+			await writeFile(join(directory, 'tests', 'file.test.ts'), 'test', 'utf8');
+
+			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const result = await executor.execute({
+				toolName: 'list_files',
+				toolInput: { path: 'src' },
+			});
+
+			expect(result).toEqual({
+				toolName: 'list_files',
+				output: {
+					files: ['src/file.ts'],
+					truncated: false,
+				},
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('excludes internal directories and unsafe env files from list_files', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await mkdir(join(directory, '.agent'));
+			await mkdir(join(directory, '.git'));
+			await mkdir(join(directory, 'node_modules', 'pkg'), { recursive: true });
+			await mkdir(join(directory, 'src'));
+			await writeFile(join(directory, '.agent', 'event.jsonl'), 'agent', 'utf8');
+			await writeFile(join(directory, '.env'), 'SECRET=value', 'utf8');
+			await writeFile(join(directory, '.env.example'), 'SECRET=example', 'utf8');
+			await writeFile(join(directory, '.env.local'), 'SECRET=local', 'utf8');
+			await writeFile(join(directory, '.git', 'config'), 'git', 'utf8');
+			await writeFile(
+				join(directory, 'node_modules', 'pkg', 'index.js'),
+				'module',
+				'utf8',
+			);
+			await writeFile(join(directory, 'src', 'file.ts'), 'source', 'utf8');
+
+			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const result = await executor.execute({
+				toolName: 'list_files',
+				toolInput: {},
+			});
+
+			expect(result).toEqual({
+				toolName: 'list_files',
+				output: {
+					files: ['.env.example', 'src/file.ts'],
+					truncated: false,
+				},
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('limits listed file paths', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await writeFile(join(directory, 'a.ts'), 'a', 'utf8');
+			await writeFile(join(directory, 'b.ts'), 'b', 'utf8');
+			await writeFile(join(directory, 'c.ts'), 'c', 'utf8');
+
+			const executor = new LocalToolExecutor({
+				workspaceRoot: directory,
+				maxListFiles: 2,
+			});
+			const result = await executor.execute({
+				toolName: 'list_files',
+				toolInput: {},
+			});
+
+			expect(result).toEqual({
+				toolName: 'list_files',
+				output: {
+					files: ['a.ts', 'b.ts'],
+					truncated: true,
+				},
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('does not mark list_files truncated when results exactly match the limit', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await writeFile(join(directory, 'a.ts'), 'a', 'utf8');
+			await writeFile(join(directory, 'b.ts'), 'b', 'utf8');
+
+			const executor = new LocalToolExecutor({
+				workspaceRoot: directory,
+				maxListFiles: 2,
+			});
+			const result = await executor.execute({
+				toolName: 'list_files',
+				toolInput: {},
+			});
+
+			expect(result).toEqual({
+				toolName: 'list_files',
+				output: {
+					files: ['a.ts', 'b.ts'],
+					truncated: false,
+				},
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('rejects list_files paths outside the workspace', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+
+			await expect(
+				executor.execute({
+					toolName: 'list_files',
+					toolInput: { path: '../outside' },
+				}),
+			).rejects.toThrow('Cannot access file outside workspace');
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('rejects direct reads of protected env files', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await writeFile(join(directory, '.env'), 'SECRET=value', 'utf8');
+
+			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+
+			await expect(
+				executor.execute({
+					toolName: 'read_file',
+					toolInput: { path: '.env' },
+				}),
+			).rejects.toThrow('Cannot access protected file');
+		} finally {
+			await cleanup();
+		}
 	});
 
 	test('reads a UTF-8 file from the workspace', async () => {
