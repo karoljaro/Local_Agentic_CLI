@@ -1,26 +1,38 @@
 import { chmod, mkdir } from 'node:fs/promises';
 
-const outfile = 'dist/local-agentic-cli';
-
 await mkdir('dist', { recursive: true });
 
-const result = await Bun.build({
+const shared = {
 	entrypoints: ['./index.tsx'],
+	minify: true,
+	sourcemap: false,
+} satisfies Bun.BuildConfig;
+
+const linux = await Bun.build({
+	...shared,
 	outdir: 'dist',
 	naming: 'local-agentic-cli',
 	target: 'bun',
 	packages: 'external',
 	banner: '#!/usr/bin/env bun\n',
-	minify: true,
-	sourcemap: false,
 });
 
-if (!result.success) {
-	for (const log of result.logs) {
-		console.error(log);
-	}
-
+if (!linux.success) {
+	console.error(...linux.logs);
 	process.exit(1);
 }
 
-await chmod(outfile, 0o755);
+await chmod('dist/local-agentic-cli', 0o755);
+
+const windows = await Bun.build({
+	...shared,
+	compile: {
+		outfile: 'dist/local-agentic-cli.exe',
+		target: 'bun-windows-x64',
+	},
+});
+
+if (!windows.success) {
+	console.error(...windows.logs);
+	process.exit(1);
+}
