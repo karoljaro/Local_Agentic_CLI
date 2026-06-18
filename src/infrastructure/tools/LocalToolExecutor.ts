@@ -7,8 +7,11 @@ import type {
 } from '@/application/ports/ToolExecutorPort';
 import { ListWorkspaceFiles } from '@/application/use-cases/file-operations/ListWorkspaceFiles';
 import { ReadWorkspaceFile } from '@/application/use-cases/file-operations/ReadWorkspaceFile';
+import { EditWorkspaceFile } from '@/application/use-cases/file-operations/EditWorkspaceFile';
+import { SearchWorkspaceFiles } from '@/application/use-cases/file-operations/SearchWorkspaceFiles';
 import type { ToolDefinition } from '@/domain/Tool';
 import { NodeWorkspaceFileSystem } from '@/infrastructure/file-system/NodeWorkspaceFileSystem';
+import { RipgrepSearch } from '@/infrastructure/tools/ripgrep/RipgrepSearch';
 import {
 	EDIT_FILE_TOOL_NAME,
 	EditFileProvider,
@@ -24,19 +27,18 @@ import {
 import {
 	SEARCH_FILE_TOOL_NAME,
 	SearchFileProvider,
-	type SearchFileProviderOptions,
 } from './providers/SearchFileProvider';
 
 const DEFAULT_MAX_FILE_BYTES = 200_000;
 const DEFAULT_MAX_LIST_FILES = 500;
 
-type LocalToolExecutorOptions = Omit<
-	SearchFileProviderOptions,
-	'workspaceRoot'
-> & {
+type LocalToolExecutorOptions = {
 	workspaceRoot?: string;
 	maxFileBytes?: number;
 	maxListFiles?: number;
+	maxSearchMatches?: number;
+	maxMatchTextLength?: number;
+	searchTimeoutMs?: number;
 };
 
 export class LocalToolExecutor implements ToolExecutorPort {
@@ -69,23 +71,31 @@ export class LocalToolExecutor implements ToolExecutorPort {
 			}
 		);
 
-		this.editFileProvider = new EditFileProvider({
-			maxFileBytes: this.maxFileBytes,
-			workspaceFiles,
-		});
+		this.editFileProvider = new EditFileProvider(
+			new EditWorkspaceFile(workspaceFiles),
+			{ maxFileBytes: this.maxFileBytes },
+		);
 
-		this.searchFileProvider = new SearchFileProvider({
+		const searchOptions = {
 			workspaceRoot: this.workspaceRoot,
-			...(options.maxSearchMatches === undefined
-				? {}
-				: { maxSearchMatches: options.maxSearchMatches }),
-			...(options.maxMatchTextLength === undefined
-				? {}
-				: { maxMatchTextLength: options.maxMatchTextLength }),
-			...(options.searchTimeoutMs === undefined
-				? {}
-				: { searchTimeoutMs: options.searchTimeoutMs }),
-		});
+			maxMatches: options.maxSearchMatches ?? 50,
+			maxMatchTextLength: options.maxMatchTextLength ?? 300,
+			timeoutMs: options.searchTimeoutMs ?? 5_000,
+		};
+
+		if (
+			[
+				searchOptions.maxMatches,
+				searchOptions.maxMatchTextLength,
+				searchOptions.timeoutMs,
+			].some((value) => !Number.isFinite(value) || value <= 0)
+		) {
+			throw new Error('Search limits must be positive numbers.');
+		}
+
+		this.searchFileProvider = new SearchFileProvider(
+			new SearchWorkspaceFiles(new RipgrepSearch(searchOptions)),
+		);
 	}
 
 	listTools(): ToolDefinition[] {

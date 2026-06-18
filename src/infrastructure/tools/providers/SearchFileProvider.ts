@@ -1,8 +1,6 @@
-import { resolve } from 'node:path';
-
 import type { ToolExecutionResult } from '@/application/ports/ToolExecutorPort';
+import type { SearchWorkspaceFiles } from '@/application/use-cases/file-operations/SearchWorkspaceFiles';
 import type { ToolDefinition } from '@/domain/Tool';
-import { searchWithRipgrep } from '@/infrastructure/tools/ripgrep/RipgrepSearch';
 
 export const SEARCH_FILE_TOOL_NAME = 'search_file';
 
@@ -23,41 +21,8 @@ const TOOL_DEFINITION = {
 	},
 } satisfies ToolDefinition;
 
-export type SearchFileProviderOptions = {
-	workspaceRoot: string;
-	maxSearchMatches?: number;
-	maxMatchTextLength?: number;
-	searchTimeoutMs?: number;
-};
-
-type SearchOptions = {
-	workspaceRoot: string;
-	maxMatches: number;
-	maxMatchTextLength: number;
-	timeoutMs: number;
-};
-
 export class SearchFileProvider {
-	private readonly options: SearchOptions;
-
-	constructor(options: SearchFileProviderOptions) {
-		this.options = {
-			workspaceRoot: resolve(options.workspaceRoot),
-			maxMatches: options.maxSearchMatches ?? 50,
-			maxMatchTextLength: options.maxMatchTextLength ?? 300,
-			timeoutMs: options.searchTimeoutMs ?? 5_000,
-		};
-
-		if (
-			[
-				this.options.maxMatches,
-				this.options.maxMatchTextLength,
-				this.options.timeoutMs,
-			].some((value) => !Number.isFinite(value) || value <= 0)
-		) {
-			throw new Error('Search limits must be positive numbers.');
-		}
-	}
+	constructor(private readonly searchWorkspaceFiles: SearchWorkspaceFiles) {}
 
 	getToolDefinition(): ToolDefinition {
 		return TOOL_DEFINITION;
@@ -68,7 +33,7 @@ export class SearchFileProvider {
 
 		return {
 			toolName: SEARCH_FILE_TOOL_NAME,
-			output: await searchWithRipgrep({ query, ...this.options }),
+			output: await this.searchWorkspaceFiles.execute({ query }),
 		};
 	}
 }

@@ -1,12 +1,11 @@
-import type { WorkspaceFilePort } from '@/application/ports/WorkspaceFilePort';
 import type { ToolExecutionResult } from '@/application/ports/ToolExecutorPort';
+import type { EditWorkspaceFile } from '@/application/use-cases/file-operations/EditWorkspaceFile';
 import type { ToolDefinition } from '@/domain/Tool';
 
 export const EDIT_FILE_TOOL_NAME = 'edit_file';
 
 type EditFileProviderOptions = {
 	maxFileBytes: number;
-	workspaceFiles: WorkspaceFilePort;
 };
 
 type EditFileInput = {
@@ -17,11 +16,12 @@ type EditFileInput = {
 
 export class EditFileProvider {
 	private readonly maxFileBytes: number;
-	private readonly workspaceFiles: WorkspaceFilePort;
 
-	constructor(options: EditFileProviderOptions) {
+	constructor(
+		private readonly editWorkspaceFile: EditWorkspaceFile,
+		options: EditFileProviderOptions,
+	) {
 		this.maxFileBytes = options.maxFileBytes;
-		this.workspaceFiles = options.workspaceFiles;
 
 		if (this.maxFileBytes <= 0) {
 			throw new Error('Max file size must be greater than zero.');
@@ -60,37 +60,13 @@ export class EditFileProvider {
 
 	async execute(toolInput: unknown): Promise<ToolExecutionResult> {
 		const input = parseEditFileInput(toolInput);
-		const file = await this.workspaceFiles.readFile({
-			path: input.path,
-			maxFileBytes: this.maxFileBytes,
-		});
-		const oldText = normalizeEscapedLineBreaks(input.oldText);
-		const newText = normalizeEscapedLineBreaks(input.newText);
-		const matchCount = file.content.split(oldText).length - 1;
-
-		if (matchCount === 0) {
-			throw new Error(`oldText was not found in file: ${input.path}`);
-		}
-
-		if (matchCount > 1) {
-			throw new Error(
-				`oldText appears multiple times in file: ${input.path}`,
-			);
-		}
-
-		const writtenFile = await this.workspaceFiles.writeFile({
-			path: file.path,
-			content: file.content.replace(oldText, newText),
-			maxFileBytes: this.maxFileBytes,
-		});
 
 		return {
 			toolName: EDIT_FILE_TOOL_NAME,
-			output: {
-				path: writtenFile.path,
-				replaced: true,
-				matchCount,
-			},
+			output: await this.editWorkspaceFile.execute({
+				...input,
+				maxFileBytes: this.maxFileBytes,
+			}),
 		};
 	}
 }
@@ -123,11 +99,4 @@ const parseEditFileInput = (input: unknown): EditFileInput => {
 		oldText,
 		newText,
 	};
-};
-
-const normalizeEscapedLineBreaks = (text: string): string => {
-	return text
-		.replaceAll('\\r\\n', '\n')
-		.replaceAll('\\n', '\n')
-		.replaceAll('\\r', '\n');
 };

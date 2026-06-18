@@ -1,20 +1,13 @@
 import { rgPath } from '@vscode/ripgrep';
 
-export type SearchFileMatch = {
-	path: string;
-	line: number;
-	text: string;
-};
+import type {
+	SearchWorkspaceInput,
+	SearchWorkspaceMatch,
+	SearchWorkspaceOutput,
+	WorkspaceSearchPort,
+} from '@/application/ports/WorkspaceSearchPort';
 
-export type SearchFileOutput = {
-	matchCount: number;
-	fileCount: number;
-	matches: SearchFileMatch[];
-	truncated: boolean;
-};
-
-type SearchWithRipgrepInput = {
-	query: string;
+export type RipgrepSearchOptions = {
 	workspaceRoot: string;
 	timeoutMs: number;
 	maxMatches: number;
@@ -49,13 +42,23 @@ const SAFE_ENV_GLOBS = [
 	'**/.env.example',
 ];
 
-export const searchWithRipgrep = async ({
-	query,
-	workspaceRoot,
-	timeoutMs,
-	maxMatches,
-	maxMatchTextLength,
-}: SearchWithRipgrepInput): Promise<SearchFileOutput> => {
+export class RipgrepSearch implements WorkspaceSearchPort {
+	constructor(private readonly options: RipgrepSearchOptions) {}
+
+	search(input: SearchWorkspaceInput): Promise<SearchWorkspaceOutput> {
+		return searchWithRipgrep(input.query, this.options);
+	}
+}
+
+const searchWithRipgrep = async (
+	query: string,
+	{
+		workspaceRoot,
+		timeoutMs,
+		maxMatches,
+		maxMatchTextLength,
+	}: RipgrepSearchOptions,
+): Promise<SearchWorkspaceOutput> => {
 	const alternatives = query
 		.split('|')
 		.map((part) => part.trim())
@@ -79,7 +82,7 @@ export const searchWithRipgrep = async ({
 		}),
 	]);
 
-	const matches: SearchFileMatch[] = [];
+	const matches: SearchWorkspaceMatch[] = [];
 	const files = new Set<string>();
 	let matchCount = 0;
 
