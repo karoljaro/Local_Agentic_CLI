@@ -369,4 +369,122 @@ describe('NodeWorkspaceFileSystem', () => {
 			}
 		});
 	});
+
+	describe('createFile', () => {
+		test('creates a new UTF-8 file in an existing directory', async () => {
+			const { directory, fileSystem, cleanup } =
+				await createTempWorkspace();
+
+			try {
+				await mkdir(join(directory, 'src'));
+
+				await expect(
+					fileSystem.createFile({
+						path: 'src/new-file.ts',
+						content: 'export const value = 1;\n',
+						maxFileBytes: MAX_FILE_BYTES,
+					}),
+				).resolves.toEqual({
+					path: 'src/new-file.ts',
+					content: 'export const value = 1;\n',
+				});
+				await expect(
+					readFile(join(directory, 'src', 'new-file.ts'), 'utf8'),
+				).resolves.toBe('export const value = 1;\n');
+			} finally {
+				await cleanup();
+			}
+		});
+
+		test('does not overwrite an existing file', async () => {
+			const { directory, fileSystem, cleanup } =
+				await createTempWorkspace();
+
+			try {
+				await writeFile(
+					join(directory, 'file.txt'),
+					'existing',
+					'utf8',
+				);
+
+				await expect(
+					fileSystem.createFile({
+						path: 'file.txt',
+						content: 'replacement',
+						maxFileBytes: MAX_FILE_BYTES,
+					}),
+				).rejects.toThrow('File already exists');
+				await expect(
+					readFile(join(directory, 'file.txt'), 'utf8'),
+				).resolves.toBe('existing');
+			} finally {
+				await cleanup();
+			}
+		});
+
+		test('rejects protected paths and paths outside the workspace', async () => {
+			const { fileSystem, cleanup } = await createTempWorkspace();
+
+			try {
+				await expect(
+					fileSystem.createFile({
+						path: '.env',
+						content: 'SECRET=value',
+						maxFileBytes: MAX_FILE_BYTES,
+					}),
+				).rejects.toThrow('Cannot access protected file');
+				await expect(
+					fileSystem.createFile({
+						path: '../outside.txt',
+						content: 'outside',
+						maxFileBytes: MAX_FILE_BYTES,
+					}),
+				).rejects.toThrow('Cannot access file outside workspace');
+			} finally {
+				await cleanup();
+			}
+		});
+
+		test('rejects a parent directory symlink outside the workspace', async () => {
+			const { directory, fileSystem, cleanup } =
+				await createTempWorkspace();
+			const outsideDirectory = await mkdtemp(
+				join(tmpdir(), 'outside-workspace-'),
+			);
+
+			try {
+				await symlink(outsideDirectory, join(directory, 'outside'));
+
+				await expect(
+					fileSystem.createFile({
+						path: 'outside/file.txt',
+						content: 'outside',
+						maxFileBytes: MAX_FILE_BYTES,
+					}),
+				).rejects.toThrow('Cannot access file outside workspace');
+			} finally {
+				await cleanup();
+				await rm(outsideDirectory, {
+					recursive: true,
+					force: true,
+				});
+			}
+		});
+
+		test('rejects content above the size limit', async () => {
+			const { fileSystem, cleanup } = await createTempWorkspace();
+
+			try {
+				await expect(
+					fileSystem.createFile({
+						path: 'file.txt',
+						content: 'too large',
+						maxFileBytes: 3,
+					}),
+				).rejects.toThrow('File content is too large');
+			} finally {
+				await cleanup();
+			}
+		});
+	});
 });

@@ -14,7 +14,7 @@ import {
 	stat,
 	writeFile as writeFileContent,
 } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 
 import { isPathInside } from './isPathInside';
 
@@ -25,6 +25,11 @@ type ResolvedWorkspaceFile = {
 
 type ResolvedWorkspacePath = ResolvedWorkspaceFile & {
 	realWorkspaceRoot: string;
+};
+
+type WorkspaceTarget = {
+	realWorkspaceRoot: string;
+	targetPath: string;
 };
 
 type CollectFilesInput = {
@@ -107,17 +112,81 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 			input.maxFileBytes
 		);
 
-		if (
-			new TextEncoder().encode(input.content).length > input.maxFileBytes
-		) {
-			throw new Error(`File content is too large: ${input.path}`);
-		}
+		ensureContentWithinLimit(input);
 
 		await writeFileContent(file.realTargetPath, input.content, 'utf8');
 
 		return {
 			path: file.relativePath,
 			content: input.content,
+		};
+	}
+
+	async createFile(input: WriteWorkspaceFileInput): Promise<WorkspaceFile> {
+		ensureContentWithinLimit(input);
+
+		const file = await this.resolveNewFilePath(input.path);
+
+		try {
+			await writeFileContent(file.realTargetPath, input.content, {
+				encoding: 'utf8',
+				flag: 'wx',
+			});
+		} catch (error) {
+			if (
+				error instanceof Error &&
+				'code' in error &&
+				error.code === 'EEXIST'
+			) {
+				throw new Error(`File already exists: ${input.path}`);
+			}
+
+			throw error;
+		}
+
+		return {
+			path: file.relativePath,
+			content: input.content,
+		};
+	}
+
+	private async resolveNewFilePath(
+		inputPath: string
+	): Promise<ResolvedWorkspaceFile> {
+		const target = await this.resolveWorkspaceTarget(inputPath);
+		const relativeTargetPath = relative(
+			target.realWorkspaceRoot,
+			target.targetPath
+		);
+
+		if (shouldSkipFilePath(relativeTargetPath)) {
+			throw new Error(`Cannot access protected file: ${inputPath}`);
+		}
+
+		const realParentPath = await realpath(dirname(target.targetPath));
+
+		if (!isPathInside(target.realWorkspaceRoot, realParentPath)) {
+			throw new Error(
+				`Cannot access file outside workspace: ${inputPath}`
+			);
+		}
+
+		const realTargetPath = resolve(
+			realParentPath,
+			basename(target.targetPath)
+		);
+		const relativePath = relative(
+			target.realWorkspaceRoot,
+			realTargetPath
+		);
+
+		if (shouldSkipFilePath(relativePath)) {
+			throw new Error(`Cannot access protected file: ${inputPath}`);
+		}
+
+		return {
+			realTargetPath,
+			relativePath,
 		};
 	}
 
@@ -150,6 +219,25 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 	private async resolveWorkspacePath(
 		inputPath: string
 	): Promise<ResolvedWorkspacePath> {
+		const target = await this.resolveWorkspaceTarget(inputPath);
+		const realTargetPath = await realpath(target.targetPath);
+
+		if (!isPathInside(target.realWorkspaceRoot, realTargetPath)) {
+			throw new Error(
+				`Cannot access file outside workspace: ${inputPath}`
+			);
+		}
+
+		return {
+			realWorkspaceRoot: target.realWorkspaceRoot,
+			realTargetPath,
+			relativePath: relative(target.realWorkspaceRoot, realTargetPath),
+		};
+	}
+
+	private async resolveWorkspaceTarget(
+		inputPath: string
+	): Promise<WorkspaceTarget> {
 		if (!inputPath.trim().length) {
 			throw new Error('File path cannot be empty.');
 		}
@@ -167,18 +255,9 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 			);
 		}
 
-		const realTargetPath = await realpath(targetPath);
-
-		if (!isPathInside(realWorkspaceRoot, realTargetPath)) {
-			throw new Error(
-				`Cannot access file outside workspace: ${inputPath}`
-			);
-		}
-
 		return {
 			realWorkspaceRoot,
-			realTargetPath,
-			relativePath: relative(realWorkspaceRoot, realTargetPath),
+			targetPath,
 		};
 	}
 
@@ -279,4 +358,12 @@ const shouldSkipFileName = (name: string): boolean => {
 
 const splitPath = (path: string): string[] => {
 	return path.split(/[\\/]+/).filter(Boolean);
+};
+
+const ensureContentWithinLimit = (
+	input: WriteWorkspaceFileInput
+): void => {
+	if (new TextEncoder().encode(input.content).length > input.maxFileBytes) {
+		throw new Error(`File content is too large: ${input.path}`);
+	}
 };

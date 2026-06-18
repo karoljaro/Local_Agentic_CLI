@@ -28,4 +28,5 @@ export interface WorkspaceFilePort {
 	listFiles(input: ListWorkspaceFilesInput): Promise<WorkspaceFileList>;
 	readFile(input: ReadWorkspaceFileInput): Promise<WorkspaceFile>;
 	writeFile(input: WriteWorkspaceFileInput): Promise<WorkspaceFile>;
+	createFile(input: WriteWorkspaceFileInput): Promise<WorkspaceFile>;
 }
