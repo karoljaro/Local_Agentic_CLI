@@ -5,13 +5,18 @@ import type {
 	ToolExecutionResult,
 	ToolExecutorPort,
 } from '@/application/ports/ToolExecutorPort';
+import { CreateWorkspaceFile } from '@/application/use-cases/file-operations/CreateWorkspaceFile';
+import { EditWorkspaceFile } from '@/application/use-cases/file-operations/EditWorkspaceFile';
 import { ListWorkspaceFiles } from '@/application/use-cases/file-operations/ListWorkspaceFiles';
 import { ReadWorkspaceFile } from '@/application/use-cases/file-operations/ReadWorkspaceFile';
-import { EditWorkspaceFile } from '@/application/use-cases/file-operations/EditWorkspaceFile';
 import { SearchWorkspaceFiles } from '@/application/use-cases/file-operations/SearchWorkspaceFiles';
 import type { ToolDefinition } from '@/domain/Tool';
 import { NodeWorkspaceFileSystem } from '@/infrastructure/file-system/NodeWorkspaceFileSystem';
 import { RipgrepSearch } from '@/infrastructure/tools/ripgrep/RipgrepSearch';
+import {
+	CREATE_FILE_TOOL_NAME,
+	CreateFileProvider,
+} from './providers/CreateFileProvider';
 import {
 	EDIT_FILE_TOOL_NAME,
 	EditFileProvider,
@@ -46,6 +51,7 @@ export class LocalToolExecutor implements ToolExecutorPort {
 	private readonly maxFileBytes: number;
 	private readonly listFilesProvider: ListFilesProvider;
 	private readonly readFileProvider: ReadFileProvider;
+	private readonly createFileProvider: CreateFileProvider;
 	private readonly editFileProvider: EditFileProvider;
 	private readonly searchFileProvider: SearchFileProvider;
 
@@ -69,6 +75,11 @@ export class LocalToolExecutor implements ToolExecutorPort {
 			{
 				maxFileBytes: this.maxFileBytes,
 			}
+		);
+
+		this.createFileProvider = new CreateFileProvider(
+			new CreateWorkspaceFile(workspaceFiles),
+			{ maxFileBytes: this.maxFileBytes },
 		);
 
 		this.editFileProvider = new EditFileProvider(
@@ -103,6 +114,7 @@ export class LocalToolExecutor implements ToolExecutorPort {
 			this.listFilesProvider.getToolDefinition(),
 			this.readFileProvider.getToolDefinition(),
 			this.searchFileProvider.getToolDefinition(),
+			this.createFileProvider.getToolDefinition(),
 			this.editFileProvider.getToolDefinition(),
 		];
 	}
@@ -115,6 +127,8 @@ export class LocalToolExecutor implements ToolExecutorPort {
 				return this.readFileProvider.execute(request.toolInput);
 			case SEARCH_FILE_TOOL_NAME:
 				return this.searchFileProvider.execute(request.toolInput);
+			case CREATE_FILE_TOOL_NAME:
+				return this.createFileProvider.execute(request.toolInput);
 			case EDIT_FILE_TOOL_NAME:
 				return this.editFileProvider.execute(request.toolInput);
 			default:

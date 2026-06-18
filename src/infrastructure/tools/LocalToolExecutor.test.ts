@@ -79,6 +79,28 @@ describe('LocalToolExecutor', () => {
 				},
 			},
 			{
+				name: 'create_file',
+				description:
+					'Create a new UTF-8 file in an existing workspace directory. Fails if the file already exists.',
+				requiresApproval: true,
+				parameters: {
+					type: 'object',
+					required: ['path', 'content'],
+					additionalProperties: false,
+					properties: {
+						path: {
+							type: 'string',
+							description:
+								'The path for the new file, relative to the workspace root.',
+						},
+						content: {
+							type: 'string',
+							description: 'The complete content of the new file.',
+						},
+					},
+				},
+			},
+			{
 				name: 'edit_file',
 				description:
 					'Replace exact text in a UTF-8 file in the current workspace. Use this after reading the target file.',
@@ -158,6 +180,36 @@ describe('LocalToolExecutor', () => {
 					content: 'hello',
 				},
 			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('creates a new UTF-8 file in the workspace', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await mkdir(join(directory, 'src'));
+
+			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const result = await executor.execute({
+				toolName: 'create_file',
+				toolInput: {
+					path: 'src/new-file.ts',
+					content: 'export const value = 1;\n',
+				},
+			});
+
+			expect(result).toEqual({
+				toolName: 'create_file',
+				output: {
+					path: 'src/new-file.ts',
+					content: 'export const value = 1;\n',
+				},
+			});
+			await expect(
+				readFile(join(directory, 'src', 'new-file.ts'), 'utf8'),
+			).resolves.toBe('export const value = 1;\n');
 		} finally {
 			await cleanup();
 		}
