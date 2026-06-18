@@ -10,7 +10,7 @@ import { join } from 'node:path';
 
 import { describe, expect, test } from 'bun:test';
 
-import { LocalToolExecutor } from './LocalToolExecutor';
+import { createLocalToolExecutor } from '@/composition/createLocalToolExecutor';
 
 const createTempWorkspace = async (): Promise<{
 	directory: string;
@@ -26,7 +26,7 @@ const createTempWorkspace = async (): Promise<{
 
 describe('LocalToolExecutor', () => {
 	test('lists local tool definitions', () => {
-		const executor = new LocalToolExecutor();
+		const executor = createLocalToolExecutor();
 
 		expect(executor.listTools()).toEqual([
 			{
@@ -142,7 +142,7 @@ describe('LocalToolExecutor', () => {
 				'utf8',
 			);
 
-			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({
 				toolName: 'list_files',
 				toolInput: {},
@@ -167,7 +167,7 @@ describe('LocalToolExecutor', () => {
 			await mkdir(join(directory, 'src'));
 			await writeFile(join(directory, 'src', 'file.txt'), 'hello', 'utf8');
 
-			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({
 				toolName: 'read_file',
 				toolInput: { path: 'src/file.txt' },
@@ -191,7 +191,7 @@ describe('LocalToolExecutor', () => {
 		try {
 			await mkdir(join(directory, 'src'));
 
-			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({
 				toolName: 'create_file',
 				toolInput: {
@@ -231,7 +231,7 @@ describe('LocalToolExecutor', () => {
 				'utf8',
 			);
 
-			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({
 				toolName: 'search_file',
 				toolInput: { query: 'needle' },
@@ -263,7 +263,7 @@ describe('LocalToolExecutor', () => {
 		try {
 			await writeFile(join(directory, 'file.txt'), 'hello', 'utf8');
 
-			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({
 				toolName: 'search_file',
 				toolInput: { query: 'missing' },
@@ -294,7 +294,7 @@ describe('LocalToolExecutor', () => {
 				'utf8',
 			);
 
-			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({
 				toolName: 'search_file',
 				toolInput: { query: 'UserRepository tests' },
@@ -342,7 +342,7 @@ describe('LocalToolExecutor', () => {
 				'utf8',
 			);
 
-			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({
 				toolName: 'search_file',
 				toolInput: {
@@ -401,7 +401,7 @@ describe('LocalToolExecutor', () => {
 				'utf8',
 			);
 
-			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({
 				toolName: 'search_file',
 				toolInput: { query: 'add|divide' },
@@ -443,7 +443,7 @@ describe('LocalToolExecutor', () => {
 				'utf8',
 			);
 
-			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({
 				toolName: 'search_file',
 				toolInput: { query: 'SECRET_TOKEN' },
@@ -473,7 +473,7 @@ describe('LocalToolExecutor', () => {
 		const { directory, cleanup } = await createTempWorkspace();
 
 		try {
-			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 
 			await expect(
 				executor.execute({
@@ -496,7 +496,7 @@ describe('LocalToolExecutor', () => {
 				'utf8',
 			);
 
-			const executor = new LocalToolExecutor({
+			const executor = createLocalToolExecutor({
 				workspaceRoot: directory,
 				maxSearchMatches: 2,
 			});
@@ -541,7 +541,7 @@ describe('LocalToolExecutor', () => {
 				'utf8',
 			);
 
-			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({
 				toolName: 'edit_file',
 				toolInput: {
@@ -584,7 +584,7 @@ describe('LocalToolExecutor', () => {
 				'utf8',
 			);
 
-			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			await executor.execute({
 				toolName: 'edit_file',
 				toolInput: {
@@ -617,7 +617,7 @@ describe('LocalToolExecutor', () => {
 		try {
 			await writeFile(join(directory, 'file.txt'), 'short', 'utf8');
 
-			const executor = new LocalToolExecutor({
+			const executor = createLocalToolExecutor({
 				workspaceRoot: directory,
 				maxFileBytes: 8,
 			});
@@ -643,7 +643,7 @@ describe('LocalToolExecutor', () => {
 		try {
 			await writeFile(join(directory, 'file.txt'), 'hello\n', 'utf8');
 
-			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 
 			await expect(
 				executor.execute({
@@ -666,7 +666,7 @@ describe('LocalToolExecutor', () => {
 		try {
 			await writeFile(join(directory, 'file.txt'), 'hello\nhello\n', 'utf8');
 
-			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 
 			await expect(
 				executor.execute({
@@ -687,7 +687,7 @@ describe('LocalToolExecutor', () => {
 		const { directory, cleanup } = await createTempWorkspace();
 
 		try {
-			const executor = new LocalToolExecutor({ workspaceRoot: directory });
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 
 			await expect(
 				executor.execute({

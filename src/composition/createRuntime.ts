@@ -9,8 +9,8 @@ import { OllamaModelAdapter } from '@/infrastructure/model/OllamaModelAdapter';
 import { JsonlSessionStore } from '@/infrastructure/persistence/JsonlSessionStore';
 import { BunUuidV7IdGenerator } from '@/infrastructure/runtime/BunUuidV7IdGenerator';
 import { TemporalClock } from '@/infrastructure/runtime/TemporalClock';
-import { LocalToolExecutor } from '@/infrastructure/tools/LocalToolExecutor';
 import { readConfig, type AppConfig } from '@/composition/config';
+import { createLocalToolExecutor } from '@/composition/createLocalToolExecutor';
 import { LoadSession } from '@/application/use-cases/LoadSession';
 import { ListSessionEvents } from '@/application/use-cases/ListSessionEvents';
 import { ListSessions } from '@/application/use-cases/ListSessions';
@@ -43,7 +43,7 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 
 	const idGenerator = new BunUuidV7IdGenerator();
 	const clock = new TemporalClock();
-	const toolExecutor = new LocalToolExecutor();
+	const toolExecutor = createLocalToolExecutor();
 	let currentToolApprovalHandler: ToolApprovalHandler = async () => false;
 
 	const contextBuilder = new ContextBuilder({
