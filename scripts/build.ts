@@ -11,6 +11,8 @@ const result = await Bun.build({
 	target: 'bun',
 	packages: 'external',
 	banner: '#!/usr/bin/env bun\n',
+	minify: true,
+	sourcemap: false,
 });
 
 if (!result.success) {
