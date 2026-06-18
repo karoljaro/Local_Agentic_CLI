@@ -20,7 +20,8 @@
         "react-devtools-core": "^7.0.1",
       },
       "optionalDependencies": {
-        "@vscode/ripgrep-linux-x64": "1.18.0",
+        "@vscode/ripgrep-linux-x64": "^1.18.0",
+        "@vscode/ripgrep-win32-x64": "^1.18.0",
       },
       "peerDependencies": {
         "typescript": "^6.0.3",

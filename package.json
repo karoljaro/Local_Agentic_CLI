@@ -26,6 +26,7 @@
     "zod": "^4.4.3"
   },
   "optionalDependencies": {
-    "@vscode/ripgrep-linux-x64": "1.18.0"
+    "@vscode/ripgrep-linux-x64": "^1.18.0",
+    "@vscode/ripgrep-win32-x64": "^1.18.0"
   }
 }
