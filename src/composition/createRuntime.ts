@@ -10,7 +10,7 @@ import { JsonlSessionStore } from '@/infrastructure/persistence/JsonlSessionStor
 import { BunUuidV7IdGenerator } from '@/infrastructure/runtime/BunUuidV7IdGenerator';
 import { TemporalClock } from '@/infrastructure/runtime/TemporalClock';
 import { readConfig, type AppConfig } from '@/composition/config';
-import { createLocalToolExecutor } from '@/composition/createLocalToolExecutor';
+import { createLocalToolExecutor } from '@/composition/factories/createLocalToolExecutor';
 import { LoadSession } from '@/application/use-cases/LoadSession';
 import { ListSessionEvents } from '@/application/use-cases/ListSessionEvents';
 import { ListSessions } from '@/application/use-cases/ListSessions';

@@ -10,7 +10,7 @@ import { join } from 'node:path';
 
 import { describe, expect, test } from 'bun:test';
 
-import { createLocalToolExecutor } from '@/composition/createLocalToolExecutor';
+import { createLocalToolExecutor } from '@/composition/factories/createLocalToolExecutor';
 
 const createTempWorkspace = async (): Promise<{
 	directory: string;
