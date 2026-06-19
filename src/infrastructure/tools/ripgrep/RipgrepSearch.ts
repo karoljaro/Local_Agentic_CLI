@@ -1,4 +1,6 @@
-import { rgPath } from '@vscode/ripgrep';
+import { existsSync, realpathSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import type {
 	SearchWorkspaceInput,
@@ -41,6 +43,8 @@ const SAFE_ENV_GLOBS = [
 	'**/.env.dev',
 	'**/.env.example',
 ];
+
+const rgPath = resolveRipgrepPath();
 
 export class RipgrepSearch implements WorkspaceSearchPort {
 	constructor(private readonly options: RipgrepSearchOptions) {}
@@ -179,3 +183,39 @@ const runRipgrep = async ({
 
 const truncate = (text: string, maxLength: number): string =>
 	text.length <= maxLength ? text : `${text.slice(0, maxLength)}...`;
+
+
+// TODO: Find better way to resolve the ripgrep binary path, especially when running in a packaged environment.
+function resolveRipgrepPath(): string {
+	const binaryName = process.platform === 'win32' ? 'rg.exe' : 'rg';
+	const entrypoint = process.argv[1];
+	const directories = [dirname(process.execPath)];
+
+	if (entrypoint !== undefined) {
+		try {
+			directories.unshift(dirname(realpathSync(entrypoint)));
+		} catch {
+			// Fall back to the executable or package path.
+		}
+	}
+
+	for (const directory of directories) {
+		const candidate = join(directory, binaryName);
+
+		if (existsSync(candidate)) {
+			return candidate;
+		}
+	}
+
+	const packageModulePath = fileURLToPath(
+		import.meta.resolve('@vscode/ripgrep-universal'),
+	);
+
+	return resolve(
+		dirname(packageModulePath),
+		'..',
+		'bin',
+		`${process.platform}-${process.arch}`,
+		binaryName,
+	);
+}

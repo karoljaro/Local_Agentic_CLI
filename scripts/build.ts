@@ -1,6 +1,19 @@
-import { chmod, mkdir } from 'node:fs/promises';
+import { chmod, copyFile, mkdir } from 'node:fs/promises';
+
+import { binPathFor } from '@vscode/ripgrep-universal';
 
 await mkdir('dist', { recursive: true });
+
+const ripgrepBinaries = {
+	linux: {
+		source: binPathFor({ os: 'linux', arch: 'x64' }),
+		output: 'dist/rg',
+	},
+	windows: {
+		source: binPathFor({ os: 'win32', arch: 'x64' }),
+		output: 'dist/rg.exe',
+	},
+} as const;
 
 const shared = {
 	entrypoints: ['./index.tsx'],
@@ -22,7 +35,9 @@ if (!linux.success) {
 	process.exit(1);
 }
 
+await copyFile(ripgrepBinaries.linux.source, ripgrepBinaries.linux.output);
 await chmod('dist/local-agentic-cli', 0o755);
+await chmod(ripgrepBinaries.linux.output, 0o755);
 
 const windows = await Bun.build({
 	...shared,
@@ -36,3 +51,5 @@ if (!windows.success) {
 	console.error(...windows.logs);
 	process.exit(1);
 }
+
+await copyFile(ripgrepBinaries.windows.source, ripgrepBinaries.windows.output);

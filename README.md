@@ -128,7 +128,12 @@ Build the CLI:
 bun run build
 ```
 
-The build output is placed in `dist/local-agentic-cli`.
+The build output is placed in `dist`:
+
+- Linux x64: `local-agentic-cli` and `rg`
+- Windows x64: `local-agentic-cli.exe` and `rg.exe`
+
+Keep each CLI executable together with its matching ripgrep binary.
 
 To run the built CLI from any folder, add the `dist` directory to your shell `PATH`:
 

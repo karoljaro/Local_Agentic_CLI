@@ -17,16 +17,12 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
-    "@vscode/ripgrep": "^1.18.0",
+    "@vscode/ripgrep-universal": "^1.18.0",
     "ink": "^7.0.5",
     "marked": "^9.1.6",
     "marked-terminal": "^6.3.0",
     "react": "^19.2.7",
     "temporal-polyfill": "^0.3.2",
     "zod": "^4.4.3"
-  },
-  "optionalDependencies": {
-    "@vscode/ripgrep-linux-x64": "^1.18.0",
-    "@vscode/ripgrep-win32-x64": "^1.18.0"
   }
 }
