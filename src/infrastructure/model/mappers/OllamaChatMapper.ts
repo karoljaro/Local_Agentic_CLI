@@ -1,7 +1,4 @@
-import type {
-	ModelChatResult,
-	ModelStreamChunk,
-} from '@/application/ports/ModelPort';
+import type { ModelStreamChunk } from '@/application/ports/ModelPort';
 import type { ModelMessage } from '@/domain/ModelMessage';
 import type { ModelToolCall, ToolDefinition } from '@/domain/Tool';
 
@@ -12,14 +9,6 @@ export type OllamaChatStreamResponse = {
 	};
 	error?: string;
 	done?: boolean;
-};
-
-export type OllamaChatResponse = {
-	message?: {
-		content?: string;
-		tool_calls?: OllamaToolCall[];
-	};
-	error?: string;
 };
 
 type OllamaToolCall = {
@@ -68,15 +57,6 @@ export const toOllamaTool = (
 			description: tool.description,
 			parameters: tool.parameters,
 		},
-	};
-};
-
-export const toModelChatResult = (
-	response: OllamaChatResponse,
-): ModelChatResult => {
-	return {
-		content: response.message?.content ?? '',
-		toolCalls: parseOllamaToolCalls(response.message?.tool_calls ?? []),
 	};
 };
 

@@ -13,11 +13,11 @@ import {
 	type SessionId,
 	type ToolCallId,
 } from '@/domain/Ids';
+import type { ModelToolCall } from '@/domain/Tool';
 import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
 import type {
 	ModelChatInput,
-	ModelChatResult,
 	ModelPort,
 	ModelStreamChunk,
 } from '../ports/ModelPort';
@@ -52,15 +52,6 @@ class InMemorySessionStore implements SessionStorePort {
 class FakeModel implements ModelPort {
 	receivedInput: ModelChatInput | null = null;
 
-	async chat(input: ModelChatInput): Promise<ModelChatResult> {
-		this.receivedInput = input;
-
-		return {
-			content: 'Hello there',
-			toolCalls: [],
-		};
-	}
-
 	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
 		this.receivedInput = input;
 
@@ -70,17 +61,18 @@ class FakeModel implements ModelPort {
 }
 
 class FailingModel implements ModelPort {
-	async chat(): Promise<ModelChatResult> {
-		throw new Error('model failed');
-	}
-
 	async *streamChat(): AsyncIterable<ModelStreamChunk> {
 		throw new Error('model failed');
 	}
 }
 
+type FakeModelResult = {
+	content: string;
+	toolCalls: ModelToolCall[];
+};
+
 const streamResult = async function* (
-	result: ModelChatResult,
+	result: FakeModelResult,
 ): AsyncIterable<ModelStreamChunk> {
 	if (result.content.length > 0) {
 		yield { contentDelta: result.content };
@@ -94,7 +86,7 @@ const streamResult = async function* (
 class ToolCallingModel implements ModelPort {
 	readonly receivedInputs: ModelChatInput[] = [];
 
-	async chat(input: ModelChatInput): Promise<ModelChatResult> {
+	private nextResult(input: ModelChatInput): FakeModelResult {
 		this.receivedInputs.push(input);
 
 		if (this.receivedInputs.length === 1) {
@@ -116,7 +108,7 @@ class ToolCallingModel implements ModelPort {
 	}
 
 	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
-		const result = await this.chat(input);
+		const result = this.nextResult(input);
 
 		if (result.toolCalls.length > 0) {
 			yield { contentDelta: '', toolCalls: result.toolCalls };
@@ -128,10 +120,34 @@ class ToolCallingModel implements ModelPort {
 	}
 }
 
+class ContentThenToolCallingModel implements ModelPort {
+	private callCount = 0;
+
+	async *streamChat(): AsyncIterable<ModelStreamChunk> {
+		this.callCount += 1;
+
+		if (this.callCount === 1) {
+			yield { contentDelta: 'I will inspect the file.\n' };
+			yield {
+				contentDelta: '',
+				toolCalls: [
+					{
+						name: 'read_file',
+						arguments: { path: 'README.md' },
+					},
+				],
+			};
+			return;
+		}
+
+		yield { contentDelta: 'The file contains hello.' };
+	}
+}
+
 class EditToolCallingModel implements ModelPort {
 	readonly receivedInputs: ModelChatInput[] = [];
 
-	async chat(input: ModelChatInput): Promise<ModelChatResult> {
+	private nextResult(input: ModelChatInput): FakeModelResult {
 		this.receivedInputs.push(input);
 
 		if (this.receivedInputs.length === 1) {
@@ -157,14 +173,14 @@ class EditToolCallingModel implements ModelPort {
 	}
 
 	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
-		yield* streamResult(await this.chat(input));
+		yield* streamResult(this.nextResult(input));
 	}
 }
 
 class FailingToolCallingModel implements ModelPort {
 	private callCount = 0;
 
-	async chat(): Promise<ModelChatResult> {
+	private nextResult(): FakeModelResult {
 		this.callCount += 1;
 
 		if (this.callCount > 1) {
@@ -186,14 +202,14 @@ class FailingToolCallingModel implements ModelPort {
 	}
 
 	async *streamChat(): AsyncIterable<ModelStreamChunk> {
-		yield* streamResult(await this.chat());
+		yield* streamResult(this.nextResult());
 	}
 }
 
 class SearchThenReadModel implements ModelPort {
 	readonly receivedInputs: ModelChatInput[] = [];
 
-	async chat(input: ModelChatInput): Promise<ModelChatResult> {
+	private nextResult(input: ModelChatInput): FakeModelResult {
 		this.receivedInputs.push(input);
 
 		if (this.receivedInputs.length === 1) {
@@ -227,14 +243,14 @@ class SearchThenReadModel implements ModelPort {
 	}
 
 	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
-		yield* streamResult(await this.chat(input));
+		yield* streamResult(this.nextResult(input));
 	}
 }
 
 class ReadReadEditReadModel implements ModelPort {
 	private callCount = 0;
 
-	async chat(): Promise<ModelChatResult> {
+	private nextResult(): FakeModelResult {
 		this.callCount += 1;
 
 		if (this.callCount === 1 || this.callCount === 2 || this.callCount === 4) {
@@ -272,14 +288,14 @@ class ReadReadEditReadModel implements ModelPort {
 	}
 
 	async *streamChat(): AsyncIterable<ModelStreamChunk> {
-		yield* streamResult(await this.chat());
+		yield* streamResult(this.nextResult());
 	}
 }
 
 class InfiniteToolCallingModel implements ModelPort {
-	async chat(): Promise<ModelChatResult> {
-		return {
-			content: '',
+	async *streamChat(): AsyncIterable<ModelStreamChunk> {
+		yield {
+			contentDelta: '',
 			toolCalls: [
 				{
 					name: 'read_file',
@@ -287,10 +303,6 @@ class InfiniteToolCallingModel implements ModelPort {
 				},
 			],
 		};
-	}
-
-	async *streamChat(): AsyncIterable<ModelStreamChunk> {
-		yield* streamResult(await this.chat());
 	}
 }
 
@@ -810,6 +822,34 @@ describe('RunAgentTurn', () => {
 				content: 'The file contains hello.',
 			},
 		]);
+	});
+
+	test('persists all content shown before and after a tool call', async () => {
+		const sessionStore = new InMemorySessionStore();
+		const sessionId = asSessionId('session-1');
+		const useCase = new RunAgentTurn({
+			sessionStore,
+			model: new ContentThenToolCallingModel(),
+			contextBuilder: new ContextBuilder({
+				systemPrompt: 'You are a local coding agent.',
+			}),
+			clock: new FixedClock(),
+			idGenerator: new SequenceIdGenerator(),
+			toolExecutor: new FakeToolExecutor(),
+		});
+
+		const chunks = await collectTurn(
+			useCase.run({ sessionId, prompt: 'Read README' }),
+		);
+
+		expect(chunks).toEqual([
+			{ contentDelta: 'I will inspect the file.\n' },
+			{ contentDelta: 'The file contains hello.' },
+		]);
+		expect(sessionStore.events.at(-1)).toMatchObject({
+			type: 'assistant.message.completed',
+			content: 'I will inspect the file.\nThe file contains hello.',
+		});
 	});
 
 	test('requires approval before executing a mutating tool call', async () => {

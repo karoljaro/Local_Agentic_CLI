@@ -11,12 +11,6 @@ export type ModelStreamChunk = {
 	toolCalls?: ModelToolCall[];
 };
 
-export type ModelChatResult = {
-	content: string;
-	toolCalls: ModelToolCall[];
-};
-
 export interface ModelPort {
-	chat(input: ModelChatInput): Promise<ModelChatResult>;
 	streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk>;
 }

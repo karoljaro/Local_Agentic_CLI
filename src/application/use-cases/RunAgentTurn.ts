@@ -12,11 +12,7 @@ import type { ModelMessage } from '@/domain/ModelMessage';
 import type { ModelToolCall, ToolDefinition } from '@/domain/Tool';
 import { reduceAgentState } from '../services/SessionReducer';
 import type { ContextBuilder } from '../services/ContextBuilder';
-import type {
-	ModelChatInput,
-	ModelChatResult,
-	ModelPort,
-} from '../ports/ModelPort';
+import type { ModelChatInput, ModelPort } from '../ports/ModelPort';
 import type { SessionStorePort } from '../ports/SessionStorePort';
 import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
@@ -54,6 +50,11 @@ type ToolExecutionBatchResult = {
 	toolCalls: ModelToolCall[];
 	toolMessages: ModelMessage[];
 	terminalMessage?: string;
+};
+
+type StreamedModelResponse = {
+	content: string;
+	toolCalls: ModelToolCall[];
 };
 
 export type RunAgentTurnDependencies = {
@@ -129,6 +130,7 @@ export class RunAgentTurn {
 		}
 
 		let currentMessages = messages;
+		let assistantContent = '';
 		const toolCache = new Map<string, ToolExecutionResult>();
 
 		for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
@@ -136,9 +138,10 @@ export class RunAgentTurn {
 				messages: currentMessages,
 				tools,
 			});
+			assistantContent += result.content;
 
 			if (result.toolCalls.length === 0) {
-				await this.appendAssistantCompleted(sessionId, result.content);
+				await this.appendAssistantCompleted(sessionId, assistantContent);
 				return;
 			}
 
@@ -155,7 +158,12 @@ export class RunAgentTurn {
 			);
 
 			if (terminalMessage !== undefined) {
-				yield* this.completeAssistantResponse(sessionId, terminalMessage);
+				if (terminalMessage.length > 0) {
+					yield { contentDelta: terminalMessage };
+					assistantContent += terminalMessage;
+				}
+
+				await this.appendAssistantCompleted(sessionId, assistantContent);
 				return;
 			}
 
@@ -183,7 +191,7 @@ export class RunAgentTurn {
 	private async *streamModelResponse(
 		sessionId: SessionId,
 		input: ModelChatInput,
-	): AsyncGenerator<AgentTurnChunk, ModelChatResult> {
+	): AsyncGenerator<AgentTurnChunk, StreamedModelResponse> {
 		let content = '';
 		const toolCalls: ModelToolCall[] = [];
 
@@ -384,17 +392,6 @@ export class RunAgentTurn {
 		};
 
 		await this.dependencies.sessionStore.appendSessionEvent(failedEvent);
-	}
-
-	private async *completeAssistantResponse(
-		sessionId: SessionId,
-		content: string,
-	): AsyncIterable<AgentTurnChunk> {
-		if (content.length > 0) {
-			yield { contentDelta: content };
-		}
-
-		await this.appendAssistantCompleted(sessionId, content);
 	}
 
 	private async appendAssistantCompleted(

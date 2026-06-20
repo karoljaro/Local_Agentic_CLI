@@ -1,15 +1,12 @@
 import type {
 	ModelChatInput,
-	ModelChatResult,
 	ModelPort,
 	ModelStreamChunk,
 } from '@/application/ports/ModelPort';
 import {
-	toModelChatResult,
 	toModelStreamChunk,
 	toOllamaMessage,
 	toOllamaTool,
-	type OllamaChatResponse,
 	type OllamaChatStreamResponse,
 } from './mappers/OllamaChatMapper';
 
@@ -34,37 +31,6 @@ export class OllamaModelAdapter implements ModelPort {
 
 		this.baseUrl = normalizedBaseUrl;
 		this.modelName = normalizedModelName;
-	}
-
-	async chat(input: ModelChatInput): Promise<ModelChatResult> {
-		const response = await fetch(`${this.baseUrl}/api/chat`, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify({
-				model: this.modelName,
-				messages: input.messages.map(toOllamaMessage),
-				...(input.tools === undefined || input.tools.length === 0
-					? {}
-					: { tools: input.tools.map(toOllamaTool) }),
-				stream: false,
-			}),
-		});
-
-		if (!response.ok) {
-			throw new Error(
-				`Ollama request failed with status ${response.status}: ${await readBoundedResponseText(response)}`
-			);
-		}
-
-		const body = (await response.json()) as OllamaChatResponse;
-
-		if (body.error !== undefined) {
-			throw new Error(`Ollama chat failed: ${body.error}`);
-		}
-
-		return toModelChatResult(body);
 	}
 
 	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
@@ -111,46 +77,28 @@ export class OllamaModelAdapter implements ModelPort {
 				buffer = lines.pop() ?? '';
 
 				for (const line of lines) {
-					const chunk = parseOllamaStreamLine(line);
+					const chunk = parseOllamaStreamChunk(line);
 
-					if (chunk === null) {
-						continue;
-					}
-
-					if (chunk.error !== undefined) {
-						throw new Error(`Ollama stream failed: ${chunk.error}`);
-					}
-
-					const modelChunk = toModelStreamChunk(chunk);
-
-					if (
-						modelChunk.contentDelta.length > 0 ||
-						modelChunk.toolCalls !== undefined
-					) {
-						yield modelChunk;
+					if (chunk !== undefined) {
+						yield chunk;
 					}
 				}
 			}
 
 			buffer += decoder.decode();
 
-			const finalChunk = parseOllamaStreamLine(buffer);
+			const finalChunk = parseOllamaStreamChunk(buffer);
 
-			if (finalChunk?.error !== undefined) {
-				throw new Error(`Ollama stream failed: ${finalChunk.error}`);
-			}
-
-			if (finalChunk !== null) {
-				const modelChunk = toModelStreamChunk(finalChunk);
-
-				if (
-					modelChunk.contentDelta.length > 0 ||
-					modelChunk.toolCalls !== undefined
-				) {
-					yield modelChunk;
-				}
+			if (finalChunk !== undefined) {
+				yield finalChunk;
 			}
 		} finally {
+			try {
+				await reader.cancel();
+			} catch {
+				// Preserve the stream or consumer error.
+			}
+
 			reader.releaseLock();
 		}
 	}
@@ -166,21 +114,33 @@ const readBoundedResponseText = async (response: Response): Promise<string> => {
 	}
 };
 
-const parseOllamaStreamLine = (
-	line: string
-): OllamaChatStreamResponse | null => {
+const parseOllamaStreamChunk = (
+	line: string,
+): ModelStreamChunk | undefined => {
 	const trimmedLine = line.trim();
 
 	if (trimmedLine.length === 0) {
-		return null;
+		return undefined;
 	}
 
+	let response: OllamaChatStreamResponse;
+
 	try {
-		return JSON.parse(trimmedLine) as OllamaChatStreamResponse;
+		response = JSON.parse(trimmedLine) as OllamaChatStreamResponse;
 	} catch (caughtError) {
 		const message =
 			caughtError instanceof Error ? caughtError.message : String(caughtError);
 
 		throw new Error(`Invalid Ollama stream JSON: ${message}`);
 	}
+
+	if (response.error !== undefined) {
+		throw new Error(`Ollama stream failed: ${response.error}`);
+	}
+
+	const chunk = toModelStreamChunk(response);
+
+	return chunk.contentDelta.length > 0 || chunk.toolCalls !== undefined
+		? chunk
+		: undefined;
 };

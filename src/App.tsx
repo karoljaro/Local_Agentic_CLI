@@ -719,18 +719,7 @@ const TranscriptView = ({
 	streamingContent,
 	transcript,
 }: TranscriptViewProps) => {
-	const entries =
-		streamingContent.length === 0
-			? transcript
-			: [
-					...transcript,
-					{
-						role: 'assistant',
-						content: streamingContent,
-					} satisfies TranscriptEntry,
-				];
-
-	if (entries.length === 0) {
+	if (transcript.length === 0 && streamingContent.length === 0) {
 		return (
 			<Box backgroundColor={PANEL_BACKGROUND} paddingX={2} paddingY={1}>
 				<Text color="gray">No messages yet.</Text>
@@ -740,9 +729,14 @@ const TranscriptView = ({
 
 	return (
 		<Box flexDirection="column" gap={1}>
-			{entries.map((entry, index) => (
+			{transcript.map((entry, index) => (
 				<MessageRow entry={entry} key={index} />
 			))}
+			{streamingContent.length === 0 ? null : (
+				<Box paddingLeft={2}>
+					<Text wrap="wrap">{streamingContent}</Text>
+				</Box>
+			)}
 		</Box>
 	);
 };

@@ -37,7 +37,6 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 	);
 
 	const model: ModelPort = {
-		chat: (input) => currentModel.chat(input),
 		streamChat: (input) => currentModel.streamChat(input),
 	};
 

@@ -21,112 +21,6 @@ const collectStream = async (
 };
 
 describe("OllamaModelAdapter", () => {
-	test("posts non-streaming chat with tools and parses tool calls", async () => {
-		const originalFetch = globalThis.fetch;
-		let requestUrl = "";
-		let requestBody: unknown;
-
-		globalThis.fetch = (async (input: FetchInput, init?: FetchInit) => {
-			requestUrl = String(input);
-			requestBody = JSON.parse(String(init?.body));
-
-			return Response.json({
-				message: {
-					content: "",
-					tool_calls: [
-						{
-							function: {
-								name: "read_file",
-								arguments: { path: "README.md" },
-							},
-						},
-					],
-				},
-			});
-		}) as unknown as typeof fetch;
-
-		try {
-			const adapter = new OllamaModelAdapter(
-				"http://localhost:11434/",
-				" test-model ",
-			);
-
-			const result = await adapter.chat({
-				messages: [
-					{
-						role: "system",
-						content: "System prompt",
-					},
-					{
-						id: asMessageId("message-1"),
-						role: "user",
-						content: "Read README",
-					},
-				],
-				tools: [
-					{
-						name: "read_file",
-						description: "Read a file",
-						parameters: {
-							type: "object",
-							required: ["path"],
-							properties: {
-								path: {
-									type: "string",
-								},
-							},
-						},
-					},
-				],
-			});
-
-			expect(requestUrl).toBe("http://localhost:11434/api/chat");
-			expect(requestBody).toEqual({
-				model: "test-model",
-				messages: [
-					{
-						role: "system",
-						content: "System prompt",
-					},
-					{
-						role: "user",
-						content: "Read README",
-					},
-				],
-				tools: [
-					{
-						type: "function",
-						function: {
-							name: "read_file",
-							description: "Read a file",
-							parameters: {
-								type: "object",
-								required: ["path"],
-								properties: {
-									path: {
-										type: "string",
-									},
-								},
-							},
-						},
-					},
-				],
-				stream: false,
-			});
-			expect(result).toEqual({
-				content: "",
-				toolCalls: [
-					{
-						name: "read_file",
-						arguments: { path: "README.md" },
-					},
-				],
-			});
-		} finally {
-			globalThis.fetch = originalFetch;
-		}
-	});
-
 	test("posts assistant tool calls and tool messages", async () => {
 		const originalFetch = globalThis.fetch;
 		let requestBody: unknown;
@@ -134,37 +28,35 @@ describe("OllamaModelAdapter", () => {
 		globalThis.fetch = (async (_input: FetchInput, init?: FetchInit) => {
 			requestBody = JSON.parse(String(init?.body));
 
-			return Response.json({
-				message: {
-					content: "Done",
-				},
-			});
+			return new Response('{"message":{"content":"Done"},"done":true}\n');
 		}) as unknown as typeof fetch;
 
 		try {
 			const adapter = new OllamaModelAdapter();
 
-			await adapter.chat({
-				messages: [
-					{
-						role: "assistant",
-						content: "",
-						toolCalls: [
-							{
-								id: asToolCallId("tool-call-1"),
-								name: "read_file",
-								arguments: { path: "README.md" },
-							},
-						],
-					},
-					{
-						role: "tool",
-						toolCallId: asToolCallId("tool-call-1"),
-						toolName: "read_file",
-						content: "{\"content\":\"hello\"}",
-					},
-				],
-			});
+			await collectStream(
+				adapter.streamChat({
+					messages: [
+						{
+							role: "assistant",
+							content: "",
+							toolCalls: [
+								{
+									id: asToolCallId("tool-call-1"),
+									name: "read_file",
+									arguments: { path: "README.md" },
+								},
+							],
+						},
+						{
+							role: "tool",
+							toolCallId: asToolCallId("tool-call-1"),
+							toolName: "read_file",
+							content: "{\"content\":\"hello\"}",
+						},
+					],
+				}),
+			);
 
 			expect(requestBody).toEqual({
 				model: "gemma4:12b-it-qat",
@@ -187,7 +79,7 @@ describe("OllamaModelAdapter", () => {
 						tool_name: "read_file",
 					},
 				],
-				stream: false,
+				stream: true,
 			});
 		} finally {
 			globalThis.fetch = originalFetch;
@@ -340,10 +232,21 @@ describe("OllamaModelAdapter", () => {
 
 	test("throws when the stream contains malformed JSON", async () => {
 		const originalFetch = globalThis.fetch;
+		let wasCancelled = false;
 
 		globalThis.fetch = (async () => {
-			return new Response("not-json\n", { status: 200 });
-			}) as unknown as typeof fetch;
+			return new Response(
+				new ReadableStream({
+					start(controller) {
+						controller.enqueue(new TextEncoder().encode("not-json\n"));
+					},
+					cancel() {
+						wasCancelled = true;
+					},
+				}),
+				{ status: 200 },
+			);
+		}) as unknown as typeof fetch;
 
 		try {
 			const adapter = new OllamaModelAdapter();
@@ -351,6 +254,7 @@ describe("OllamaModelAdapter", () => {
 			await expect(
 				collectStream(adapter.streamChat({ messages: [] })),
 			).rejects.toThrow("Invalid Ollama stream JSON");
+			expect(wasCancelled).toBe(true);
 		} finally {
 			globalThis.fetch = originalFetch;
 		}
