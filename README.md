@@ -130,8 +130,8 @@ bun run build
 
 The build output is placed in `dist`:
 
-- Linux x64: `local-agentic-cli` and `rg`
-- Windows x64: `local-agentic-cli.exe` and `rg.exe`
+- Linux x64: `codesh` and `rg`
+- Windows x64: `codesh.exe` and `rg.exe`
 
 Keep each CLI executable together with its matching ripgrep binary.
 
@@ -145,10 +145,10 @@ source ~/.bashrc
 After that, open any workspace folder and run:
 
 ```bash
-local-agentic-cli
+codesh
 ```
 
-The CLI uses the current terminal directory as the workspace, so file tools operate on the folder where `local-agentic-cli` is started.
+The CLI uses the current terminal directory as the workspace, so file tools operate on the folder where `codesh` is started.
 
 ## Configuration
 

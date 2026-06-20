@@ -24,7 +24,7 @@ const shared = {
 const linux = await Bun.build({
 	...shared,
 	outdir: 'dist',
-	naming: 'local-agentic-cli',
+	naming: 'codesh',
 	target: 'bun',
 	packages: 'external',
 	banner: '#!/usr/bin/env bun\n',
@@ -36,13 +36,13 @@ if (!linux.success) {
 }
 
 await copyFile(ripgrepBinaries.linux.source, ripgrepBinaries.linux.output);
-await chmod('dist/local-agentic-cli', 0o755);
+await chmod('dist/codesh', 0o755);
 await chmod(ripgrepBinaries.linux.output, 0o755);
 
 const windows = await Bun.build({
 	...shared,
 	compile: {
-		outfile: 'dist/local-agentic-cli.exe',
+		outfile: 'dist/codesh.exe',
 		target: 'bun-windows-x64',
 	},
 });
