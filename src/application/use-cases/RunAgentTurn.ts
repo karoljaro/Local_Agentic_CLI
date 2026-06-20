@@ -11,7 +11,7 @@ import type { SessionId, ToolCallId } from '@/domain/Ids';
 import type { ModelMessage } from '@/domain/ModelMessage';
 import type { ModelToolCall, ToolDefinition } from '@/domain/Tool';
 import { reduceAgentState } from '../services/SessionReducer';
-import { ContextBuilder } from '../services/ContextBuilder';
+import type { ContextBuilder } from '../services/ContextBuilder';
 import type {
 	ModelChatInput,
 	ModelChatResult,
@@ -115,10 +115,7 @@ export class RunAgentTurn {
 				yield { contentDelta: chunk.contentDelta };
 			}
 		} catch (caughtError) {
-			const error =
-				caughtError instanceof Error
-					? caughtError
-					: new Error(String(caughtError));
+			const error = toError(caughtError);
 
 			await this.tryAppendAgentError(sessionId, error, 'MODEL_STREAM_FAILED');
 			throw error;
@@ -305,10 +302,7 @@ export class RunAgentTurn {
 					content: stringifyToolOutput(result.output),
 				});
 			} catch (caughtError) {
-				const error =
-					caughtError instanceof Error
-						? caughtError
-						: new Error(String(caughtError));
+				const error = toError(caughtError);
 
 				await this.appendToolCallFailed({
 					sessionId,
@@ -386,10 +380,7 @@ export class RunAgentTurn {
 		try {
 			return await this.dependencies.model.chat(input);
 		} catch (caughtError) {
-			const error =
-				caughtError instanceof Error
-					? caughtError
-					: new Error(String(caughtError));
+			const error = toError(caughtError);
 
 			await this.tryAppendAgentError(sessionId, error, 'MODEL_CHAT_FAILED');
 			throw error;
@@ -468,6 +459,9 @@ const stringifyToolOutput = (output: unknown): string => {
 
 	return json ?? String(output);
 };
+
+const toError = (caughtError: unknown): Error =>
+	caughtError instanceof Error ? caughtError : new Error(String(caughtError));
 
 const isApprovalRequired = (
 	toolName: string,
