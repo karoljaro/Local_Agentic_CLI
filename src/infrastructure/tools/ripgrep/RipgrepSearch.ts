@@ -147,6 +147,7 @@ const runRipgrep = async ({
 			'--fixed-strings',
 			'--hidden',
 			'--color=never',
+			'--sort=path',
 			'--max-columns=500',
 			...globs.map((glob) => `--glob=${glob}`),
 			...patterns.flatMap((pattern) => ['--regexp', pattern]),
