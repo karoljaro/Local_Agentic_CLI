@@ -40,6 +40,8 @@ Zanim zaczniesz refaktorować, warto ustanowić jeden twardy punkt odniesienia.
 
 ## 0.1. Wszystkie testy muszą być deterministyczne
 
+- [X] - Wykonane
+
 Dodane przez Ciebie sortowanie `ripgrep` jest dokładnie właściwym typem poprawki.
 
 Sprawdź kilka pełnych uruchomień:
@@ -61,6 +63,8 @@ Wszystkie operacje, które zwracają kolekcje, powinny mieć ustaloną kolejnoś
 - rezultaty łączone z kilku źródeł.
 
 ## 0.2. Jeden główny skrypt kontrolny
+
+- [X] - Wykonane
 
 W `package.json` brakuje obecnie czytelnych skryptów jakościowych. Dodałbym:
 
