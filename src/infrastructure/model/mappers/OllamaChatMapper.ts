@@ -5,17 +5,10 @@ import type { ModelToolCall, ToolDefinition } from '@/domain/Tool';
 export type OllamaChatStreamResponse = {
 	message?: {
 		content?: string;
-		tool_calls?: OllamaToolCall[];
+		tool_calls?: unknown;
 	};
 	error?: string;
 	done?: boolean;
-};
-
-type OllamaToolCall = {
-	function?: {
-		name?: string;
-		arguments?: unknown;
-	};
 };
 
 export const toOllamaMessage = (
@@ -83,32 +76,54 @@ const toOllamaToolCall = (
 };
 
 const parseOllamaToolCalls = (
-	toolCalls: OllamaToolCall[],
+	toolCalls: unknown,
 ): ModelToolCall[] => {
-	return toolCalls.flatMap((toolCall) => {
-		const name = toolCall.function?.name;
+	if (toolCalls === undefined) {
+		return [];
+	}
 
-		if (name === undefined || name.length === 0) {
-			return [];
+	if (!Array.isArray(toolCalls)) {
+		throw new Error('Invalid Ollama tool calls: expected an array.');
+	}
+
+	return toolCalls.map((toolCall) => {
+		if (!isRecord(toolCall) || !isRecord(toolCall['function'])) {
+			throw new Error('Invalid Ollama tool call: missing function.');
 		}
 
-		return [
-			{
-				name,
-				arguments: parseToolCallArguments(toolCall.function?.arguments),
-			},
-		];
+		const toolFunction = toolCall['function'];
+		const name = toolFunction['name'];
+
+		if (typeof name !== 'string' || name.trim().length === 0) {
+			throw new Error('Invalid Ollama tool call: missing function name.');
+		}
+
+		return {
+			name: name.trim(),
+			arguments: parseToolCallArguments(toolFunction['arguments'], name),
+		};
 	});
 };
 
-const parseToolCallArguments = (toolArguments: unknown): unknown => {
+const parseToolCallArguments = (
+	toolArguments: unknown,
+	toolName: string,
+): unknown => {
 	if (typeof toolArguments !== 'string') {
 		return toolArguments ?? {};
 	}
 
 	try {
 		return JSON.parse(toolArguments);
-	} catch {
-		return toolArguments;
+	} catch (caughtError) {
+		const message =
+			caughtError instanceof Error ? caughtError.message : String(caughtError);
+
+		throw new Error(
+			`Invalid Ollama tool arguments for ${toolName}: ${message}`,
+		);
 	}
 };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+	typeof value === 'object' && value !== null && !Array.isArray(value);

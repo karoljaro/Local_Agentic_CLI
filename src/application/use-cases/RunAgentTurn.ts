@@ -54,6 +54,7 @@ type ToolExecutionBatchResult = {
 
 type StreamedModelResponse = {
 	content: string;
+	contentDeltas: string[];
 	toolCalls: ModelToolCall[];
 };
 
@@ -107,7 +108,11 @@ export class RunAgentTurn {
 		sessionId: SessionId,
 		messages: ModelMessage[],
 	): AsyncIterable<AgentTurnChunk> {
-		const result = yield* this.streamModelResponse(sessionId, { messages });
+		const result = yield* this.readModelResponse(
+			sessionId,
+			{ messages },
+			true,
+		);
 
 		await this.appendAssistantCompleted(sessionId, result.content);
 	}
@@ -130,19 +135,38 @@ export class RunAgentTurn {
 		}
 
 		let currentMessages = messages;
-		let assistantContent = '';
 		const toolCache = new Map<string, ToolExecutionResult>();
 
 		for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
-			const result = yield* this.streamModelResponse(sessionId, {
-				messages: currentMessages,
-				tools,
-			});
-			assistantContent += result.content;
+			const result = yield* this.readModelResponse(
+				sessionId,
+				{
+					messages: currentMessages,
+					tools,
+				},
+				false,
+			);
 
 			if (result.toolCalls.length === 0) {
-				await this.appendAssistantCompleted(sessionId, assistantContent);
+				for (const contentDelta of result.contentDeltas) {
+					yield { contentDelta };
+				}
+
+				await this.appendAssistantCompleted(sessionId, result.content);
 				return;
+			}
+
+			try {
+				validateToolCalls(result.toolCalls, tools);
+			} catch (caughtError) {
+				const error = toError(caughtError);
+
+				await this.tryAppendAgentError(
+					sessionId,
+					error,
+					'MODEL_TOOL_CALL_INVALID',
+				);
+				throw error;
 			}
 
 			const {
@@ -160,10 +184,9 @@ export class RunAgentTurn {
 			if (terminalMessage !== undefined) {
 				if (terminalMessage.length > 0) {
 					yield { contentDelta: terminalMessage };
-					assistantContent += terminalMessage;
 				}
 
-				await this.appendAssistantCompleted(sessionId, assistantContent);
+				await this.appendAssistantCompleted(sessionId, terminalMessage);
 				return;
 			}
 
@@ -188,11 +211,13 @@ export class RunAgentTurn {
 		throw error;
 	}
 
-	private async *streamModelResponse(
+	private async *readModelResponse(
 		sessionId: SessionId,
 		input: ModelChatInput,
+		streamContent: boolean,
 	): AsyncGenerator<AgentTurnChunk, StreamedModelResponse> {
 		let content = '';
+		const contentDeltas: string[] = [];
 		const toolCalls: ModelToolCall[] = [];
 
 		try {
@@ -201,7 +226,11 @@ export class RunAgentTurn {
 				toolCalls.push(...(chunk.toolCalls ?? []));
 
 				if (chunk.contentDelta.length > 0) {
-					yield { contentDelta: chunk.contentDelta };
+					contentDeltas.push(chunk.contentDelta);
+
+					if (streamContent) {
+						yield { contentDelta: chunk.contentDelta };
+					}
 				}
 			}
 		} catch (caughtError) {
@@ -211,7 +240,7 @@ export class RunAgentTurn {
 			throw error;
 		}
 
-		return { content, toolCalls };
+		return { content, contentDeltas, toolCalls };
 	}
 
 	private async executeToolCalls(
@@ -467,3 +496,100 @@ const isApprovalRequired = (
 		(tool) => tool.name === toolName && tool.requiresApproval === true,
 	);
 };
+
+const validateToolCalls = (
+	toolCalls: ModelToolCall[],
+	tools: ToolDefinition[],
+): void => {
+	for (const toolCall of toolCalls) {
+		const tool = tools.find((candidate) => candidate.name === toolCall.name);
+
+		if (tool === undefined) {
+			throw new Error(`Unknown tool requested by model: ${toolCall.name}`);
+		}
+
+		validateToolArguments(toolCall, tool);
+	}
+};
+
+const validateToolArguments = (
+	toolCall: ModelToolCall,
+	tool: ToolDefinition,
+): void => {
+	if (!isRecord(toolCall.arguments)) {
+		throw new Error(
+			`Invalid arguments for tool ${toolCall.name}: expected an object.`,
+		);
+	}
+
+	const required = tool.parameters['required'];
+
+	if (Array.isArray(required)) {
+		for (const propertyName of required) {
+			if (
+				typeof propertyName === 'string' &&
+				!Object.hasOwn(toolCall.arguments, propertyName)
+			) {
+				throw new Error(
+					`Invalid arguments for tool ${toolCall.name}: missing "${propertyName}".`,
+				);
+			}
+		}
+	}
+
+	const properties = tool.parameters['properties'];
+
+	if (!isRecord(properties)) {
+		return;
+	}
+
+	for (const [propertyName, propertyValue] of Object.entries(
+		toolCall.arguments,
+	)) {
+		const propertySchema = properties[propertyName];
+
+		if (propertySchema === undefined) {
+			if (tool.parameters['additionalProperties'] === false) {
+				throw new Error(
+					`Invalid arguments for tool ${toolCall.name}: unexpected "${propertyName}".`,
+				);
+			}
+
+			continue;
+		}
+
+		if (
+			isRecord(propertySchema) &&
+			!matchesSchemaType(propertyValue, propertySchema['type'])
+		) {
+			throw new Error(
+				`Invalid arguments for tool ${toolCall.name}: "${propertyName}" must be ${describeSchemaType(propertySchema['type'])}.`,
+			);
+		}
+	}
+};
+
+const matchesSchemaType = (value: unknown, schemaType: unknown): boolean => {
+	switch (schemaType) {
+		case 'array':
+			return Array.isArray(value);
+		case 'boolean':
+			return typeof value === 'boolean';
+		case 'integer':
+			return typeof value === 'number' && Number.isInteger(value);
+		case 'number':
+			return typeof value === 'number' && Number.isFinite(value);
+		case 'object':
+			return isRecord(value);
+		case 'string':
+			return typeof value === 'string';
+		default:
+			return true;
+	}
+};
+
+const describeSchemaType = (schemaType: unknown): string =>
+	typeof schemaType === 'string' ? schemaType : 'a valid value';
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+	typeof value === 'object' && value !== null && !Array.isArray(value);

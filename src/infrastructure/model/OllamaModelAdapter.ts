@@ -10,6 +10,11 @@ import {
 	type OllamaChatStreamResponse,
 } from './mappers/OllamaChatMapper';
 
+type ParsedOllamaStreamFrame = {
+	done: boolean;
+	chunk?: ModelStreamChunk;
+};
+
 export class OllamaModelAdapter implements ModelPort {
 	private readonly baseUrl: string;
 	private readonly modelName: string;
@@ -62,6 +67,7 @@ export class OllamaModelAdapter implements ModelPort {
 		const reader = response.body.getReader();
 		const decoder = new TextDecoder();
 		let buffer = '';
+		let isComplete = false;
 
 		try {
 			while (true) {
@@ -77,20 +83,34 @@ export class OllamaModelAdapter implements ModelPort {
 				buffer = lines.pop() ?? '';
 
 				for (const line of lines) {
-					const chunk = parseOllamaStreamChunk(line);
+					const frame = parseOllamaStreamFrame(line);
 
-					if (chunk !== undefined) {
-						yield chunk;
+					if (frame === undefined) {
+						continue;
+					}
+
+					isComplete ||= frame.done;
+
+					if (frame.chunk !== undefined) {
+						yield frame.chunk;
 					}
 				}
 			}
 
 			buffer += decoder.decode();
 
-			const finalChunk = parseOllamaStreamChunk(buffer);
+			const finalFrame = parseOllamaStreamFrame(buffer);
 
-			if (finalChunk !== undefined) {
-				yield finalChunk;
+			if (finalFrame !== undefined) {
+				isComplete ||= finalFrame.done;
+
+				if (finalFrame.chunk !== undefined) {
+					yield finalFrame.chunk;
+				}
+			}
+
+			if (!isComplete) {
+				throw new Error('Ollama stream ended before completion.');
 			}
 		} finally {
 			try {
@@ -114,9 +134,9 @@ const readBoundedResponseText = async (response: Response): Promise<string> => {
 	}
 };
 
-const parseOllamaStreamChunk = (
+const parseOllamaStreamFrame = (
 	line: string,
-): ModelStreamChunk | undefined => {
+): ParsedOllamaStreamFrame | undefined => {
 	const trimmedLine = line.trim();
 
 	if (trimmedLine.length === 0) {
@@ -139,8 +159,11 @@ const parseOllamaStreamChunk = (
 	}
 
 	const chunk = toModelStreamChunk(response);
+	const hasChunk =
+		chunk.contentDelta.length > 0 || chunk.toolCalls !== undefined;
 
-	return chunk.contentDelta.length > 0 || chunk.toolCalls !== undefined
-		? chunk
-		: undefined;
+	return {
+		done: response.done === true,
+		...(hasChunk ? { chunk } : {}),
+	};
 };

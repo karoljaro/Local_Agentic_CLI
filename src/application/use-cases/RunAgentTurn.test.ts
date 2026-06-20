@@ -121,9 +121,11 @@ class ToolCallingModel implements ModelPort {
 }
 
 class ContentThenToolCallingModel implements ModelPort {
+	readonly receivedInputs: ModelChatInput[] = [];
 	private callCount = 0;
 
-	async *streamChat(): AsyncIterable<ModelStreamChunk> {
+	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
+		this.receivedInputs.push(input);
 		this.callCount += 1;
 
 		if (this.callCount === 1) {
@@ -141,6 +143,60 @@ class ContentThenToolCallingModel implements ModelPort {
 		}
 
 		yield { contentDelta: 'The file contains hello.' };
+	}
+}
+
+class SearchCallingModel implements ModelPort {
+	readonly receivedInputs: ModelChatInput[] = [];
+
+	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
+		this.receivedInputs.push(input);
+
+		if (this.receivedInputs.length === 1) {
+			yield {
+				contentDelta: '',
+				toolCalls: [
+					{
+						name: 'search_file',
+						arguments: { query: 'UserRepository' },
+					},
+				],
+			};
+			return;
+		}
+
+		yield { contentDelta: 'UserRepository is defined ' };
+		yield { contentDelta: 'in src/users.py.' };
+	}
+}
+
+class InterruptedToolCallingModel implements ModelPort {
+	async *streamChat(): AsyncIterable<ModelStreamChunk> {
+		yield {
+			contentDelta: '',
+			toolCalls: [
+				{
+					name: 'search_file',
+					arguments: { query: 'UserRepository' },
+				},
+			],
+		};
+
+		throw new Error('Ollama stream ended before completion.');
+	}
+}
+
+class InvalidToolArgumentsModel implements ModelPort {
+	async *streamChat(): AsyncIterable<ModelStreamChunk> {
+		yield {
+			contentDelta: '',
+			toolCalls: [
+				{
+					name: 'search_file',
+					arguments: { query: 42 },
+				},
+			],
+		};
 	}
 }
 
@@ -243,7 +299,15 @@ class SearchThenReadModel implements ModelPort {
 	}
 
 	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
-		yield* streamResult(this.nextResult(input));
+		const result = this.nextResult(input);
+
+		if (this.receivedInputs.length === 3) {
+			yield { contentDelta: 'find_by_email compares ' };
+			yield { contentDelta: 'lowercased emails.' };
+			return;
+		}
+
+		yield* streamResult(result);
 	}
 }
 
@@ -604,6 +668,36 @@ describe('RunAgentTurn', () => {
 		]);
 	});
 
+	test('streams a final text response without executing available tools', async () => {
+		const sessionStore = new InMemorySessionStore();
+		const toolExecutor = new FakeToolExecutor();
+		const sessionId = asSessionId('session-1');
+		const useCase = new RunAgentTurn({
+			sessionStore,
+			model: new FakeModel(),
+			contextBuilder: new ContextBuilder({
+				systemPrompt: 'You are a local coding agent.',
+			}),
+			clock: new FixedClock(),
+			idGenerator: new SequenceIdGenerator(),
+			toolExecutor,
+		});
+
+		const chunks = await collectTurn(
+			useCase.run({ sessionId, prompt: 'Say hello' }),
+		);
+
+		expect(chunks).toEqual([
+			{ contentDelta: 'Hello' },
+			{ contentDelta: ' there' },
+		]);
+		expect(toolExecutor.receivedRequests).toEqual([]);
+		expect(sessionStore.events.at(-1)).toMatchObject({
+			type: 'assistant.message.completed',
+			content: 'Hello there',
+		});
+	});
+
 	test('rejects empty prompts before storing events', async () => {
 		const sessionStore = new InMemorySessionStore();
 		const useCase = new RunAgentTurn({
@@ -824,12 +918,56 @@ describe('RunAgentTurn', () => {
 		]);
 	});
 
-	test('persists all content shown before and after a tool call', async () => {
+	test('executes search once and sends its complete result to the final model round', async () => {
 		const sessionStore = new InMemorySessionStore();
+		const model = new SearchCallingModel();
+		const toolExecutor = new SearchReadToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
-			model: new ContentThenToolCallingModel(),
+			model,
+			contextBuilder: new ContextBuilder({
+				systemPrompt: 'You are a local coding agent.',
+			}),
+			clock: new FixedClock(),
+			idGenerator: new SequenceIdGenerator(),
+			toolExecutor,
+		});
+
+		const chunks = await collectTurn(
+			useCase.run({ sessionId, prompt: 'Find UserRepository' }),
+		);
+
+		expect(chunks).toEqual([
+			{ contentDelta: 'UserRepository is defined ' },
+			{ contentDelta: 'in src/users.py.' },
+		]);
+		expect(toolExecutor.receivedRequests).toEqual([
+			{
+				toolName: 'search_file',
+				toolInput: { query: 'UserRepository' },
+			},
+		]);
+		expect(model.receivedInputs[1]?.messages.at(-1)).toEqual({
+			role: 'tool',
+			toolCallId: asToolCallId('tool-call-3'),
+			toolName: 'search_file',
+			content:
+				'{"matches":[{"path":"src/users.py","line":10,"text":"def find_by_email(self, email: str) -> User | None:"}]}',
+		});
+		expect(sessionStore.events.at(-1)).toMatchObject({
+			type: 'assistant.message.completed',
+			content: 'UserRepository is defined in src/users.py.',
+		});
+	});
+
+	test('keeps tool-round text in model context without publishing it as final text', async () => {
+		const sessionStore = new InMemorySessionStore();
+		const sessionId = asSessionId('session-1');
+		const model = new ContentThenToolCallingModel();
+		const useCase = new RunAgentTurn({
+			sessionStore,
+			model,
 			contextBuilder: new ContextBuilder({
 				systemPrompt: 'You are a local coding agent.',
 			}),
@@ -843,12 +981,21 @@ describe('RunAgentTurn', () => {
 		);
 
 		expect(chunks).toEqual([
-			{ contentDelta: 'I will inspect the file.\n' },
 			{ contentDelta: 'The file contains hello.' },
 		]);
+		expect(model.receivedInputs[1]?.messages.at(-2)).toMatchObject({
+			role: 'assistant',
+			content: 'I will inspect the file.\n',
+			toolCalls: [
+				{
+					name: 'read_file',
+					arguments: { path: 'README.md' },
+				},
+			],
+		});
 		expect(sessionStore.events.at(-1)).toMatchObject({
 			type: 'assistant.message.completed',
-			content: 'I will inspect the file.\nThe file contains hello.',
+			content: 'The file contains hello.',
 		});
 	});
 
@@ -986,9 +1133,8 @@ describe('RunAgentTurn', () => {
 		);
 
 		expect(chunks).toEqual([
-			{
-				contentDelta: 'find_by_email compares lowercased emails.',
-			},
+			{ contentDelta: 'find_by_email compares ' },
+			{ contentDelta: 'lowercased emails.' },
 		]);
 		expect(toolExecutor.receivedRequests).toEqual([
 			{
@@ -1004,6 +1150,26 @@ describe('RunAgentTurn', () => {
 		expect(model.receivedInputs.every((input) => input.tools !== undefined)).toBe(
 			true,
 		);
+		expect(model.receivedInputs[1]?.messages.slice(-2)).toEqual([
+			{
+				role: 'assistant',
+				content: '',
+				toolCalls: [
+					{
+						id: asToolCallId('tool-call-3'),
+						name: 'search_file',
+						arguments: { query: 'find_by_email' },
+					},
+				],
+			},
+			{
+				role: 'tool',
+				toolCallId: asToolCallId('tool-call-3'),
+				toolName: 'search_file',
+				content:
+					'{"matches":[{"path":"src/users.py","line":10,"text":"def find_by_email(self, email: str) -> User | None:"}]}',
+			},
+		]);
 		expect(model.receivedInputs[2]?.messages.slice(-2)).toEqual([
 			{
 				role: 'assistant',
@@ -1034,6 +1200,71 @@ describe('RunAgentTurn', () => {
 			'tool.call.completed',
 			'assistant.message.completed',
 		]);
+	});
+
+	test('does not execute a tool when the model stream ends with an error', async () => {
+		const sessionStore = new InMemorySessionStore();
+		const toolExecutor = new SearchReadToolExecutor();
+		const sessionId = asSessionId('session-1');
+		const useCase = new RunAgentTurn({
+			sessionStore,
+			model: new InterruptedToolCallingModel(),
+			contextBuilder: new ContextBuilder({
+				systemPrompt: 'You are a local coding agent.',
+			}),
+			clock: new FixedClock(),
+			idGenerator: new SequenceIdGenerator(),
+			toolExecutor,
+		});
+
+		await expect(
+			collectTurn(useCase.run({ sessionId, prompt: 'Find UserRepository' })),
+		).rejects.toThrow('Ollama stream ended before completion.');
+
+		expect(toolExecutor.receivedRequests).toEqual([]);
+		expect(
+			sessionStore.events.some((event) => event.type === 'tool.call.started'),
+		).toBe(false);
+		expect(sessionStore.events.at(-1)).toMatchObject({
+			type: 'agent.error',
+			error: {
+				message: 'Ollama stream ended before completion.',
+				code: 'MODEL_STREAM_FAILED',
+			},
+		});
+	});
+
+	test('does not execute a tool with invalid arguments', async () => {
+		const sessionStore = new InMemorySessionStore();
+		const toolExecutor = new SearchReadToolExecutor();
+		const sessionId = asSessionId('session-1');
+		const useCase = new RunAgentTurn({
+			sessionStore,
+			model: new InvalidToolArgumentsModel(),
+			contextBuilder: new ContextBuilder({
+				systemPrompt: 'You are a local coding agent.',
+			}),
+			clock: new FixedClock(),
+			idGenerator: new SequenceIdGenerator(),
+			toolExecutor,
+		});
+
+		await expect(
+			collectTurn(useCase.run({ sessionId, prompt: 'Find UserRepository' })),
+		).rejects.toThrow(
+			'Invalid arguments for tool search_file: "query" must be string.',
+		);
+
+		expect(toolExecutor.receivedRequests).toEqual([]);
+		expect(
+			sessionStore.events.some((event) => event.type === 'tool.call.started'),
+		).toBe(false);
+		expect(sessionStore.events.at(-1)).toMatchObject({
+			type: 'agent.error',
+			error: {
+				code: 'MODEL_TOOL_CALL_INVALID',
+			},
+		});
 	});
 
 	test('caches read tools during a turn and clears the cache after an edit', async () => {

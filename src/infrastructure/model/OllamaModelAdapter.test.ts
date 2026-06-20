@@ -278,6 +278,48 @@ describe("OllamaModelAdapter", () => {
 		}
 	});
 
+	test("throws when the stream ends before Ollama marks it complete", async () => {
+		const originalFetch = globalThis.fetch;
+
+		globalThis.fetch = (async () => {
+			return new Response(
+				'{"message":{"content":"","tool_calls":[{"function":{"name":"read_file","arguments":{"path":"README.md"}}}]},"done":false}\n',
+				{ status: 200 },
+			);
+		}) as unknown as typeof fetch;
+
+		try {
+			const adapter = new OllamaModelAdapter();
+
+			await expect(
+				collectStream(adapter.streamChat({ messages: [] })),
+			).rejects.toThrow("Ollama stream ended before completion.");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("throws when tool arguments contain invalid JSON", async () => {
+		const originalFetch = globalThis.fetch;
+
+		globalThis.fetch = (async () => {
+			return new Response(
+				'{"message":{"content":"","tool_calls":[{"function":{"name":"read_file","arguments":"{invalid"}}]},"done":true}\n',
+				{ status: 200 },
+			);
+		}) as unknown as typeof fetch;
+
+		try {
+			const adapter = new OllamaModelAdapter();
+
+			await expect(
+				collectStream(adapter.streamChat({ messages: [] })),
+			).rejects.toThrow("Invalid Ollama tool arguments for read_file");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
 	test("rejects empty configuration values", () => {
 		expect(() => new OllamaModelAdapter(" ", "model")).toThrow(
 			"Ollama base URL cannot be empty.",
