@@ -6,6 +6,7 @@ import { createRuntime, type Runtime } from '@/composition/createRuntime';
 import type { ListedSessionEvent } from '@/application/use-cases/ListSessionEvents';
 import type { ToolApprovalRequest } from '@/application/use-cases/RunAgentTurn';
 import type { SessionId } from '@/domain/Ids';
+import { Markdown } from './Markdown';
 
 type TranscriptEntry = {
 	role: 'user' | 'assistant' | 'error';
@@ -309,7 +310,9 @@ const InteractiveApp = ({
 					const sessionModelName = getSessionModelName(result.events);
 
 					if (sessionModelName !== undefined) {
-						onModelNameChange(runtime.switchModel(sessionModelName));
+						onModelNameChange(
+							runtime.switchModel(sessionModelName)
+						);
 					}
 
 					setTranscript(sessionEventsToTranscript(result.events));
@@ -571,12 +574,15 @@ const sessionEventsToTranscript = (
 };
 
 const getSessionModelName = (
-	events: ListedSessionEvent[],
+	events: ListedSessionEvent[]
 ): string | undefined => {
 	for (let index = events.length - 1; index >= 0; index -= 1) {
 		const event = events[index];
 
-		if (event?.type === 'prompt.submitted' && event.modelName !== undefined) {
+		if (
+			event?.type === 'prompt.submitted' &&
+			event.modelName !== undefined
+		) {
 			return event.modelName;
 		}
 	}
@@ -764,7 +770,9 @@ const MessageRow = ({ entry }: MessageRowProps) => {
 
 	return (
 		<Box paddingLeft={2}>
-			<Text>{entry.content}</Text>
+			<Markdown maxWidth={100} showLinkUrls codeWrap="wrap">
+				{entry.content}
+			</Markdown>
 		</Box>
 	);
 };
