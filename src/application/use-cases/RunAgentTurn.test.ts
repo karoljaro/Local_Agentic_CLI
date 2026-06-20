@@ -211,6 +211,51 @@ class SearchThenReadModel implements ModelPort {
 	}
 }
 
+class ReadReadEditReadModel implements ModelPort {
+	private callCount = 0;
+
+	async chat(): Promise<ModelChatResult> {
+		this.callCount += 1;
+
+		if (this.callCount === 1 || this.callCount === 2 || this.callCount === 4) {
+			return {
+				content: '',
+				toolCalls: [
+					{
+						name: 'read_file',
+						arguments: { path: 'src/file.ts' },
+					},
+				],
+			};
+		}
+
+		if (this.callCount === 3) {
+			return {
+				content: '',
+				toolCalls: [
+					{
+						name: 'edit_file',
+						arguments: {
+							path: 'src/file.ts',
+							oldText: 'const value = 1;',
+							newText: 'const value = 2;',
+						},
+					},
+				],
+			};
+		}
+
+		return {
+			content: 'Done.',
+			toolCalls: [],
+		};
+	}
+
+	async *streamChat(): AsyncIterable<ModelStreamChunk> {
+		throw new Error('streamChat should not be used in this test.');
+	}
+}
+
 class InfiniteToolCallingModel implements ModelPort {
 	async chat(): Promise<ModelChatResult> {
 		return {
@@ -226,6 +271,47 @@ class InfiniteToolCallingModel implements ModelPort {
 
 	async *streamChat(): AsyncIterable<ModelStreamChunk> {
 		throw new Error('streamChat should not be used in this test.');
+	}
+}
+
+class ReadEditToolExecutor implements ToolExecutorPort {
+	readonly receivedRequests: ToolExecutionRequest[] = [];
+	private readCount = 0;
+
+	listTools() {
+		return [
+			{
+				name: 'read_file',
+				description: 'Read a file',
+				parameters: {},
+			},
+			{
+				name: 'edit_file',
+				description: 'Edit a file',
+				requiresApproval: true,
+				parameters: {},
+			},
+		];
+	}
+
+	async execute(
+		request: ToolExecutionRequest,
+	): Promise<ToolExecutionResult> {
+		this.receivedRequests.push(request);
+
+		if (request.toolName === 'read_file') {
+			this.readCount += 1;
+
+			return {
+				toolName: request.toolName,
+				output: { content: `version-${this.readCount}` },
+			};
+		}
+
+		return {
+			toolName: request.toolName,
+			output: { replaced: true },
+		};
 	}
 }
 
@@ -887,6 +973,32 @@ describe('RunAgentTurn', () => {
 		]);
 	});
 
+	test('caches read tools during a turn and clears the cache after an edit', async () => {
+		const sessionStore = new InMemorySessionStore();
+		const toolExecutor = new ReadEditToolExecutor();
+		const sessionId = asSessionId('session-1');
+		const useCase = new RunAgentTurn({
+			sessionStore,
+			model: new ReadReadEditReadModel(),
+			contextBuilder: new ContextBuilder({
+				systemPrompt: 'You are a local coding agent.',
+			}),
+			clock: new FixedClock(),
+			idGenerator: new SequenceIdGenerator(),
+			toolExecutor,
+			approveToolCall: async () => true,
+		});
+
+		const chunks = await collectTurn(
+			useCase.run({ sessionId, prompt: 'Read, edit, and read again' }),
+		);
+
+		expect(chunks).toEqual([{ contentDelta: 'Done.' }]);
+		expect(toolExecutor.receivedRequests.map((request) => request.toolName)).toEqual(
+			['read_file', 'edit_file', 'read_file'],
+		);
+	});
+
 	test('stores failed tool events and sends the error back to the model', async () => {
 		const sessionStore = new InMemorySessionStore();
 		const model = new FailingToolCallingModel();
@@ -984,7 +1096,7 @@ describe('RunAgentTurn', () => {
 			collectTurn(useCase.run({ sessionId, prompt: 'Keep reading' })),
 		).rejects.toThrow('Tool iteration limit reached.');
 
-		expect(toolExecutor.receivedRequests).toHaveLength(12);
+		expect(toolExecutor.receivedRequests).toHaveLength(1);
 		expect(sessionStore.events.at(-1)).toEqual({
 			id: asEventId('event-51'),
 			sessionId,

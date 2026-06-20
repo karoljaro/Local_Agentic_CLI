@@ -20,9 +20,14 @@ import type {
 import type { SessionStorePort } from '../ports/SessionStorePort';
 import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
-import type { ToolExecutorPort } from '../ports/ToolExecutorPort';
+import type {
+	ToolExecutionResult,
+	ToolExecutorPort,
+} from '../ports/ToolExecutorPort';
 
 const MAX_TOOL_ITERATIONS = 12;
+const CACHEABLE_TOOLS = new Set(['list_files', 'read_file', 'search_file']);
+const CACHE_INVALIDATING_TOOLS = new Set(['create_file', 'edit_file']);
 
 export type RunAgentTurnInput = {
 	sessionId: SessionId;
@@ -140,6 +145,7 @@ export class RunAgentTurn {
 		}
 
 		let currentMessages = messages;
+		const toolCache = new Map<string, ToolExecutionResult>();
 
 		for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
 			const result = await this.chatWithErrorPersistence(sessionId, {
@@ -161,6 +167,7 @@ export class RunAgentTurn {
 				result.toolCalls,
 				toolExecutor,
 				tools,
+				toolCache,
 			);
 
 			if (terminalMessage !== undefined) {
@@ -194,6 +201,7 @@ export class RunAgentTurn {
 		toolCalls: ModelToolCall[],
 		toolExecutor: ToolExecutorPort,
 		tools: ToolDefinition[],
+		toolCache: Map<string, ToolExecutionResult>,
 	): Promise<ToolExecutionBatchResult> {
 		const toolCallsWithIds: ModelToolCall[] = [];
 		const toolMessages: ModelMessage[] = [];
@@ -258,10 +266,26 @@ export class RunAgentTurn {
 			await this.dependencies.sessionStore.appendSessionEvent(startedEvent);
 
 			try {
-				const result = await toolExecutor.execute({
-					toolName,
-					toolInput: toolCall.arguments,
-				});
+				const cacheKey = CACHEABLE_TOOLS.has(toolName)
+					? JSON.stringify([toolName, toolCall.arguments])
+					: undefined;
+				let result =
+					cacheKey === undefined ? undefined : toolCache.get(cacheKey);
+
+				if (result === undefined) {
+					result = await toolExecutor.execute({
+						toolName,
+						toolInput: toolCall.arguments,
+					});
+
+					if (cacheKey !== undefined) {
+						toolCache.set(cacheKey, result);
+					}
+				}
+
+				if (CACHE_INVALIDATING_TOOLS.has(toolName)) {
+					toolCache.clear();
+				}
 
 				const completedEvent: ToolCallCompleted = {
 					id: this.dependencies.idGenerator.nextEventId(),
