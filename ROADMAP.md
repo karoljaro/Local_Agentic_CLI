@@ -100,6 +100,8 @@ bun run check
 
 ## 0.3. Przenieś TypeScript do `devDependencies`
 
+- [X] - Wykonane
+
 Projekt jest prywatną aplikacją, a nie biblioteką publikowaną w npm. Dlatego:
 
 ```json
@@ -129,6 +131,8 @@ Dodałbym również:
 To ograniczy różnice między środowiskami.
 
 ## 0.4. CI na każdym pushu i pull requeście
+
+- [X] - Częsciowo wykonane
 
 Obecnie nie widzę workflow CI. To powinien być jeden z pierwszych kroków.
 
