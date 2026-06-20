@@ -359,7 +359,7 @@ function BlockToken({
 					table={token as Tokens.Table}
 					width={width}
 					showLinkUrls={showLinkUrls}
-					compact={false}
+					compact={compact}
 				/>
 			);
 
