@@ -37,6 +37,16 @@ describe('reduceAgentState', () => {
 			{
 				id: asEventId('event-3'),
 				sessionId,
+				type: 'tool.call.requested',
+				timestamp,
+				toolCallId,
+				toolName: 'read_file',
+				toolInput: { path: 'README.md' },
+				approvalRequired: false,
+			},
+			{
+				id: asEventId('event-4'),
+				sessionId,
 				type: 'tool.call.completed',
 				timestamp,
 				toolCallId,
@@ -44,7 +54,17 @@ describe('reduceAgentState', () => {
 				output: { path: 'README.md', content: 'hello' },
 			},
 			{
-				id: asEventId('event-4'),
+				id: asEventId('event-5'),
+				sessionId,
+				type: 'tool.call.requested',
+				timestamp,
+				toolCallId: asToolCallId('tool-call-2'),
+				toolName: 'search_code',
+				toolInput: { query: 'UserRepository' },
+				approvalRequired: false,
+			},
+			{
+				id: asEventId('event-6'),
 				sessionId,
 				type: 'tool.call.failed',
 				timestamp,
@@ -57,7 +77,7 @@ describe('reduceAgentState', () => {
 				},
 			},
 			{
-				id: asEventId('event-5'),
+				id: asEventId('event-7'),
 				sessionId,
 				type: 'agent.error',
 				timestamp,
@@ -85,10 +105,42 @@ describe('reduceAgentState', () => {
 				content: 'I will check it.',
 			},
 			{
+				role: 'assistant',
+				content: '',
+				toolCalls: [
+					{
+						id: toolCallId,
+						name: 'read_file',
+						arguments: { path: 'README.md' },
+					},
+				],
+			},
+			{
 				role: 'tool',
 				toolCallId,
 				toolName: 'read_file',
 				content: JSON.stringify({ path: 'README.md', content: 'hello' }),
+			},
+			{
+				role: 'assistant',
+				content: '',
+				toolCalls: [
+					{
+						id: asToolCallId('tool-call-2'),
+						name: 'search_code',
+						arguments: { query: 'UserRepository' },
+					},
+				],
+			},
+			{
+				role: 'tool',
+				toolCallId: asToolCallId('tool-call-2'),
+				toolName: 'search_code',
+				content: JSON.stringify({
+					error: {
+						message: 'rg failed',
+					},
+				}),
 			},
 		]);
 		expect(state.toolResults).toEqual([
@@ -112,5 +164,33 @@ describe('reduceAgentState', () => {
 				details: { provider: 'ollama' },
 			},
 		]);
+	});
+
+	test('ignores an unfinished tool call when rebuilding messages', () => {
+		const sessionId = asSessionId('session-1');
+		const toolCallId = asToolCallId('tool-call-1');
+
+		const state = reduceAgentState(sessionId, [
+			{
+				id: asEventId('event-1'),
+				sessionId,
+				type: 'tool.call.requested',
+				timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
+				toolCallId,
+				toolName: 'read_file',
+				toolInput: { path: 'README.md' },
+				approvalRequired: false,
+			},
+			{
+				id: asEventId('event-2'),
+				sessionId,
+				type: 'tool.call.started',
+				timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
+				toolCallId,
+				toolName: 'read_file',
+			},
+		]);
+
+		expect(state.messages).toEqual([]);
 	});
 });
