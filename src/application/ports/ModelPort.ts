@@ -8,6 +8,7 @@ export type ModelChatInput = {
 
 export type ModelStreamChunk = {
 	contentDelta: string;
+	toolCalls?: ModelToolCall[];
 };
 
 export type ModelChatResult = {

@@ -6,6 +6,7 @@ import type {
 } from '@/application/ports/ModelPort';
 import {
 	toModelChatResult,
+	toModelStreamChunk,
 	toOllamaMessage,
 	toOllamaTool,
 	type OllamaChatResponse,
@@ -75,6 +76,9 @@ export class OllamaModelAdapter implements ModelPort {
 			body: JSON.stringify({
 				model: this.modelName,
 				messages: input.messages.map(toOllamaMessage),
+				...(input.tools === undefined || input.tools.length === 0
+					? {}
+					: { tools: input.tools.map(toOllamaTool) }),
 				stream: true,
 			}),
 		});
@@ -109,7 +113,7 @@ export class OllamaModelAdapter implements ModelPort {
 				for (const line of lines) {
 					const chunk = parseOllamaStreamLine(line);
 
-					if (chunk === null || chunk.done === true) {
+					if (chunk === null) {
 						continue;
 					}
 
@@ -117,10 +121,13 @@ export class OllamaModelAdapter implements ModelPort {
 						throw new Error(`Ollama stream failed: ${chunk.error}`);
 					}
 
-					const contentDelta = chunk.message?.content;
+					const modelChunk = toModelStreamChunk(chunk);
 
-					if (contentDelta !== undefined && contentDelta.length > 0) {
-						yield { contentDelta };
+					if (
+						modelChunk.contentDelta.length > 0 ||
+						modelChunk.toolCalls !== undefined
+					) {
+						yield modelChunk;
 					}
 				}
 			}
@@ -129,15 +136,18 @@ export class OllamaModelAdapter implements ModelPort {
 
 			const finalChunk = parseOllamaStreamLine(buffer);
 
-			if (finalChunk?.done !== true) {
-				if (finalChunk?.error !== undefined) {
-					throw new Error(`Ollama stream failed: ${finalChunk.error}`);
-				}
+			if (finalChunk?.error !== undefined) {
+				throw new Error(`Ollama stream failed: ${finalChunk.error}`);
+			}
 
-				const contentDelta = finalChunk?.message?.content;
+			if (finalChunk !== null) {
+				const modelChunk = toModelStreamChunk(finalChunk);
 
-				if (contentDelta !== undefined && contentDelta.length > 0) {
-					yield { contentDelta };
+				if (
+					modelChunk.contentDelta.length > 0 ||
+					modelChunk.toolCalls !== undefined
+				) {
+					yield modelChunk;
 				}
 			}
 		} finally {

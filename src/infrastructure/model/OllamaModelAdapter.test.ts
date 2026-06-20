@@ -255,6 +255,71 @@ describe("OllamaModelAdapter", () => {
 		}
 	});
 
+	test("streams tool calls when tools are provided", async () => {
+		const originalFetch = globalThis.fetch;
+		let requestBody: unknown;
+
+		globalThis.fetch = (async (_input: FetchInput, init?: FetchInit) => {
+			requestBody = JSON.parse(String(init?.body));
+
+			return new Response(
+				'{"message":{"content":"","tool_calls":[{"function":{"name":"read_file","arguments":{"path":"README.md"}}}]},"done":true}\n',
+				{ status: 200 },
+			);
+		}) as unknown as typeof fetch;
+
+		try {
+			const adapter = new OllamaModelAdapter();
+			const tool = {
+				name: "read_file",
+				description: "Read a file",
+				parameters: {
+					type: "object",
+					required: ["path"],
+					properties: {
+						path: { type: "string" },
+					},
+				},
+			};
+
+			const chunks = await collectStream(
+				adapter.streamChat({
+					messages: [],
+					tools: [tool],
+				}),
+			);
+
+			expect(requestBody).toEqual({
+				model: "gemma4:12b-it-qat",
+				messages: [],
+				tools: [
+					{
+						type: "function",
+						function: {
+							name: tool.name,
+							description: tool.description,
+							parameters: tool.parameters,
+						},
+					},
+				],
+				stream: true,
+			});
+			expect(chunks).toEqual([
+				{
+					contentDelta: "",
+					toolCalls: [
+						{
+							name: "read_file",
+							arguments: { path: "README.md" },
+						},
+					],
+				},
+			]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
 	test("throws a bounded error for non-ok responses", async () => {
 		const originalFetch = globalThis.fetch;
 

@@ -106,22 +106,9 @@ export class RunAgentTurn {
 		sessionId: SessionId,
 		messages: ModelMessage[],
 	): AsyncIterable<AgentTurnChunk> {
-		let assistantContent = '';
+		const result = yield* this.streamModelResponse(sessionId, { messages });
 
-		try {
-			for await (const chunk of this.dependencies.model.streamChat({ messages })) {
-				assistantContent += chunk.contentDelta;
-
-				yield { contentDelta: chunk.contentDelta };
-			}
-		} catch (caughtError) {
-			const error = toError(caughtError);
-
-			await this.tryAppendAgentError(sessionId, error, 'MODEL_STREAM_FAILED');
-			throw error;
-		}
-
-		await this.appendAssistantCompleted(sessionId, assistantContent);
+		await this.appendAssistantCompleted(sessionId, result.content);
 	}
 
 	private async *runWithTools(
@@ -145,13 +132,13 @@ export class RunAgentTurn {
 		const toolCache = new Map<string, ToolExecutionResult>();
 
 		for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
-			const result = await this.chatWithErrorPersistence(sessionId, {
+			const result = yield* this.streamModelResponse(sessionId, {
 				messages: currentMessages,
 				tools,
 			});
 
 			if (result.toolCalls.length === 0) {
-				yield* this.completeAssistantResponse(sessionId, result.content);
+				await this.appendAssistantCompleted(sessionId, result.content);
 				return;
 			}
 
@@ -191,6 +178,32 @@ export class RunAgentTurn {
 			'TOOL_ITERATION_LIMIT_REACHED',
 		);
 		throw error;
+	}
+
+	private async *streamModelResponse(
+		sessionId: SessionId,
+		input: ModelChatInput,
+	): AsyncGenerator<AgentTurnChunk, ModelChatResult> {
+		let content = '';
+		const toolCalls: ModelToolCall[] = [];
+
+		try {
+			for await (const chunk of this.dependencies.model.streamChat(input)) {
+				content += chunk.contentDelta;
+				toolCalls.push(...(chunk.toolCalls ?? []));
+
+				if (chunk.contentDelta.length > 0) {
+					yield { contentDelta: chunk.contentDelta };
+				}
+			}
+		} catch (caughtError) {
+			const error = toError(caughtError);
+
+			await this.tryAppendAgentError(sessionId, error, 'MODEL_STREAM_FAILED');
+			throw error;
+		}
+
+		return { content, toolCalls };
 	}
 
 	private async executeToolCalls(
@@ -371,20 +384,6 @@ export class RunAgentTurn {
 		};
 
 		await this.dependencies.sessionStore.appendSessionEvent(failedEvent);
-	}
-
-	private async chatWithErrorPersistence(
-		sessionId: SessionId,
-		input: ModelChatInput,
-	): Promise<ModelChatResult> {
-		try {
-			return await this.dependencies.model.chat(input);
-		} catch (caughtError) {
-			const error = toError(caughtError);
-
-			await this.tryAppendAgentError(sessionId, error, 'MODEL_CHAT_FAILED');
-			throw error;
-		}
 	}
 
 	private async *completeAssistantResponse(

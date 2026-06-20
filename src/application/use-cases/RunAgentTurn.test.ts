@@ -79,6 +79,18 @@ class FailingModel implements ModelPort {
 	}
 }
 
+const streamResult = async function* (
+	result: ModelChatResult,
+): AsyncIterable<ModelStreamChunk> {
+	if (result.content.length > 0) {
+		yield { contentDelta: result.content };
+	}
+
+	if (result.toolCalls.length > 0) {
+		yield { contentDelta: '', toolCalls: result.toolCalls };
+	}
+};
+
 class ToolCallingModel implements ModelPort {
 	readonly receivedInputs: ModelChatInput[] = [];
 
@@ -103,8 +115,16 @@ class ToolCallingModel implements ModelPort {
 		};
 	}
 
-	async *streamChat(): AsyncIterable<ModelStreamChunk> {
-		throw new Error('streamChat should not be used in this test.');
+	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
+		const result = await this.chat(input);
+
+		if (result.toolCalls.length > 0) {
+			yield { contentDelta: '', toolCalls: result.toolCalls };
+			return;
+		}
+
+		yield { contentDelta: 'The file contains ' };
+		yield { contentDelta: 'hello.' };
 	}
 }
 
@@ -136,8 +156,8 @@ class EditToolCallingModel implements ModelPort {
 		};
 	}
 
-	async *streamChat(): AsyncIterable<ModelStreamChunk> {
-		throw new Error('streamChat should not be used in this test.');
+	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
+		yield* streamResult(await this.chat(input));
 	}
 }
 
@@ -166,7 +186,7 @@ class FailingToolCallingModel implements ModelPort {
 	}
 
 	async *streamChat(): AsyncIterable<ModelStreamChunk> {
-		throw new Error('streamChat should not be used in this test.');
+		yield* streamResult(await this.chat());
 	}
 }
 
@@ -206,8 +226,8 @@ class SearchThenReadModel implements ModelPort {
 		};
 	}
 
-	async *streamChat(): AsyncIterable<ModelStreamChunk> {
-		throw new Error('streamChat should not be used in this test.');
+	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
+		yield* streamResult(await this.chat(input));
 	}
 }
 
@@ -252,7 +272,7 @@ class ReadReadEditReadModel implements ModelPort {
 	}
 
 	async *streamChat(): AsyncIterable<ModelStreamChunk> {
-		throw new Error('streamChat should not be used in this test.');
+		yield* streamResult(await this.chat());
 	}
 }
 
@@ -270,7 +290,7 @@ class InfiniteToolCallingModel implements ModelPort {
 	}
 
 	async *streamChat(): AsyncIterable<ModelStreamChunk> {
-		throw new Error('streamChat should not be used in this test.');
+		yield* streamResult(await this.chat());
 	}
 }
 
@@ -655,7 +675,10 @@ describe('RunAgentTurn', () => {
 
 		expect(chunks).toEqual([
 			{
-				contentDelta: 'The file contains hello.',
+				contentDelta: 'The file contains ',
+			},
+			{
+				contentDelta: 'hello.',
 			},
 		]);
 		expect(toolExecutor.receivedRequests).toEqual([
