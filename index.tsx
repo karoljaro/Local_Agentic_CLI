@@ -1,5 +1,4 @@
 import { render } from "ink";
-// import { App } from "@/App";
-import { App2 } from "@/App2";
+import { App } from "@/App";
 
-render(<App2 />);
+render(<App />);
