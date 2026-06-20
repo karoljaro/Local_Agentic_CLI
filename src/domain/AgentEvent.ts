@@ -22,6 +22,7 @@ export type AgentEventBase<TType extends string> = {
 export type PromptSubmitted = AgentEventBase<'prompt.submitted'> & {
 	messageId: MessageId;
 	prompt: string;
+	modelName?: string;
 };
 
 export type AssistantMessageStarted =

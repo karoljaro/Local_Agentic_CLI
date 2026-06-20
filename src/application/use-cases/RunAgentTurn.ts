@@ -27,6 +27,7 @@ const MAX_TOOL_ITERATIONS = 12;
 export type RunAgentTurnInput = {
 	sessionId: SessionId;
 	prompt: string;
+	modelName?: string;
 };
 
 export type AgentTurnChunk = {
@@ -64,7 +65,7 @@ export class RunAgentTurn {
 	constructor(private readonly dependencies: RunAgentTurnDependencies) {}
 
 	async *run(input: RunAgentTurnInput): AsyncIterable<AgentTurnChunk> {
-		const { sessionId, prompt } = input;
+		const { sessionId, prompt, modelName } = input;
 
 		if (prompt.trim().length === 0) {
 			throw new Error('Prompt cannot be empty.');
@@ -75,6 +76,7 @@ export class RunAgentTurn {
 			messageId: this.dependencies.idGenerator.nextMessageId(),
 			sessionId,
 			prompt,
+			...(modelName === undefined ? {} : { modelName }),
 			type: 'prompt.submitted',
 			timestamp: this.dependencies.clock.now(),
 		};

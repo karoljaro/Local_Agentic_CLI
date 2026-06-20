@@ -440,7 +440,11 @@ describe('RunAgentTurn', () => {
 
 		const chunks: ModelStreamChunk[] = [];
 
-		for await (const chunk of useCase.run({ sessionId, prompt: 'Say hello' })) {
+		for await (const chunk of useCase.run({
+			sessionId,
+			prompt: 'Say hello',
+			modelName: 'qwen3:8b',
+		})) {
 			chunks.push(chunk);
 		}
 
@@ -467,6 +471,7 @@ describe('RunAgentTurn', () => {
 				messageId: asMessageId('message-2'),
 				sessionId,
 				prompt: 'Say hello',
+				modelName: 'qwen3:8b',
 				type: 'prompt.submitted',
 				timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
 			},

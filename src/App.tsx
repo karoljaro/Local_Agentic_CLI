@@ -306,6 +306,12 @@ const InteractiveApp = ({
 				});
 
 				if (!isCancelled) {
+					const sessionModelName = getSessionModelName(result.events);
+
+					if (sessionModelName !== undefined) {
+						onModelNameChange(runtime.switchModel(sessionModelName));
+					}
+
 					setTranscript(sessionEventsToTranscript(result.events));
 				}
 			} catch (caughtError) {
@@ -329,7 +335,7 @@ const InteractiveApp = ({
 		return () => {
 			isCancelled = true;
 		};
-	}, [runtime, sessionId]);
+	}, [onModelNameChange, runtime, sessionId]);
 
 	const runPrompt = async (prompt: string): Promise<void> => {
 		const modelCommand = parseModelCommand(prompt);
@@ -352,6 +358,7 @@ const InteractiveApp = ({
 			for await (const chunk of runtime.runAgentTurn.run({
 				sessionId,
 				prompt,
+				modelName,
 			})) {
 				assistantContent += chunk.contentDelta;
 				setStreamingContent(assistantContent);
@@ -561,6 +568,20 @@ const sessionEventsToTranscript = (
 
 		return { role: 'assistant', content: event.content };
 	});
+};
+
+const getSessionModelName = (
+	events: ListedSessionEvent[],
+): string | undefined => {
+	for (let index = events.length - 1; index >= 0; index -= 1) {
+		const event = events[index];
+
+		if (event?.type === 'prompt.submitted' && event.modelName !== undefined) {
+			return event.modelName;
+		}
+	}
+
+	return undefined;
 };
 
 type AppShellProps = {
