@@ -175,6 +175,8 @@ Najwięcej problemów produkcyjnych zwykle nie powstaje w czystej logice domenow
 
 ## 1.1. Utwardzenie kontraktu Ollamy
 
+- [X] - Wykonane
+
 Obecne zmiany są dobrym fundamentem:
 
 - wymagane `done: true`;

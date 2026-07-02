@@ -60,9 +60,22 @@ class FakeModel implements ModelPort {
 	}
 }
 
+class EmptyModel implements ModelPort {
+	async *streamChat(): AsyncIterable<ModelStreamChunk> {}
+}
+
 class FailingModel implements ModelPort {
 	async *streamChat(): AsyncIterable<ModelStreamChunk> {
 		throw new Error('model failed');
+	}
+}
+
+class DeltaThenFailingModel implements ModelPort {
+	async *streamChat(): AsyncIterable<ModelStreamChunk> {
+		yield { contentDelta: 'partial ' };
+		yield { contentDelta: 'answer' };
+
+		throw new Error('Ollama stream failed: model failed');
 	}
 }
 
@@ -311,6 +324,91 @@ class SearchThenReadModel implements ModelPort {
 	}
 }
 
+class MultipleToolCallingModel implements ModelPort {
+	readonly receivedInputs: ModelChatInput[] = [];
+
+	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
+		this.receivedInputs.push(input);
+
+		if (this.receivedInputs.length === 1) {
+			yield {
+				contentDelta: '',
+				toolCalls: [
+					{
+						name: 'search_file',
+						arguments: { query: 'UserRepository' },
+					},
+					{
+						name: 'read_file',
+						arguments: { path: 'src/users.py' },
+					},
+				],
+			};
+			return;
+		}
+
+		yield { contentDelta: 'Both tools completed.' };
+	}
+}
+
+class MultipleReadsSecondFailingModel implements ModelPort {
+	readonly receivedInputs: ModelChatInput[] = [];
+
+	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
+		this.receivedInputs.push(input);
+
+		if (this.receivedInputs.length === 1) {
+			yield {
+				contentDelta: '',
+				toolCalls: [
+					{
+						name: 'read_file',
+						arguments: { path: 'README.md' },
+					},
+					{
+						name: 'read_file',
+						arguments: { path: 'missing.py' },
+					},
+				],
+			};
+			return;
+		}
+
+		yield { contentDelta: 'Second read failed.' };
+	}
+}
+
+class ReadThenEditModel implements ModelPort {
+	readonly receivedInputs: ModelChatInput[] = [];
+
+	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
+		this.receivedInputs.push(input);
+
+		if (this.receivedInputs.length > 1) {
+			yield { contentDelta: 'Edit completed.' };
+			return;
+		}
+
+		yield {
+			contentDelta: '',
+			toolCalls: [
+				{
+					name: 'read_file',
+					arguments: { path: 'src/file.ts' },
+				},
+				{
+					name: 'edit_file',
+					arguments: {
+						path: 'src/file.ts',
+						oldText: 'const value = 1;',
+						newText: 'const value = 2;',
+					},
+				},
+			],
+		};
+	}
+}
+
 class ReadReadEditReadModel implements ModelPort {
 	private callCount = 0;
 
@@ -555,6 +653,32 @@ class SearchReadToolExecutor implements ToolExecutorPort {
 	}
 }
 
+class SecondReadFailingToolExecutor implements ToolExecutorPort {
+	readonly receivedRequests: ToolExecutionRequest[] = [];
+
+	listTools() {
+		return new FakeToolExecutor().listTools();
+	}
+
+	async execute(
+		request: ToolExecutionRequest,
+	): Promise<ToolExecutionResult> {
+		this.receivedRequests.push(request);
+
+		if (this.receivedRequests.length === 2) {
+			throw new Error('file missing');
+		}
+
+		return {
+			toolName: request.toolName,
+			output: {
+				path: 'README.md',
+				content: 'hello',
+			},
+		};
+	}
+}
+
 class FailingToolExecutor implements ToolExecutorPort {
 	listTools() {
 		return [
@@ -698,6 +822,30 @@ describe('RunAgentTurn', () => {
 		});
 	});
 
+	test('stores a completed assistant message for an empty model response', async () => {
+		const sessionStore = new InMemorySessionStore();
+		const sessionId = asSessionId('session-1');
+		const useCase = new RunAgentTurn({
+			sessionStore,
+			model: new EmptyModel(),
+			contextBuilder: new ContextBuilder({
+				systemPrompt: 'You are a local coding agent.',
+			}),
+			clock: new FixedClock(),
+			idGenerator: new SequenceIdGenerator(),
+		});
+
+		const chunks = await collectTurn(
+			useCase.run({ sessionId, prompt: 'Say nothing' }),
+		);
+
+		expect(chunks).toEqual([]);
+		expect(sessionStore.events.at(-1)).toMatchObject({
+			type: 'assistant.message.completed',
+			content: '',
+		});
+	});
+
 	test('rejects empty prompts before storing events', async () => {
 		const sessionStore = new InMemorySessionStore();
 		const useCase = new RunAgentTurn({
@@ -757,6 +905,36 @@ describe('RunAgentTurn', () => {
 				},
 			},
 		]);
+	});
+
+	test('does not store a completed assistant message when model fails after deltas', async () => {
+		const sessionStore = new InMemorySessionStore();
+		const sessionId = asSessionId('session-1');
+		const useCase = new RunAgentTurn({
+			sessionStore,
+			model: new DeltaThenFailingModel(),
+			contextBuilder: new ContextBuilder({
+				systemPrompt: 'You are a local coding agent.',
+			}),
+			clock: new FixedClock(),
+			idGenerator: new SequenceIdGenerator(),
+		});
+
+		await expect(
+			collectTurn(useCase.run({ sessionId, prompt: 'Say hello' })),
+		).rejects.toThrow('Ollama stream failed: model failed');
+
+		expect(
+			sessionStore.events.some(
+				(event) => event.type === 'assistant.message.completed',
+			),
+		).toBe(false);
+		expect(sessionStore.events.at(-1)).toMatchObject({
+			type: 'agent.error',
+			error: {
+				code: 'MODEL_STREAM_FAILED',
+			},
+		});
 	});
 
 	test('executes one model tool call and stores the completed tool event', async () => {
@@ -1190,6 +1368,199 @@ describe('RunAgentTurn', () => {
 					'{"path":"src/users.py","content":"if user.email.lower() == email.lower():"}',
 			},
 		]);
+		expect(sessionStore.events.map((event) => event.type)).toEqual([
+			'prompt.submitted',
+			'tool.call.requested',
+			'tool.call.started',
+			'tool.call.completed',
+			'tool.call.requested',
+			'tool.call.started',
+			'tool.call.completed',
+			'assistant.message.completed',
+		]);
+	});
+
+	test('executes multiple tool calls from one model response in order', async () => {
+		const sessionStore = new InMemorySessionStore();
+		const model = new MultipleToolCallingModel();
+		const toolExecutor = new SearchReadToolExecutor();
+		const sessionId = asSessionId('session-1');
+		const useCase = new RunAgentTurn({
+			sessionStore,
+			model,
+			contextBuilder: new ContextBuilder({
+				systemPrompt: 'You are a local coding agent.',
+			}),
+			clock: new FixedClock(),
+			idGenerator: new SequenceIdGenerator(),
+			toolExecutor,
+		});
+
+		const chunks = await collectTurn(
+			useCase.run({ sessionId, prompt: 'Search and read' }),
+		);
+
+		expect(chunks).toEqual([{ contentDelta: 'Both tools completed.' }]);
+		expect(toolExecutor.receivedRequests).toEqual([
+			{
+				toolName: 'search_file',
+				toolInput: { query: 'UserRepository' },
+			},
+			{
+				toolName: 'read_file',
+				toolInput: { path: 'src/users.py' },
+			},
+		]);
+		expect(model.receivedInputs[1]?.messages.slice(-3)).toEqual([
+			{
+				role: 'assistant',
+				content: '',
+				toolCalls: [
+					{
+						id: asToolCallId('tool-call-3'),
+						name: 'search_file',
+						arguments: { query: 'UserRepository' },
+					},
+					{
+						id: asToolCallId('tool-call-7'),
+						name: 'read_file',
+						arguments: { path: 'src/users.py' },
+					},
+				],
+			},
+			{
+				role: 'tool',
+				toolCallId: asToolCallId('tool-call-3'),
+				toolName: 'search_file',
+				content:
+					'{"matches":[{"path":"src/users.py","line":10,"text":"def find_by_email(self, email: str) -> User | None:"}]}',
+			},
+			{
+				role: 'tool',
+				toolCallId: asToolCallId('tool-call-7'),
+				toolName: 'read_file',
+				content:
+					'{"path":"src/users.py","content":"if user.email.lower() == email.lower():"}',
+			},
+		]);
+		expect(sessionStore.events.map((event) => event.type)).toEqual([
+			'prompt.submitted',
+			'tool.call.requested',
+			'tool.call.started',
+			'tool.call.completed',
+			'tool.call.requested',
+			'tool.call.started',
+			'tool.call.completed',
+			'assistant.message.completed',
+		]);
+	});
+
+	test('sends a failed second tool result back to the model', async () => {
+		const sessionStore = new InMemorySessionStore();
+		const model = new MultipleReadsSecondFailingModel();
+		const toolExecutor = new SecondReadFailingToolExecutor();
+		const sessionId = asSessionId('session-1');
+		const useCase = new RunAgentTurn({
+			sessionStore,
+			model,
+			contextBuilder: new ContextBuilder({
+				systemPrompt: 'You are a local coding agent.',
+			}),
+			clock: new FixedClock(),
+			idGenerator: new SequenceIdGenerator(),
+			toolExecutor,
+		});
+
+		const chunks = await collectTurn(
+			useCase.run({ sessionId, prompt: 'Search and read missing file' }),
+		);
+
+		expect(chunks).toEqual([{ contentDelta: 'Second read failed.' }]);
+		expect(toolExecutor.receivedRequests).toEqual([
+			{
+				toolName: 'read_file',
+				toolInput: { path: 'README.md' },
+			},
+			{
+				toolName: 'read_file',
+				toolInput: { path: 'missing.py' },
+			},
+		]);
+		expect(model.receivedInputs[1]?.messages.at(-1)).toEqual({
+			role: 'tool',
+			toolCallId: asToolCallId('tool-call-7'),
+			toolName: 'read_file',
+			content: '{"error":{"message":"file missing"}}',
+		});
+		expect(sessionStore.events.map((event) => event.type)).toEqual([
+			'prompt.submitted',
+			'tool.call.requested',
+			'tool.call.started',
+			'tool.call.completed',
+			'tool.call.requested',
+			'tool.call.started',
+			'tool.call.failed',
+			'assistant.message.completed',
+		]);
+	});
+
+	test('requests approval before executing the second tool in a batch', async () => {
+		const sessionStore = new InMemorySessionStore();
+		const model = new ReadThenEditModel();
+		const toolExecutor = new ReadEditToolExecutor();
+		const approvalRequests: ToolApprovalRequest[] = [];
+		const sessionId = asSessionId('session-1');
+		const useCase = new RunAgentTurn({
+			sessionStore,
+			model,
+			contextBuilder: new ContextBuilder({
+				systemPrompt: 'You are a local coding agent.',
+			}),
+			clock: new FixedClock(),
+			idGenerator: new SequenceIdGenerator(),
+			toolExecutor,
+			approveToolCall: async (request) => {
+				approvalRequests.push(request);
+				return true;
+			},
+		});
+
+		const chunks = await collectTurn(
+			useCase.run({ sessionId, prompt: 'Search and edit' }),
+		);
+
+		expect(chunks).toEqual([{ contentDelta: 'Edit completed.' }]);
+		expect(approvalRequests).toEqual([
+			{
+				sessionId,
+				toolCallId: asToolCallId('tool-call-7'),
+				toolName: 'edit_file',
+				toolInput: {
+					path: 'src/file.ts',
+					oldText: 'const value = 1;',
+					newText: 'const value = 2;',
+				},
+			},
+		]);
+		expect(toolExecutor.receivedRequests).toEqual([
+			{
+				toolName: 'read_file',
+				toolInput: { path: 'src/file.ts' },
+			},
+			{
+				toolName: 'edit_file',
+				toolInput: {
+					path: 'src/file.ts',
+					oldText: 'const value = 1;',
+					newText: 'const value = 2;',
+				},
+			},
+		]);
+		expect(sessionStore.events[4]).toMatchObject({
+			type: 'tool.call.requested',
+			toolName: 'edit_file',
+			approvalRequired: true,
+		});
 		expect(sessionStore.events.map((event) => event.type)).toEqual([
 			'prompt.submitted',
 			'tool.call.requested',

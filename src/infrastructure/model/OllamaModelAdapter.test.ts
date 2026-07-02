@@ -212,6 +212,74 @@ describe("OllamaModelAdapter", () => {
 		}
 	});
 
+	test("accepts an empty completed response", async () => {
+		const originalFetch = globalThis.fetch;
+
+		globalThis.fetch = (async () => {
+			return new Response('{"message":{"content":""},"done":true}\n', {
+				status: 200,
+			});
+		}) as unknown as typeof fetch;
+
+		try {
+			const adapter = new OllamaModelAdapter();
+
+			const chunks = await collectStream(
+				adapter.streamChat({ messages: [] }),
+			);
+
+			expect(chunks).toEqual([]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("keeps repeated tool calls as separate chunks", async () => {
+		const originalFetch = globalThis.fetch;
+
+		globalThis.fetch = (async () => {
+			return new Response(
+				[
+					'{"message":{"tool_calls":[{"function":{"name":"read_file","arguments":{"path":"README.md"}}}]},"done":false}',
+					'{"message":{"tool_calls":[{"function":{"name":"read_file","arguments":{"path":"README.md"}}}]},"done":true}',
+					"",
+				].join("\n"),
+				{ status: 200 },
+			);
+		}) as unknown as typeof fetch;
+
+		try {
+			const adapter = new OllamaModelAdapter();
+
+			const chunks = await collectStream(
+				adapter.streamChat({ messages: [] }),
+			);
+
+			expect(chunks).toEqual([
+				{
+					contentDelta: "",
+					toolCalls: [
+						{
+							name: "read_file",
+							arguments: { path: "README.md" },
+						},
+					],
+				},
+				{
+					contentDelta: "",
+					toolCalls: [
+						{
+							name: "read_file",
+							arguments: { path: "README.md" },
+						},
+					],
+				},
+			]);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
 	test("throws a bounded error for non-ok responses", async () => {
 		const originalFetch = globalThis.fetch;
 
@@ -266,6 +334,27 @@ describe("OllamaModelAdapter", () => {
 		globalThis.fetch = (async () => {
 			return new Response('{"error":"model failed"}\n', { status: 200 });
 			}) as unknown as typeof fetch;
+
+		try {
+			const adapter = new OllamaModelAdapter();
+
+			await expect(
+				collectStream(adapter.streamChat({ messages: [] })),
+			).rejects.toThrow("Ollama stream failed: model failed");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("throws when Ollama streams an error after content deltas", async () => {
+		const originalFetch = globalThis.fetch;
+
+		globalThis.fetch = (async () => {
+			return new Response(
+				'{"message":{"content":"partial"},"done":false}\n{"error":"model failed"}\n',
+				{ status: 200 },
+			);
+		}) as unknown as typeof fetch;
 
 		try {
 			const adapter = new OllamaModelAdapter();
