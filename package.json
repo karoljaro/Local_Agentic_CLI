@@ -21,7 +21,7 @@
     "ink": "^7.1.0",
     "marked": "^18.0.5",
     "react": "^19.2.7",
-    "temporal-polyfill": "^0.3.2",
+    "temporal-polyfill": "^1.0.1",
     "zod": "^4.4.3"
   }
 }
