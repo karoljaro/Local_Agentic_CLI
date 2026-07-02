@@ -290,6 +290,8 @@ Nie dodawałbym jeszcze rozbudowanego systemu timeoutów. Lokalny model może le
 
 ## 1.3. Odporność sesji JSONL
 
+- [X] - Wykonane
+
 `JsonlSessionStore` obecnie:
 
 ```ts
