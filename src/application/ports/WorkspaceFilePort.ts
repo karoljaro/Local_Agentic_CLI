@@ -22,6 +22,7 @@ export type WriteWorkspaceFileInput = {
 	path: string;
 	content: string;
 	maxFileBytes: number;
+	expectedContent?: string;
 };
 
 export interface WorkspaceFilePort {

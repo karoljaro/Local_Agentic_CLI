@@ -41,6 +41,7 @@ export class EditWorkspaceFile {
 			path: file.path,
 			content: file.content.replace(oldText, newText),
 			maxFileBytes: input.maxFileBytes,
+			expectedContent: file.content,
 		});
 
 		return {

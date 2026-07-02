@@ -1,6 +1,7 @@
 import {
 	mkdir,
 	mkdtemp,
+	readdir,
 	readFile,
 	rm,
 	symlink,
@@ -338,6 +339,63 @@ describe('NodeWorkspaceFileSystem', () => {
 				await expect(
 					readFile(join(directory, 'file.txt'), 'utf8'),
 				).resolves.toBe('after');
+			} finally {
+				await cleanup();
+			}
+		});
+
+		test('rejects a stale write when expected content no longer matches', async () => {
+			const { directory, fileSystem, cleanup } =
+				await createTempWorkspace();
+
+			try {
+				await writeFile(
+					join(directory, 'file.txt'),
+					'before',
+					'utf8',
+				);
+				await writeFile(
+					join(directory, 'file.txt'),
+					'changed elsewhere',
+					'utf8',
+				);
+
+				await expect(
+					fileSystem.writeFile({
+						path: 'file.txt',
+						content: 'after',
+						expectedContent: 'before',
+						maxFileBytes: MAX_FILE_BYTES,
+					}),
+				).rejects.toThrow('File changed since it was read');
+				await expect(
+					readFile(join(directory, 'file.txt'), 'utf8'),
+				).resolves.toBe('changed elsewhere');
+			} finally {
+				await cleanup();
+			}
+		});
+
+		test('does not leave temporary files after writing', async () => {
+			const { directory, fileSystem, cleanup } =
+				await createTempWorkspace();
+
+			try {
+				await writeFile(
+					join(directory, 'file.txt'),
+					'before',
+					'utf8',
+				);
+
+				await fileSystem.writeFile({
+					path: 'file.txt',
+					content: 'after',
+					maxFileBytes: MAX_FILE_BYTES,
+				});
+
+				const entries = await readdir(directory);
+
+				expect(entries).toEqual(['file.txt']);
 			} finally {
 				await cleanup();
 			}

@@ -7,11 +7,14 @@ import type {
 	WriteWorkspaceFileInput,
 } from '@/application/ports/WorkspaceFilePort';
 
+import { randomUUID } from 'node:crypto';
 import {
 	readdir,
+	rename,
 	realpath,
 	readFile as readFileContent,
 	stat,
+	unlink,
 	writeFile as writeFileContent,
 } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
@@ -114,7 +117,24 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 
 		ensureContentWithinLimit(input);
 
-		await writeFileContent(file.realTargetPath, input.content, 'utf8');
+		const fileStats = await stat(file.realTargetPath);
+
+		if (input.expectedContent !== undefined) {
+			const currentContent = await readFileContent(
+				file.realTargetPath,
+				'utf8'
+			);
+
+			if (currentContent !== input.expectedContent) {
+				throw new Error(`File changed since it was read: ${input.path}`);
+			}
+		}
+
+		await writeFileAtomically(
+			file.realTargetPath,
+			input.content,
+			fileStats.mode
+		);
 
 		return {
 			path: file.relativePath,
@@ -365,5 +385,28 @@ const ensureContentWithinLimit = (
 ): void => {
 	if (new TextEncoder().encode(input.content).length > input.maxFileBytes) {
 		throw new Error(`File content is too large: ${input.path}`);
+	}
+};
+
+const writeFileAtomically = async (
+	targetPath: string,
+	content: string,
+	mode: number
+): Promise<void> => {
+	const temporaryPath = resolve(
+		dirname(targetPath),
+		`.tmp-${basename(targetPath)}-${process.pid}-${randomUUID()}`
+	);
+
+	try {
+		await writeFileContent(temporaryPath, content, {
+			encoding: 'utf8',
+			flag: 'wx',
+			mode,
+		});
+		await rename(temporaryPath, targetPath);
+	} catch (error) {
+		await unlink(temporaryPath).catch(() => undefined);
+		throw error;
 	}
 };
