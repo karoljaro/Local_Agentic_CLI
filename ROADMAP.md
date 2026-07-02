@@ -240,6 +240,8 @@ Dopóki realny model tego nie łamie, nie ma sensu budować składania fragment�
 
 ## 1.2. Obsługa anulowania
 
+- [X] - Wykonane
+
 Obecnie masz cleanup czytnika streamu, ale brakuje pełnego kontraktu anulowania od UI do `fetch`.
 
 Docelowy przepływ:
