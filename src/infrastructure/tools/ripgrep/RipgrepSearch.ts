@@ -14,6 +14,7 @@ export type RipgrepSearchOptions = {
 	timeoutMs: number;
 	maxMatches: number;
 	maxMatchTextLength: number;
+	runCommand?: RipgrepCommandRunner;
 };
 
 type RipgrepRunInput = {
@@ -21,7 +22,24 @@ type RipgrepRunInput = {
 	workspaceRoot: string;
 	timeoutMs: number;
 	globs: string[];
+	runCommand: RipgrepCommandRunner;
 };
+
+type RipgrepCommandInput = {
+	cmd: string[];
+	cwd: string;
+	timeoutMs: number;
+};
+
+type RipgrepCommandOutput = {
+	stdout: string;
+	stderr: string;
+	exitCode: number;
+};
+
+export type RipgrepCommandRunner = (
+	input: RipgrepCommandInput,
+) => Promise<RipgrepCommandOutput>;
 
 type RipgrepMatchEvent = {
 	type?: string;
@@ -44,6 +62,7 @@ const SAFE_ENV_GLOBS = [
 	'**/.env.example',
 ];
 
+const MAX_STDERR_LENGTH = 1000;
 const rgPath = resolveRipgrepPath();
 
 export class RipgrepSearch implements WorkspaceSearchPort {
@@ -61,6 +80,7 @@ const searchWithRipgrep = async (
 		timeoutMs,
 		maxMatches,
 		maxMatchTextLength,
+		runCommand = runRipgrepCommand,
 	}: RipgrepSearchOptions,
 ): Promise<SearchWorkspaceOutput> => {
 	const alternatives = query
@@ -75,6 +95,7 @@ const searchWithRipgrep = async (
 			patterns,
 			workspaceRoot,
 			timeoutMs,
+			runCommand,
 			globs: ['!**/.env*', ...EXCLUDED_GLOBS],
 		}),
 		// Search only explicitly safe development/example env files.
@@ -82,13 +103,13 @@ const searchWithRipgrep = async (
 			patterns,
 			workspaceRoot,
 			timeoutMs,
+			runCommand,
 			globs: [...SAFE_ENV_GLOBS, ...EXCLUDED_GLOBS],
 		}),
 	]);
 
 	const matches: SearchWorkspaceMatch[] = [];
 	const files = new Set<string>();
-	let matchCount = 0;
 
 	for (const stdout of outputs) {
 		for (const line of stdout.split('\n')) {
@@ -96,7 +117,7 @@ const searchWithRipgrep = async (
 				continue;
 			}
 
-			const event = JSON.parse(line) as RipgrepMatchEvent;
+			const event = parseRipgrepJsonLine(line);
 			const path = event.data?.path?.text;
 			const lineNumber = event.data?.line_number;
 			const text = event.data?.lines?.text;
@@ -112,25 +133,23 @@ const searchWithRipgrep = async (
 
 			const relativePath = path.replace(/^\.[\\/]/, '');
 
-			matchCount += 1;
 			files.add(relativePath);
-
-			// Count every match, but retain only the configured result window.
-			if (matches.length < maxMatches) {
-				matches.push({
-					path: relativePath,
-					line: lineNumber,
-					text: truncate(text.trimEnd(), maxMatchTextLength),
-				});
-			}
+			matches.push({
+				path: relativePath,
+				line: lineNumber,
+				text: truncate(text.trimEnd(), maxMatchTextLength),
+			});
 		}
 	}
 
+	matches.sort(compareMatches);
+	const visibleMatches = matches.slice(0, maxMatches);
+
 	return {
-		matchCount,
+		matchCount: matches.length,
 		fileCount: files.size,
-		matches,
-		truncated: matchCount > matches.length,
+		matches: visibleMatches,
+		truncated: matches.length > visibleMatches.length,
 	};
 };
 
@@ -139,21 +158,65 @@ const runRipgrep = async ({
 	workspaceRoot,
 	timeoutMs,
 	globs,
+	runCommand,
 }: RipgrepRunInput): Promise<string> => {
+	const command = [
+		rgPath,
+		'--json',
+		'--fixed-strings',
+		'--hidden',
+		'--color=never',
+		'--sort=path',
+		'--max-columns=500',
+		...globs.map((glob) => `--glob=${glob}`),
+		...patterns.flatMap((pattern) => ['--regexp', pattern]),
+		'.',
+	];
+	let result: RipgrepCommandOutput;
+
+	try {
+		result = await runCommand({
+			cmd: command,
+			cwd: workspaceRoot,
+			timeoutMs,
+		});
+	} catch (caughtError) {
+		if (isNodeErrorCode(caughtError, 'ENOENT')) {
+			throw new Error(`search_file failed: ripgrep binary not found: ${rgPath}`);
+		}
+
+		throw caughtError;
+	}
+
+	const { stdout, stderr, exitCode } = result;
+
+	if (exitCode === 143) {
+		throw new Error(`search_file timed out after ${timeoutMs}ms.`);
+	}
+
+	if (exitCode === 1) {
+		return '';
+	}
+
+	if (exitCode !== 0) {
+		const message = stderr.trim()
+			? truncate(stderr.trim(), MAX_STDERR_LENGTH)
+			: `rg exited with code ${exitCode}`;
+
+		throw new Error(`search_file failed: ${message}`);
+	}
+
+	return stdout;
+};
+
+const runRipgrepCommand: RipgrepCommandRunner = async ({
+	cmd,
+	cwd,
+	timeoutMs,
+}) => {
 	const process = Bun.spawn({
-		cmd: [
-			rgPath,
-			'--json',
-			'--fixed-strings',
-			'--hidden',
-			'--color=never',
-			'--sort=path',
-			'--max-columns=500',
-			...globs.map((glob) => `--glob=${glob}`),
-			...patterns.flatMap((pattern) => ['--regexp', pattern]),
-			'.',
-		],
-		cwd: workspaceRoot,
+		cmd,
+		cwd,
 		stdout: 'pipe',
 		stderr: 'pipe',
 		timeout: timeoutMs,
@@ -165,21 +228,44 @@ const runRipgrep = async ({
 		process.exited,
 	]);
 
-	if (exitCode === 143) {
-		throw new Error(`search_file timed out after ${timeoutMs}ms.`);
+	return { stdout, stderr, exitCode };
+};
+
+const parseRipgrepJsonLine = (line: string): RipgrepMatchEvent => {
+	try {
+		return JSON.parse(line) as RipgrepMatchEvent;
+	} catch (caughtError) {
+		const message =
+			caughtError instanceof Error ? caughtError.message : String(caughtError);
+
+		throw new Error(`search_file failed: invalid rg JSON output: ${message}`);
+	}
+};
+
+const compareMatches = (
+	left: SearchWorkspaceMatch,
+	right: SearchWorkspaceMatch,
+): number => {
+	const pathOrder = left.path.localeCompare(right.path);
+
+	if (pathOrder !== 0) {
+		return pathOrder;
 	}
 
-	if (exitCode === 1) {
-		return '';
+	if (left.line !== right.line) {
+		return left.line - right.line;
 	}
 
-	if (exitCode !== 0) {
-		throw new Error(
-			`search_file failed: ${stderr.trim() || `rg exited with code ${exitCode}`}`,
-		);
-	}
+	return left.text.localeCompare(right.text);
+};
 
-	return stdout;
+const isNodeErrorCode = (error: unknown, code: string): boolean => {
+	return (
+		typeof error === 'object' &&
+		error !== null &&
+		'code' in error &&
+		(error as { code?: unknown }).code === code
+	);
 };
 
 const truncate = (text: string, maxLength: number): string =>

@@ -399,6 +399,8 @@ Może to wymagać rozszerzenia portu filesystemu, ale jest to uzasadniona zmiana
 
 ## 1.5. Stabilność `ripgrep`
 
+- [X] - Wykonane
+
 Po dodaniu sortowania sprawdziłbym jeszcze:
 
 - brak binarki;
