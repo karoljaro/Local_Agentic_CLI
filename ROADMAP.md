@@ -356,6 +356,8 @@ Najlepszym miejscem walidacji jest odczyt z dysku, nie reducer.
 
 ## 1.4. Bezpieczne zapisywanie edycji
 
+- [X] - Wykonane
+
 Aktualnie edycja wygląda logicznie dobrze:
 
 ```text
