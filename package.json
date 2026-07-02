@@ -7,7 +7,11 @@
     "start": "bun run index.tsx",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
-    "build": "bun run scripts/build.ts",
+    "build": "bun run build:all",
+    "build:linux": "bun run scripts/build-linux.ts",
+    "build:windows": "bun run scripts/build-windows.ts",
+    "build:all": "bun run scripts/build.ts",
+    "smoke:build": "bun run scripts/smoke-build.ts",
     "check": "bun run typecheck && bun run test"
   },
   "devDependencies": {

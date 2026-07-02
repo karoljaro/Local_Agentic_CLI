@@ -417,6 +417,8 @@ Nie dodawałbym własnego silnika wyszukiwania. `ripgrep` jest właściwym wybor
 
 ## 1.6. Build i dystrybucja
 
+- [X] - Wykonane
+
 Aktualny `build.ts` buduje Linux i Windows w jednej operacji. To oznacza, że:
 
 - poprawny build Linuksa może być oznaczony jako nieudany przez problem pobierania komponentu Windows;
