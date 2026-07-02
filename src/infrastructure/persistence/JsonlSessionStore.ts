@@ -1,12 +1,20 @@
 import { access, appendFile, mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { z } from "zod";
 
 import type {
 	SessionStorePort,
 	StoredSession,
 } from "@/application/ports/SessionStorePort";
 import type { AgentEvent } from "@/domain/AgentEvent";
-import { asSessionId, type SessionId } from "@/domain/Ids";
+import {
+	asEventId,
+	asISODateTime,
+	asMessageId,
+	asSessionId,
+	asToolCallId,
+	type SessionId,
+} from "@/domain/Ids";
 
 export class JsonlSessionStore implements SessionStorePort {
 	private readonly sessionsDirectory: string;
@@ -93,14 +101,22 @@ export class JsonlSessionStore implements SessionStorePort {
 
 const parseJsonlEvents = (content: string, filePath: string): AgentEvent[] => {
 	const events: AgentEvent[] = [];
+	const lines = content.split("\n");
+	const lineCount = content.endsWith("\n") ? lines.length : lines.length - 1;
 
-	for (const [index, line] of content.split("\n").entries()) {
+	for (let index = 0; index < lineCount; index += 1) {
+		const line = lines[index];
+
+		if (line === undefined) {
+			continue;
+		}
+
 		if (line.trim().length === 0) {
 			continue;
 		}
 
 		try {
-			events.push(JSON.parse(line) as AgentEvent);
+			events.push(parseAgentEvent(JSON.parse(line)));
 		} catch (caughtError) {
 			const message =
 				caughtError instanceof Error ? caughtError.message : String(caughtError);
@@ -113,6 +129,92 @@ const parseJsonlEvents = (content: string, filePath: string): AgentEvent[] => {
 
 	return events;
 };
+
+const parseAgentEvent = (value: unknown): AgentEvent => {
+	const result = AgentEventSchema.safeParse(value);
+
+	if (!result.success) {
+		throw new Error(z.prettifyError(result.error));
+	}
+
+	return result.data as AgentEvent;
+};
+
+const NonEmptyString = z.string().min(1);
+
+const AgentEventBaseSchema = z.object({
+	id: NonEmptyString.transform(asEventId),
+	sessionId: NonEmptyString.transform(asSessionId),
+	timestamp: NonEmptyString.transform(asISODateTime),
+});
+
+const MessageIdSchema = NonEmptyString.transform(asMessageId);
+const ToolCallIdSchema = NonEmptyString.transform(asToolCallId);
+
+const AgentEventSchema = z.discriminatedUnion("type", [
+	AgentEventBaseSchema.extend({
+		type: z.literal("prompt.submitted"),
+		messageId: MessageIdSchema,
+		prompt: z.string(),
+		modelName: z.string().optional(),
+	}).loose(),
+	AgentEventBaseSchema.extend({
+		type: z.literal("assistant.message.started"),
+		messageId: MessageIdSchema,
+	}).loose(),
+	AgentEventBaseSchema.extend({
+		type: z.literal("assistant.message.delta"),
+		messageId: MessageIdSchema,
+		delta: z.string(),
+	}).loose(),
+	AgentEventBaseSchema.extend({
+		type: z.literal("assistant.message.completed"),
+		messageId: MessageIdSchema,
+		content: z.string(),
+	}).loose(),
+	AgentEventBaseSchema.extend({
+		type: z.literal("tool.call.requested"),
+		toolCallId: ToolCallIdSchema,
+		toolName: NonEmptyString,
+		toolInput: z.unknown(),
+		approvalRequired: z.boolean(),
+	}).loose(),
+	AgentEventBaseSchema.extend({
+		type: z.literal("tool.call.started"),
+		toolCallId: ToolCallIdSchema,
+		toolName: NonEmptyString,
+	}).loose(),
+	AgentEventBaseSchema.extend({
+		type: z.literal("tool.call.completed"),
+		toolCallId: ToolCallIdSchema,
+		toolName: NonEmptyString,
+		output: z.unknown(),
+		durationMs: z.number().optional(),
+	}).loose(),
+	AgentEventBaseSchema.extend({
+		type: z.literal("tool.call.failed"),
+		toolCallId: ToolCallIdSchema,
+		toolName: NonEmptyString,
+		error: z
+			.object({
+				message: z.string(),
+				code: z.string().optional(),
+				details: z.unknown().optional(),
+			})
+			.loose(),
+	}).loose(),
+	AgentEventBaseSchema.extend({
+		type: z.literal("agent.error"),
+		error: z
+			.object({
+				message: z.string(),
+				code: z.string().optional(),
+				recoverable: z.boolean(),
+				details: z.unknown().optional(),
+			})
+			.loose(),
+	}).loose(),
+]);
 
 const toSafeSessionPathSegment = (sessionId: SessionId): string => {
 	const value = String(sessionId);

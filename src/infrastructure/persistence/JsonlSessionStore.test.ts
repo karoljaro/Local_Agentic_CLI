@@ -131,17 +131,81 @@ describe("JsonlSessionStore", () => {
 		const { store, directory, cleanup } = await createTempStore();
 		const sessionId = asSessionId("session-1");
 		const sessionDirectory = join(directory, sessionId);
+		const validEvent: AgentEvent = {
+			id: asEventId("event-1"),
+			sessionId,
+			type: "prompt.submitted",
+			timestamp: asISODateTime("2026-06-09T12:00:00.000Z"),
+			messageId: asMessageId("message-1"),
+			prompt: "Hello",
+		};
 
 		try {
 			await mkdir(sessionDirectory, { recursive: true });
 			await writeFile(
 				join(sessionDirectory, "events.jsonl"),
-				'{"type":"prompt.submitted"}\nnot-json\n',
+				`${JSON.stringify(validEvent)}\nnot-json\n${JSON.stringify(validEvent)}\n`,
 				"utf8",
 			);
 
 			await expect(store.readSessionEvents(sessionId)).rejects.toThrow(
 				"line 2",
+			);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("ignores an incomplete final JSONL line without dropping previous events", async () => {
+		const { store, directory, cleanup } = await createTempStore();
+		const sessionId = asSessionId("session-1");
+		const sessionDirectory = join(directory, sessionId);
+		const validEvent: AgentEvent = {
+			id: asEventId("event-1"),
+			sessionId,
+			type: "prompt.submitted",
+			timestamp: asISODateTime("2026-06-09T12:00:00.000Z"),
+			messageId: asMessageId("message-1"),
+			prompt: "Hello",
+		};
+
+		try {
+			await mkdir(sessionDirectory, { recursive: true });
+			await writeFile(
+				join(sessionDirectory, "events.jsonl"),
+				`${JSON.stringify(validEvent)}\n{"id":"partial"`,
+				"utf8",
+			);
+
+			const events = await store.readSessionEvents(sessionId);
+
+			expect(events).toEqual([validEvent]);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test("validates event structure when reading JSONL", async () => {
+		const { store, directory, cleanup } = await createTempStore();
+		const sessionId = asSessionId("session-1");
+		const sessionDirectory = join(directory, sessionId);
+
+		try {
+			await mkdir(sessionDirectory, { recursive: true });
+			await writeFile(
+				join(sessionDirectory, "events.jsonl"),
+				JSON.stringify({
+					id: "event-1",
+					sessionId,
+					type: "prompt.submitted",
+					timestamp: "2026-06-09T12:00:00.000Z",
+					messageId: "message-1",
+				}) + "\n",
+				"utf8",
+			);
+
+			await expect(store.readSessionEvents(sessionId)).rejects.toThrow(
+				"prompt",
 			);
 		} finally {
 			await cleanup();
