@@ -29,6 +29,7 @@ export type RunAgentTurnInput = {
 	sessionId: SessionId;
 	prompt: string;
 	modelName?: string;
+	signal?: AbortSignal;
 };
 
 export type AgentTurnChunk = {
@@ -72,7 +73,7 @@ export class RunAgentTurn {
 	constructor(private readonly dependencies: RunAgentTurnDependencies) {}
 
 	async *run(input: RunAgentTurnInput): AsyncIterable<AgentTurnChunk> {
-		const { sessionId, prompt, modelName } = input;
+		const { sessionId, prompt, modelName, signal } = input;
 
 		if (prompt.trim().length === 0) {
 			throw new Error('Prompt cannot be empty.');
@@ -97,20 +98,21 @@ export class RunAgentTurn {
 		const { messages } = this.dependencies.contextBuilder.build(reducedState);
 
 		if (this.dependencies.toolExecutor !== undefined) {
-			yield* this.runWithTools(sessionId, messages);
+			yield* this.runWithTools(sessionId, messages, signal);
 			return;
 		}
 
-		yield* this.runStreamingModelTurn(sessionId, messages);
+		yield* this.runStreamingModelTurn(sessionId, messages, signal);
 	}
 
 	private async *runStreamingModelTurn(
 		sessionId: SessionId,
 		messages: ModelMessage[],
+		signal: AbortSignal | undefined,
 	): AsyncIterable<AgentTurnChunk> {
 		const result = yield* this.readModelResponse(
 			sessionId,
-			{ messages },
+			withSignal({ messages }, signal),
 			true,
 		);
 
@@ -120,6 +122,7 @@ export class RunAgentTurn {
 	private async *runWithTools(
 		sessionId: SessionId,
 		messages: ModelMessage[],
+		signal: AbortSignal | undefined,
 	): AsyncIterable<AgentTurnChunk> {
 		const toolExecutor = this.dependencies.toolExecutor;
 
@@ -130,7 +133,7 @@ export class RunAgentTurn {
 		const tools = toolExecutor.listTools();
 
 		if (tools.length === 0) {
-			yield* this.runStreamingModelTurn(sessionId, messages);
+			yield* this.runStreamingModelTurn(sessionId, messages, signal);
 			return;
 		}
 
@@ -140,10 +143,7 @@ export class RunAgentTurn {
 		for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
 			const result = yield* this.readModelResponse(
 				sessionId,
-				{
-					messages: currentMessages,
-					tools,
-				},
+				withSignal({ messages: currentMessages, tools }, signal),
 				false,
 			);
 
@@ -483,6 +483,13 @@ const stringifyToolOutput = (output: unknown): string => {
 	const json = JSON.stringify(output);
 
 	return json ?? String(output);
+};
+
+const withSignal = (
+	input: Omit<ModelChatInput, 'signal'>,
+	signal: AbortSignal | undefined,
+): ModelChatInput => {
+	return signal === undefined ? input : { ...input, signal };
 };
 
 const toError = (caughtError: unknown): Error =>

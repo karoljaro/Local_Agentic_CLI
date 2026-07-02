@@ -792,6 +792,32 @@ describe('RunAgentTurn', () => {
 		]);
 	});
 
+	test('passes an abort signal to the model request', async () => {
+		const sessionStore = new InMemorySessionStore();
+		const model = new FakeModel();
+		const sessionId = asSessionId('session-1');
+		const abortController = new AbortController();
+		const useCase = new RunAgentTurn({
+			sessionStore,
+			model,
+			contextBuilder: new ContextBuilder({
+				systemPrompt: 'You are a local coding agent.',
+			}),
+			clock: new FixedClock(),
+			idGenerator: new SequenceIdGenerator(),
+		});
+
+		await collectTurn(
+			useCase.run({
+				sessionId,
+				prompt: 'Say hello',
+				signal: abortController.signal,
+			}),
+		);
+
+		expect(model.receivedInput?.signal).toBe(abortController.signal);
+	});
+
 	test('streams a final text response without executing available tools', async () => {
 		const sessionStore = new InMemorySessionStore();
 		const toolExecutor = new FakeToolExecutor();
@@ -1094,6 +1120,37 @@ describe('RunAgentTurn', () => {
 				content: 'The file contains hello.',
 			},
 		]);
+	});
+
+	test('passes an abort signal through tool-enabled model rounds', async () => {
+		const sessionStore = new InMemorySessionStore();
+		const model = new ToolCallingModel();
+		const toolExecutor = new FakeToolExecutor();
+		const sessionId = asSessionId('session-1');
+		const abortController = new AbortController();
+		const useCase = new RunAgentTurn({
+			sessionStore,
+			model,
+			contextBuilder: new ContextBuilder({
+				systemPrompt: 'You are a local coding agent.',
+			}),
+			clock: new FixedClock(),
+			idGenerator: new SequenceIdGenerator(),
+			toolExecutor,
+		});
+
+		await collectTurn(
+			useCase.run({
+				sessionId,
+				prompt: 'Read README',
+				signal: abortController.signal,
+			}),
+		);
+
+		expect(model.receivedInputs).toHaveLength(2);
+		expect(model.receivedInputs.every((input) => input.signal === abortController.signal)).toBe(
+			true,
+		);
 	});
 
 	test('executes search once and sends its complete result to the final model round', async () => {

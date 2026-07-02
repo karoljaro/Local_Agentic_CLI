@@ -6,6 +6,7 @@ import { createRuntime, type Runtime } from '@/composition/createRuntime';
 import type { ListedSessionEvent } from '@/application/use-cases/ListSessionEvents';
 import type { ToolApprovalRequest } from '@/application/use-cases/RunAgentTurn';
 import type { SessionId } from '@/domain/Ids';
+import { useAbortableTurn } from '@/presentation/hooks/useAbortableTurn';
 import { Markdown } from './Markdown';
 
 type TranscriptEntry = {
@@ -276,6 +277,7 @@ const InteractiveApp = ({
 	const approvalResolveRef = useRef<((approved: boolean) => void) | null>(
 		null
 	);
+	const turnAbort = useAbortableTurn();
 
 	const isBusy = status !== 'idle';
 
@@ -356,12 +358,14 @@ const InteractiveApp = ({
 		]);
 
 		let assistantContent = '';
+		const activeTurn = turnAbort.start();
 
 		try {
 			for await (const chunk of runtime.runAgentTurn.run({
 				sessionId,
 				prompt,
 				modelName,
+				signal: activeTurn.signal,
 			})) {
 				assistantContent += chunk.contentDelta;
 				setStreamingContent(assistantContent);
@@ -379,9 +383,13 @@ const InteractiveApp = ({
 
 			setTranscript((currentTranscript) => [
 				...currentTranscript,
-				{ role: 'error', content: error.message },
+				{
+					role: 'error',
+					content: isAbortError(error) ? 'Request cancelled.' : error.message,
+				},
 			]);
 		} finally {
+			activeTurn.clear();
 			setStreamingContent('');
 			setStatus('idle');
 		}
@@ -445,6 +453,15 @@ const InteractiveApp = ({
 			}
 		},
 		{ isActive: pendingApproval !== null }
+	);
+
+	useInput(
+		(_value, key) => {
+			if (key.escape) {
+				turnAbort.abort();
+			}
+		},
+		{ isActive: status === 'streaming' && pendingApproval === null }
 	);
 
 	useInput(
@@ -665,6 +682,10 @@ const getStatusColor = (status: Status): 'green' | 'yellow' => {
 	return status === 'idle' ? 'green' : 'yellow';
 };
 
+const isAbortError = (error: Error): boolean => {
+	return error.name === 'AbortError';
+};
+
 const formatWorkspacePath = (workspacePath: string): string => {
 	const homeDirectory = process.env['HOME'];
 
@@ -856,7 +877,7 @@ const Composer = ({
 				{status === 'loading'
 					? 'Loading previous messages...'
 					: isDisabled
-						? 'Waiting for model response...'
+						? 'Waiting for model response... Esc to cancel'
 						: 'Enter to send | /model <name>'}
 			</Text>
 

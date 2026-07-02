@@ -41,6 +41,7 @@ export class OllamaModelAdapter implements ModelPort {
 	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
 		const response = await fetch(`${this.baseUrl}/api/chat`, {
 			method: 'POST',
+			...(input.signal === undefined ? {} : { signal: input.signal }),
 			headers: {
 				'Content-Type': 'application/json',
 			},

@@ -4,6 +4,7 @@ import type { ModelToolCall, ToolDefinition } from '@/domain/Tool';
 export type ModelChatInput = {
 	messages: ModelMessage[];
 	tools?: ToolDefinition[];
+	signal?: AbortSignal;
 };
 
 export type ModelStreamChunk = {

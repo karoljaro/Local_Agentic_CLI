@@ -147,6 +147,54 @@ describe("OllamaModelAdapter", () => {
 		}
 	});
 
+	test("passes the abort signal to fetch", async () => {
+		const originalFetch = globalThis.fetch;
+		const abortController = new AbortController();
+		let requestSignal: AbortSignal | null | undefined;
+
+		globalThis.fetch = (async (_input: FetchInput, init?: FetchInit) => {
+			requestSignal = init?.signal;
+
+			return new Response('{"done":true}\n', { status: 200 });
+		}) as unknown as typeof fetch;
+
+		try {
+			const adapter = new OllamaModelAdapter();
+
+			await collectStream(
+				adapter.streamChat({
+					messages: [],
+					signal: abortController.signal,
+				}),
+			);
+
+			expect(requestSignal).toBe(abortController.signal);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
+	test("does not pass an abort signal when none is provided", async () => {
+		const originalFetch = globalThis.fetch;
+		let requestSignal: AbortSignal | null | undefined = null;
+
+		globalThis.fetch = (async (_input: FetchInput, init?: FetchInit) => {
+			requestSignal = init?.signal;
+
+			return new Response('{"done":true}\n', { status: 200 });
+		}) as unknown as typeof fetch;
+
+		try {
+			const adapter = new OllamaModelAdapter();
+
+			await collectStream(adapter.streamChat({ messages: [] }));
+
+			expect(requestSignal).toBeUndefined();
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	});
+
 	test("streams tool calls when tools are provided", async () => {
 		const originalFetch = globalThis.fetch;
 		let requestBody: unknown;
