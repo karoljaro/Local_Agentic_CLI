@@ -9,7 +9,7 @@ export type AgentEvent =
 	| ToolCallFailed
 	| AgentErrorOccurred;
 
-export type AgentEventBase<TType extends string> = {
+type AgentEventBase<TType extends string> = {
 	id: EventId;
 	sessionId: SessionId;
 	type: TType;
