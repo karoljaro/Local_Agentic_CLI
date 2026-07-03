@@ -10,7 +10,7 @@ import { LIST_FILES_TOOL_NAME, type ListFilesProvider } from './providers/ListFi
 import { READ_FILE_TOOL_NAME, type ReadFileProvider } from './providers/ReadFileProvider';
 import { SEARCH_FILE_TOOL_NAME, type SearchFileProvider } from './providers/SearchFileProvider';
 
-export type LocalToolExecutorDependencies = {
+type LocalToolExecutorDependencies = {
 	listFilesProvider: ListFilesProvider;
 	readFileProvider: ReadFileProvider;
 	searchFileProvider: SearchFileProvider;

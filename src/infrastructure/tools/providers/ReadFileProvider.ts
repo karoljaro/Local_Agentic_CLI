@@ -4,7 +4,7 @@ import type { ToolDefinition } from '@/domain/Tool';
 
 export const READ_FILE_TOOL_NAME = 'read_file';
 
-export type ReadFileProviderOptions = {
+type ReadFileProviderOptions = {
 	maxFileBytes: number;
 };
 

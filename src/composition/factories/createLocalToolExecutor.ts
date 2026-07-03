@@ -17,7 +17,7 @@ import { RipgrepSearch } from '@/infrastructure/tools/ripgrep/RipgrepSearch';
 const DEFAULT_MAX_FILE_BYTES = 200_000;
 const DEFAULT_MAX_LIST_FILES = 500;
 
-export type LocalToolExecutorOptions = {
+type LocalToolExecutorOptions = {
 	workspaceRoot?: string;
 	maxFileBytes?: number;
 	maxListFiles?: number;

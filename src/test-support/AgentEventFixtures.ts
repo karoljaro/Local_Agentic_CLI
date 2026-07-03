@@ -9,7 +9,7 @@ import type {
 } from '@/domain/AgentEvent';
 import { asEventId, asISODateTime, asMessageId, asSessionId, asToolCallId } from '@/domain/Ids';
 
-export const testEventTimestamp = asISODateTime('2026-06-09T12:00:00.000Z');
+const testEventTimestamp = asISODateTime('2026-06-09T12:00:00.000Z');
 
 type EventOverrides<TEvent extends { type: string }> = Partial<Omit<TEvent, 'type'>>;
 
