@@ -49,7 +49,13 @@ export function App({ initialMode = 'new' }: AppProps) {
 	}
 
 	if (screen === 'resume' || sessionId === undefined) {
-		return <SessionPickerScreen onSelectSession={selectSession} runtime={runtime} />;
+		return (
+			<SessionPickerScreen
+				currentSessionId={sessionId}
+				onSelectSession={selectSession}
+				runtime={runtime}
+			/>
+		);
 	}
 
 	return (
@@ -65,11 +71,16 @@ export function App({ initialMode = 'new' }: AppProps) {
 }
 
 type SessionPickerScreenProps = {
+	currentSessionId?: SessionId | undefined;
 	onSelectSession: (sessionId: SessionId) => void;
 	runtime: Runtime;
 };
 
-const SessionPickerScreen = ({ onSelectSession, runtime }: SessionPickerScreenProps) => {
+const SessionPickerScreen = ({
+	currentSessionId,
+	onSelectSession,
+	runtime,
+}: SessionPickerScreenProps) => {
 	const picker = useSessionPicker({ onSelectSession, runtime });
 
 	return (
@@ -78,6 +89,7 @@ const SessionPickerScreen = ({ onSelectSession, runtime }: SessionPickerScreenPr
 			statusText={picker.status === 'loading' ? 'loading' : 'session'}
 		>
 			<SessionPicker
+				currentSessionId={currentSessionId}
 				errorMessage={picker.errorMessage}
 				options={picker.options}
 				selectedIndex={picker.selectedIndex}

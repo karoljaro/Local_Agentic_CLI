@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useInput } from 'ink';
 
 import type { StoredSession } from '@/application/ports/SessionStorePort';
 import type { Runtime } from '@/composition/createRuntime';
 import type { SessionId } from '@/domain/Ids';
 import type { SessionPickerOption, UiStatus } from '@/presentation/chat/types';
+import { useSelectableList } from './useSelectableList';
 
 type UseSessionPickerInput = {
 	onSelectSession: (sessionId: SessionId) => void;
@@ -13,7 +13,6 @@ type UseSessionPickerInput = {
 
 export const useSessionPicker = ({ onSelectSession, runtime }: UseSessionPickerInput) => {
 	const [sessions, setSessions] = useState<StoredSession[]>([]);
-	const [selectedIndex, setSelectedIndex] = useState(0);
 	const [status, setStatus] = useState<UiStatus>('loading');
 	const [errorMessage, setErrorMessage] = useState<string | undefined>();
 
@@ -26,6 +25,19 @@ export const useSessionPicker = ({ onSelectSession, runtime }: UseSessionPickerI
 			})),
 		];
 	}, [sessions]);
+
+	const list = useSelectableList({
+		isActive: status === 'idle',
+		items: options,
+		onSelect: (selectedOption) => {
+			if (selectedOption.type === 'new') {
+				onSelectSession(runtime.idGenerator.nextSessionId());
+				return;
+			}
+
+			onSelectSession(selectedOption.sessionId);
+		},
+	});
 
 	useEffect(() => {
 		let isCancelled = false;
@@ -61,44 +73,10 @@ export const useSessionPicker = ({ onSelectSession, runtime }: UseSessionPickerI
 		};
 	}, [runtime]);
 
-	useEffect(() => {
-		setSelectedIndex((currentIndex) => Math.min(currentIndex, Math.max(0, options.length - 1)));
-	}, [options.length]);
-
-	useInput(
-		(_value, key) => {
-			if (key.upArrow) {
-				setSelectedIndex((currentIndex) => Math.max(0, currentIndex - 1));
-				return;
-			}
-
-			if (key.downArrow) {
-				setSelectedIndex((currentIndex) => Math.min(options.length - 1, currentIndex + 1));
-				return;
-			}
-
-			if (key.return) {
-				const selectedOption = options[selectedIndex];
-
-				if (selectedOption === undefined) {
-					return;
-				}
-
-				if (selectedOption.type === 'new') {
-					onSelectSession(runtime.idGenerator.nextSessionId());
-					return;
-				}
-
-				onSelectSession(selectedOption.sessionId);
-			}
-		},
-		{ isActive: status === 'idle' },
-	);
-
 	return {
 		errorMessage,
 		options,
-		selectedIndex,
+		selectedIndex: list.selectedIndex,
 		status,
 	};
 };
