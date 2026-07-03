@@ -21,7 +21,11 @@ import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
 import type { ModelStreamChunk } from '../ports/ModelPort';
 import { ContextBuilder } from '../services/ContextBuilder';
-import { RunAgentTurn, type ToolApprovalRequest } from './RunAgentTurn';
+import {
+	RunAgentTurn,
+	type RunAgentTurnDependencies,
+	type ToolApprovalRequest,
+} from './RunAgentTurn';
 
 const textResponse = (...contentDeltas: string[]): ModelStreamChunk[] =>
 	contentDeltas.map((contentDelta) => ({ contentDelta }));
@@ -231,19 +235,43 @@ class SequenceIdGenerator implements IdGeneratorPort {
 	}
 }
 
+type RunAgentTurnHarnessOptions = {
+	model: ScriptedModel;
+	toolExecutor?: RecordingToolExecutor;
+	approveToolCall?: RunAgentTurnDependencies['approveToolCall'];
+};
+
+const createRunAgentTurnHarness = ({
+	model,
+	toolExecutor,
+	approveToolCall,
+}: RunAgentTurnHarnessOptions) => {
+	const sessionStore = new InMemorySessionStore();
+	const sessionId = asSessionId('session-1');
+	const dependencies: RunAgentTurnDependencies = {
+		sessionStore,
+		model,
+		contextBuilder: new ContextBuilder({
+			systemPrompt: 'You are a local coding agent.',
+		}),
+		clock: new FixedClock(),
+		idGenerator: new SequenceIdGenerator(),
+		...(toolExecutor === undefined ? {} : { toolExecutor }),
+		...(approveToolCall === undefined ? {} : { approveToolCall }),
+	};
+
+	return {
+		useCase: new RunAgentTurn(dependencies),
+		sessionStore,
+		sessionId,
+	};
+};
+
 describe('RunAgentTurn', () => {
 	test('stores prompt, streams model chunks, and stores completed assistant message', async () => {
-		const sessionStore = new InMemorySessionStore();
 		const model = new ScriptedModel([textResponse('Hello', ' there')]);
-		const sessionId = asSessionId('session-1');
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model,
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 		});
 
 		const chunks: ModelStreamChunk[] = [];
@@ -295,19 +323,9 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('passes an abort signal to the model request', async () => {
-		const sessionStore = new InMemorySessionStore();
 		const model = new ScriptedModel([textResponse('Hello', ' there')]);
-		const sessionId = asSessionId('session-1');
+		const { sessionId, useCase } = createRunAgentTurnHarness({ model });
 		const abortController = new AbortController();
-		const useCase = new RunAgentTurn({
-			sessionStore,
-			model,
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
-		});
 
 		await collectAsyncIterable(
 			useCase.run({
@@ -321,17 +339,9 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('streams a final text response without executing available tools', async () => {
-		const sessionStore = new InMemorySessionStore();
 		const toolExecutor = createReadToolExecutor();
-		const sessionId = asSessionId('session-1');
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model: new ScriptedModel([textResponse('Hello', ' there')]),
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 			toolExecutor,
 		});
 
@@ -351,16 +361,8 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('stores a completed assistant message for an empty model response', async () => {
-		const sessionStore = new InMemorySessionStore();
-		const sessionId = asSessionId('session-1');
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model: new ScriptedModel([[]]),
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 		});
 
 		const chunks = await collectAsyncIterable(
@@ -375,15 +377,8 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('rejects empty prompts before storing events', async () => {
-		const sessionStore = new InMemorySessionStore();
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, useCase } = createRunAgentTurnHarness({
 			model: new ScriptedModel([]),
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 		});
 
 		await expect(
@@ -395,16 +390,8 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('stores agent error when model streaming fails', async () => {
-		const sessionStore = new InMemorySessionStore();
-		const sessionId = asSessionId('session-1');
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model: new ScriptedModel([new Error('model failed')]),
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 		});
 
 		await expect(
@@ -438,21 +425,13 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('does not store a completed assistant message when model fails after deltas', async () => {
-		const sessionStore = new InMemorySessionStore();
-		const sessionId = asSessionId('session-1');
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model: new ScriptedModel([
 				{
 					chunks: textResponse('partial ', 'answer'),
 					error: new Error('Ollama stream failed: model failed'),
 				},
 			]),
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 		});
 
 		await expect(
@@ -473,21 +452,13 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('executes one model tool call and stores the completed tool event', async () => {
-		const sessionStore = new InMemorySessionStore();
 		const model = new ScriptedModel([
 			toolCallResponse([readFileToolCall('README.md')]),
 			textResponse('The file contains ', 'hello.'),
 		]);
 		const toolExecutor = createReadToolExecutor();
-		const sessionId = asSessionId('session-1');
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model,
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 			toolExecutor,
 		});
 
@@ -635,24 +606,16 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('passes an abort signal through tool-enabled model rounds', async () => {
-		const sessionStore = new InMemorySessionStore();
 		const model = new ScriptedModel([
 			toolCallResponse([readFileToolCall('README.md')]),
 			textResponse('The file contains ', 'hello.'),
 		]);
 		const toolExecutor = createReadToolExecutor();
-		const sessionId = asSessionId('session-1');
-		const abortController = new AbortController();
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionId, useCase } = createRunAgentTurnHarness({
 			model,
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 			toolExecutor,
 		});
+		const abortController = new AbortController();
 
 		await collectAsyncIterable(
 			useCase.run({
@@ -669,21 +632,13 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('executes search once and sends its complete result to the final model round', async () => {
-		const sessionStore = new InMemorySessionStore();
 		const model = new ScriptedModel([
 			toolCallResponse([searchFileToolCall('UserRepository')]),
 			textResponse('UserRepository is defined ', 'in src/users.py.'),
 		]);
 		const toolExecutor = createSearchReadToolExecutor();
-		const sessionId = asSessionId('session-1');
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model,
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 			toolExecutor,
 		});
 
@@ -715,8 +670,6 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('keeps tool-round text in model context without publishing it as final text', async () => {
-		const sessionStore = new InMemorySessionStore();
-		const sessionId = asSessionId('session-1');
 		const model = new ScriptedModel([
 			toolCallResponse(
 				[readFileToolCall('README.md')],
@@ -724,14 +677,8 @@ describe('RunAgentTurn', () => {
 			),
 			textResponse('The file contains hello.'),
 		]);
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model,
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 			toolExecutor: createReadToolExecutor(),
 		});
 
@@ -759,22 +706,14 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('requires approval before executing a mutating tool call', async () => {
-		const sessionStore = new InMemorySessionStore();
 		const model = new ScriptedModel([
 			toolCallResponse([editFileToolCall()]),
 			textResponse('Edit handled.'),
 		]);
 		const toolExecutor = createEditToolExecutor();
 		const approvalRequests: ToolApprovalRequest[] = [];
-		const sessionId = asSessionId('session-1');
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model,
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 			toolExecutor,
 			approveToolCall: async (request) => {
 				approvalRequests.push(request);
@@ -824,18 +763,10 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('does not execute a mutating tool call when approval is denied', async () => {
-		const sessionStore = new InMemorySessionStore();
 		const model = new ScriptedModel([toolCallResponse([editFileToolCall()])]);
 		const toolExecutor = createEditToolExecutor();
-		const sessionId = asSessionId('session-1');
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model,
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 			toolExecutor,
 			approveToolCall: async () => false,
 		});
@@ -875,22 +806,14 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('allows the model to chain search and read tool calls before answering', async () => {
-		const sessionStore = new InMemorySessionStore();
 		const model = new ScriptedModel([
 			toolCallResponse([searchFileToolCall('find_by_email')]),
 			toolCallResponse([readFileToolCall('src/users.py')]),
 			textResponse('find_by_email compares ', 'lowercased emails.'),
 		]);
 		const toolExecutor = createSearchReadToolExecutor();
-		const sessionId = asSessionId('session-1');
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model,
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 			toolExecutor,
 		});
 
@@ -969,7 +892,6 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('executes multiple tool calls from one model response in order', async () => {
-		const sessionStore = new InMemorySessionStore();
 		const model = new ScriptedModel([
 			toolCallResponse([
 				searchFileToolCall('UserRepository'),
@@ -978,15 +900,8 @@ describe('RunAgentTurn', () => {
 			textResponse('Both tools completed.'),
 		]);
 		const toolExecutor = createSearchReadToolExecutor();
-		const sessionId = asSessionId('session-1');
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model,
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 			toolExecutor,
 		});
 
@@ -1050,7 +965,6 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('sends a failed second tool result back to the model', async () => {
-		const sessionStore = new InMemorySessionStore();
 		const model = new ScriptedModel([
 			toolCallResponse([
 				readFileToolCall('README.md'),
@@ -1059,15 +973,8 @@ describe('RunAgentTurn', () => {
 			textResponse('Second read failed.'),
 		]);
 		const toolExecutor = createSecondReadFailingToolExecutor();
-		const sessionId = asSessionId('session-1');
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model,
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 			toolExecutor,
 		});
 
@@ -1105,7 +1012,6 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('requests approval before executing the second tool in a batch', async () => {
-		const sessionStore = new InMemorySessionStore();
 		const model = new ScriptedModel([
 			toolCallResponse([
 				readFileToolCall('src/file.ts'),
@@ -1115,15 +1021,8 @@ describe('RunAgentTurn', () => {
 		]);
 		const toolExecutor = createReadEditToolExecutor();
 		const approvalRequests: ToolApprovalRequest[] = [];
-		const sessionId = asSessionId('session-1');
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model,
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 			toolExecutor,
 			approveToolCall: async (request) => {
 				approvalRequests.push(request);
@@ -1180,11 +1079,8 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('does not execute a tool when the model stream ends with an error', async () => {
-		const sessionStore = new InMemorySessionStore();
 		const toolExecutor = createSearchReadToolExecutor();
-		const sessionId = asSessionId('session-1');
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model: new ScriptedModel([
 				{
 					chunks: toolCallResponse([
@@ -1193,11 +1089,6 @@ describe('RunAgentTurn', () => {
 					error: new Error('Ollama stream ended before completion.'),
 				},
 			]),
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 			toolExecutor,
 		});
 
@@ -1221,19 +1112,11 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('does not execute a tool with invalid arguments', async () => {
-		const sessionStore = new InMemorySessionStore();
 		const toolExecutor = createSearchReadToolExecutor();
-		const sessionId = asSessionId('session-1');
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model: new ScriptedModel([
 				toolCallResponse([searchFileToolCall(42)]),
 			]),
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 			toolExecutor,
 		});
 
@@ -1258,11 +1141,8 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('caches read tools during a turn and clears the cache after an edit', async () => {
-		const sessionStore = new InMemorySessionStore();
 		const toolExecutor = createReadEditToolExecutor();
-		const sessionId = asSessionId('session-1');
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionId, useCase } = createRunAgentTurnHarness({
 			model: new ScriptedModel([
 				toolCallResponse([readFileToolCall('src/file.ts')]),
 				toolCallResponse([readFileToolCall('src/file.ts')]),
@@ -1270,11 +1150,6 @@ describe('RunAgentTurn', () => {
 				toolCallResponse([readFileToolCall('src/file.ts')]),
 				textResponse('Done.'),
 			]),
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 			toolExecutor,
 			approveToolCall: async () => true,
 		});
@@ -1290,20 +1165,12 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('stores failed tool events and sends the error back to the model', async () => {
-		const sessionStore = new InMemorySessionStore();
 		const model = new ScriptedModel([
 			toolCallResponse([readFileToolCall('missing.txt')]),
 			textResponse('I could not read the file.'),
 		]);
-		const sessionId = asSessionId('session-1');
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model,
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 			toolExecutor: createFailingToolExecutor(),
 		});
 
@@ -1371,21 +1238,13 @@ describe('RunAgentTurn', () => {
 	});
 
 	test('stops tool execution after the iteration limit', async () => {
-		const sessionStore = new InMemorySessionStore();
 		const toolExecutor = createReadToolExecutor();
-		const sessionId = asSessionId('session-1');
-		const useCase = new RunAgentTurn({
-			sessionStore,
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model: new ScriptedModel(
 				Array.from({ length: 12 }, () =>
 					toolCallResponse([readFileToolCall('README.md')])
 				),
 			),
-			contextBuilder: new ContextBuilder({
-				systemPrompt: 'You are a local coding agent.',
-			}),
-			clock: new FixedClock(),
-			idGenerator: new SequenceIdGenerator(),
 			toolExecutor,
 		});
 
