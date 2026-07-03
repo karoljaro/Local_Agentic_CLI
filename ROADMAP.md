@@ -468,6 +468,8 @@ To działa, ale każdy nowy przypadek wymaga kolejnej klasy.
 
 ## 2.1. Jeden skryptowany model testowy
 
+- [X] - Wykonane
+
 Zamiast kilkunastu klas można wprowadzić jednego prostego fake'a:
 
 ```ts
@@ -513,6 +515,8 @@ const model = new ScriptedModel([
 To znacznie skróci testy bez budowania frameworka.
 
 ## 2.2. Jeden rejestrujący executor
+
+- [X] - Wykonane
 
 Podobnie:
 
