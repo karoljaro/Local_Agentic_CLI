@@ -21,7 +21,7 @@ Implemented:
 - Ollama chat integration with streaming final responses
 - model switching from the CLI with `/model <name>`
 - current model and workspace path shown under the input
-- session picker with `New chat`
+- resume session picker with `New chat`
 - persisted sessions in `.agent/sessions/<session-id>/events.jsonl`
 - loading previous chat messages when continuing a session
 - tool calling through Ollama
@@ -180,6 +180,12 @@ After that, open any workspace folder and run:
 codesh
 ```
 
+By default, `codesh` starts a new chat session. To open the session picker and continue an existing session, run:
+
+```bash
+codesh resume
+```
+
 The CLI uses the current terminal directory as the workspace, so file tools operate on the folder where `codesh` is started.
 
 ## Configuration
@@ -203,9 +209,10 @@ Inside the chat:
 ```text
 /model
 /model <ollama-model-name>
+/resume
 ```
 
-`/model` shows the current model. `/model <name>` switches the model for subsequent turns.
+`/model` shows the current model. `/model <name>` switches the model for subsequent turns. `/resume` opens the session picker.
 
 ## Tests
 

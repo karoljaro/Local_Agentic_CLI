@@ -2,7 +2,7 @@ import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 
 import type { Runtime } from '@/composition/createRuntime';
 import type { SessionId } from '@/domain/Ids';
-import { parseModelCommand } from '@/presentation/chat/modelCommand';
+import { parseChatCommand, type ChatCommand } from '@/presentation/chat/chatCommand';
 import { getSessionModelName, sessionEventsToTranscript } from '@/presentation/chat/sessionEvents';
 import type { TranscriptEntry, UiStatus } from '@/presentation/chat/types';
 import { useAbortableTurn } from './useAbortableTurn';
@@ -10,6 +10,7 @@ import { useAbortableTurn } from './useAbortableTurn';
 type UseChatSessionInput = {
 	modelName: string;
 	onModelNameChange: (modelName: string) => void;
+	onResume: () => void;
 	runtime: Runtime;
 	sessionId: SessionId;
 };
@@ -17,6 +18,7 @@ type UseChatSessionInput = {
 export const useChatSession = ({
 	modelName,
 	onModelNameChange,
+	onResume,
 	runtime,
 	sessionId,
 }: UseChatSessionInput) => {
@@ -64,10 +66,10 @@ export const useChatSession = ({
 	}, [onModelNameChange, runtime, sessionId]);
 
 	const runPrompt = async (prompt: string): Promise<void> => {
-		const modelCommand = parseModelCommand(prompt);
+		const command = parseChatCommand(prompt);
 
-		if (modelCommand !== null) {
-			handleModelCommand(modelCommand, modelName, runtime, onModelNameChange, setTranscript);
+		if (command !== null) {
+			handleChatCommand(command, modelName, runtime, onModelNameChange, onResume, setTranscript);
 			return;
 		}
 
@@ -119,14 +121,20 @@ export const useChatSession = ({
 	};
 };
 
-const handleModelCommand = (
-	command: NonNullable<ReturnType<typeof parseModelCommand>>,
+const handleChatCommand = (
+	command: ChatCommand,
 	modelName: string,
 	runtime: Runtime,
 	onModelNameChange: (modelName: string) => void,
+	onResume: () => void,
 	setTranscript: Dispatch<SetStateAction<TranscriptEntry[]>>,
 ): void => {
-	if (command.type === 'show') {
+	if (command.type === 'resume') {
+		onResume();
+		return;
+	}
+
+	if (command.type === 'show-model') {
 		setTranscript((currentTranscript) => [
 			...currentTranscript,
 			{ role: 'assistant', content: `Current model: ${modelName}` },

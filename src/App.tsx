@@ -3,6 +3,7 @@ import { Text, useInput, useStdin } from 'ink';
 
 import { createRuntime, type Runtime } from '@/composition/createRuntime';
 import type { SessionId } from '@/domain/Ids';
+import type { StartupMode } from '@/presentation/chat/startupMode';
 import { AppFrame } from '@/presentation/components/AppFrame';
 import { ApprovalPrompt } from '@/presentation/components/ApprovalPrompt';
 import { Composer } from '@/presentation/components/Composer';
@@ -13,11 +14,31 @@ import { useSessionPicker } from '@/presentation/hooks/useSessionPicker';
 import { useTextInput } from '@/presentation/hooks/useTextInput';
 import { useToolApproval } from '@/presentation/hooks/useToolApproval';
 
-export function App() {
+type AppProps = {
+	initialMode?: StartupMode | undefined;
+};
+
+type AppScreen = 'chat' | 'resume';
+
+export function App({ initialMode = 'new' }: AppProps) {
 	const runtime = useMemo(() => createRuntime(), []);
 	const { isRawModeSupported } = useStdin();
-	const [sessionId, setSessionId] = useState<SessionId | undefined>();
+	const [sessionId, setSessionId] = useState<SessionId | undefined>(() =>
+		initialMode === 'new' ? runtime.idGenerator.nextSessionId() : undefined,
+	);
+	const [screen, setScreen] = useState<AppScreen>(() =>
+		initialMode === 'resume' ? 'resume' : 'chat',
+	);
 	const [modelName, setModelName] = useState(() => runtime.getModelName());
+
+	const selectSession = (selectedSessionId: SessionId): void => {
+		setSessionId(selectedSessionId);
+		setScreen('chat');
+	};
+
+	const openResumeScreen = (): void => {
+		setScreen('resume');
+	};
 
 	if (!isRawModeSupported) {
 		return (
@@ -27,8 +48,8 @@ export function App() {
 		);
 	}
 
-	if (sessionId === undefined) {
-		return <SessionPickerScreen onSelectSession={setSessionId} runtime={runtime} />;
+	if (screen === 'resume' || sessionId === undefined) {
+		return <SessionPickerScreen onSelectSession={selectSession} runtime={runtime} />;
 	}
 
 	return (
@@ -36,6 +57,7 @@ export function App() {
 			key={String(sessionId)}
 			modelName={modelName}
 			onModelNameChange={setModelName}
+			onResume={openResumeScreen}
 			runtime={runtime}
 			sessionId={sessionId}
 		/>
@@ -67,15 +89,23 @@ const SessionPickerScreen = ({ onSelectSession, runtime }: SessionPickerScreenPr
 type ChatScreenProps = {
 	modelName: string;
 	onModelNameChange: (modelName: string) => void;
+	onResume: () => void;
 	runtime: Runtime;
 	sessionId: SessionId;
 };
 
-const ChatScreen = ({ modelName, onModelNameChange, runtime, sessionId }: ChatScreenProps) => {
+const ChatScreen = ({
+	modelName,
+	onModelNameChange,
+	onResume,
+	runtime,
+	sessionId,
+}: ChatScreenProps) => {
 	const approval = useToolApproval(runtime);
 	const chat = useChatSession({
 		modelName,
 		onModelNameChange,
+		onResume,
 		runtime,
 		sessionId,
 	});
