@@ -13,7 +13,8 @@ import {
 	type SessionId,
 	type ToolCallId,
 } from '@/domain/Ids';
-import type { ModelToolCall } from '@/domain/Tool';
+import type { ModelToolCall, ToolDefinition } from '@/domain/Tool';
+import { RecordingToolExecutor } from '@/test-support/RecordingToolExecutor';
 import { ScriptedModel } from '@/test-support/ScriptedModel';
 import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
@@ -22,11 +23,6 @@ import type {
 	SessionStorePort,
 	StoredSession,
 } from '../ports/SessionStorePort';
-import type {
-	ToolExecutionRequest,
-	ToolExecutionResult,
-	ToolExecutorPort,
-} from '../ports/ToolExecutorPort';
 import { ContextBuilder } from '../services/ContextBuilder';
 import { RunAgentTurn, type ToolApprovalRequest } from './RunAgentTurn';
 
@@ -75,204 +71,119 @@ const editFileToolCall = (): ModelToolCall =>
 		newText: 'const value = 2;',
 	});
 
-class ReadEditToolExecutor implements ToolExecutorPort {
-	readonly receivedRequests: ToolExecutionRequest[] = [];
-	private readCount = 0;
-
-	listTools() {
-		return [
-			{
-				name: 'read_file',
-				description: 'Read a file',
-				parameters: {},
+const readToolDefinition: ToolDefinition = {
+	name: 'read_file',
+	description: 'Read a file',
+	parameters: {
+		type: 'object',
+		required: ['path'],
+		properties: {
+			path: {
+				type: 'string',
 			},
-			{
-				name: 'edit_file',
-				description: 'Edit a file',
-				requiresApproval: true,
-				parameters: {},
+		},
+	},
+};
+
+const looseReadToolDefinition: ToolDefinition = {
+	name: 'read_file',
+	description: 'Read a file',
+	parameters: {},
+};
+
+const searchToolDefinition: ToolDefinition = {
+	name: 'search_file',
+	description: 'Search files',
+	parameters: {
+		type: 'object',
+		required: ['query'],
+		properties: {
+			query: {
+				type: 'string',
 			},
-		];
-	}
+		},
+	},
+};
 
-	async execute(
-		request: ToolExecutionRequest,
-	): Promise<ToolExecutionResult> {
-		this.receivedRequests.push(request);
+const editToolDefinition: ToolDefinition = {
+	name: 'edit_file',
+	description: 'Edit a file',
+	requiresApproval: true,
+	parameters: {
+		type: 'object',
+		required: ['path', 'oldText', 'newText'],
+		properties: {
+			path: {
+				type: 'string',
+			},
+			oldText: {
+				type: 'string',
+			},
+			newText: {
+				type: 'string',
+			},
+		},
+	},
+};
 
-		if (request.toolName === 'read_file') {
-			this.readCount += 1;
+const looseEditToolDefinition: ToolDefinition = {
+	name: 'edit_file',
+	description: 'Edit a file',
+	requiresApproval: true,
+	parameters: {},
+};
 
-			return {
-				toolName: request.toolName,
-				output: { content: `version-${this.readCount}` },
-			};
-		}
+const createReadToolExecutor = (): RecordingToolExecutor =>
+	new RecordingToolExecutor([readToolDefinition], (request) => ({
+		toolName: request.toolName,
+		output: {
+			path: 'README.md',
+			content: 'hello',
+		},
+	}));
 
-		return {
-			toolName: request.toolName,
-			output: { replaced: true },
-		};
-	}
-}
+const createEditToolExecutor = (): RecordingToolExecutor =>
+	new RecordingToolExecutor([editToolDefinition], (request) => ({
+		toolName: request.toolName,
+		output: {
+			path: 'src/file.ts',
+			replaced: true,
+			matchCount: 1,
+		},
+	}));
 
-class FakeToolExecutor implements ToolExecutorPort {
-	readonly receivedRequests: ToolExecutionRequest[] = [];
-
-	listTools() {
-		return [
-			{
-				name: 'read_file',
-				description: 'Read a file',
-				parameters: {
-					type: 'object',
-					required: ['path'],
-					properties: {
-						path: {
-							type: 'string',
-						},
+const createSearchReadToolExecutor = (): RecordingToolExecutor =>
+	new RecordingToolExecutor(
+		[searchToolDefinition, readToolDefinition],
+		(request) => {
+			if (request.toolName === 'search_file') {
+				return {
+					toolName: request.toolName,
+					output: {
+						matches: [
+							{
+								path: 'src/users.py',
+								line: 10,
+								text: 'def find_by_email(self, email: str) -> User | None:',
+							},
+						],
 					},
-				},
-			},
-		];
-	}
+				};
+			}
 
-	async execute(
-		request: ToolExecutionRequest,
-	): Promise<ToolExecutionResult> {
-		this.receivedRequests.push(request);
-
-		return {
-			toolName: request.toolName,
-			output: {
-				path: 'README.md',
-				content: 'hello',
-			},
-		};
-	}
-}
-
-class EditToolExecutor implements ToolExecutorPort {
-	readonly receivedRequests: ToolExecutionRequest[] = [];
-
-	listTools() {
-		return [
-			{
-				name: 'edit_file',
-				description: 'Edit a file',
-				requiresApproval: true,
-				parameters: {
-					type: 'object',
-					required: ['path', 'oldText', 'newText'],
-					properties: {
-						path: {
-							type: 'string',
-						},
-						oldText: {
-							type: 'string',
-						},
-						newText: {
-							type: 'string',
-						},
-					},
-				},
-			},
-		];
-	}
-
-	async execute(
-		request: ToolExecutionRequest,
-	): Promise<ToolExecutionResult> {
-		this.receivedRequests.push(request);
-
-		return {
-			toolName: request.toolName,
-			output: {
-				path: 'src/file.ts',
-				replaced: true,
-				matchCount: 1,
-			},
-		};
-	}
-}
-
-class SearchReadToolExecutor implements ToolExecutorPort {
-	readonly receivedRequests: ToolExecutionRequest[] = [];
-
-	listTools() {
-		return [
-			{
-				name: 'search_file',
-				description: 'Search files',
-				parameters: {
-					type: 'object',
-					required: ['query'],
-					properties: {
-						query: {
-							type: 'string',
-						},
-					},
-				},
-			},
-			{
-				name: 'read_file',
-				description: 'Read a file',
-				parameters: {
-					type: 'object',
-					required: ['path'],
-					properties: {
-						path: {
-							type: 'string',
-						},
-					},
-				},
-			},
-		];
-	}
-
-	async execute(
-		request: ToolExecutionRequest,
-	): Promise<ToolExecutionResult> {
-		this.receivedRequests.push(request);
-
-		if (request.toolName === 'search_file') {
 			return {
 				toolName: request.toolName,
 				output: {
-					matches: [
-						{
-							path: 'src/users.py',
-							line: 10,
-							text: 'def find_by_email(self, email: str) -> User | None:',
-						},
-					],
+					path: 'src/users.py',
+					content: 'if user.email.lower() == email.lower():',
 				},
 			};
-		}
+		},
+	);
 
-		return {
-			toolName: request.toolName,
-			output: {
-				path: 'src/users.py',
-				content: 'if user.email.lower() == email.lower():',
-			},
-		};
-	}
-}
-
-class SecondReadFailingToolExecutor implements ToolExecutorPort {
-	readonly receivedRequests: ToolExecutionRequest[] = [];
-
-	listTools() {
-		return new FakeToolExecutor().listTools();
-	}
-
-	async execute(
-		request: ToolExecutionRequest,
-	): Promise<ToolExecutionResult> {
-		this.receivedRequests.push(request);
-
-		if (this.receivedRequests.length === 2) {
+const createSecondReadFailingToolExecutor = (): RecordingToolExecutor =>
+	new RecordingToolExecutor([readToolDefinition], (request, requests) => {
+		if (requests.length === 2) {
 			throw new Error('file missing');
 		}
 
@@ -283,32 +194,35 @@ class SecondReadFailingToolExecutor implements ToolExecutorPort {
 				content: 'hello',
 			},
 		};
-	}
-}
+	});
 
-class FailingToolExecutor implements ToolExecutorPort {
-	listTools() {
-		return [
-			{
-				name: 'read_file',
-				description: 'Read a file',
-				parameters: {
-					type: 'object',
-					required: ['path'],
-					properties: {
-						path: {
-							type: 'string',
-						},
-					},
-				},
-			},
-		];
-	}
+const createReadEditToolExecutor = (): RecordingToolExecutor => {
+	let readCount = 0;
 
-	async execute(): Promise<ToolExecutionResult> {
+	return new RecordingToolExecutor(
+		[looseReadToolDefinition, looseEditToolDefinition],
+		(request) => {
+			if (request.toolName === 'read_file') {
+				readCount += 1;
+
+				return {
+					toolName: request.toolName,
+					output: { content: `version-${readCount}` },
+				};
+			}
+
+			return {
+				toolName: request.toolName,
+				output: { replaced: true },
+			};
+		},
+	);
+};
+
+const createFailingToolExecutor = (): RecordingToolExecutor =>
+	new RecordingToolExecutor([readToolDefinition], () => {
 		throw new Error('file missing');
-	}
-}
+	});
 
 class FixedClock implements ClockPort {
 	now(): ISODateTime {
@@ -427,7 +341,7 @@ describe('RunAgentTurn', () => {
 
 	test('streams a final text response without executing available tools', async () => {
 		const sessionStore = new InMemorySessionStore();
-		const toolExecutor = new FakeToolExecutor();
+		const toolExecutor = createReadToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
@@ -581,7 +495,7 @@ describe('RunAgentTurn', () => {
 			toolCallResponse([readFileToolCall('README.md')]),
 			textResponse('The file contains ', 'hello.'),
 		]);
-		const toolExecutor = new FakeToolExecutor();
+		const toolExecutor = createReadToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
@@ -743,7 +657,7 @@ describe('RunAgentTurn', () => {
 			toolCallResponse([readFileToolCall('README.md')]),
 			textResponse('The file contains ', 'hello.'),
 		]);
-		const toolExecutor = new FakeToolExecutor();
+		const toolExecutor = createReadToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const abortController = new AbortController();
 		const useCase = new RunAgentTurn({
@@ -777,7 +691,7 @@ describe('RunAgentTurn', () => {
 			toolCallResponse([searchFileToolCall('UserRepository')]),
 			textResponse('UserRepository is defined ', 'in src/users.py.'),
 		]);
-		const toolExecutor = new SearchReadToolExecutor();
+		const toolExecutor = createSearchReadToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
@@ -835,7 +749,7 @@ describe('RunAgentTurn', () => {
 			}),
 			clock: new FixedClock(),
 			idGenerator: new SequenceIdGenerator(),
-			toolExecutor: new FakeToolExecutor(),
+			toolExecutor: createReadToolExecutor(),
 		});
 
 		const chunks = await collectTurn(
@@ -867,7 +781,7 @@ describe('RunAgentTurn', () => {
 			toolCallResponse([editFileToolCall()]),
 			textResponse('Edit handled.'),
 		]);
-		const toolExecutor = new EditToolExecutor();
+		const toolExecutor = createEditToolExecutor();
 		const approvalRequests: ToolApprovalRequest[] = [];
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
@@ -929,7 +843,7 @@ describe('RunAgentTurn', () => {
 	test('does not execute a mutating tool call when approval is denied', async () => {
 		const sessionStore = new InMemorySessionStore();
 		const model = new ScriptedModel([toolCallResponse([editFileToolCall()])]);
-		const toolExecutor = new EditToolExecutor();
+		const toolExecutor = createEditToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
@@ -984,7 +898,7 @@ describe('RunAgentTurn', () => {
 			toolCallResponse([readFileToolCall('src/users.py')]),
 			textResponse('find_by_email compares ', 'lowercased emails.'),
 		]);
-		const toolExecutor = new SearchReadToolExecutor();
+		const toolExecutor = createSearchReadToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
@@ -1080,7 +994,7 @@ describe('RunAgentTurn', () => {
 			]),
 			textResponse('Both tools completed.'),
 		]);
-		const toolExecutor = new SearchReadToolExecutor();
+		const toolExecutor = createSearchReadToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
@@ -1161,7 +1075,7 @@ describe('RunAgentTurn', () => {
 			]),
 			textResponse('Second read failed.'),
 		]);
-		const toolExecutor = new SecondReadFailingToolExecutor();
+		const toolExecutor = createSecondReadFailingToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
@@ -1216,7 +1130,7 @@ describe('RunAgentTurn', () => {
 			]),
 			textResponse('Edit completed.'),
 		]);
-		const toolExecutor = new ReadEditToolExecutor();
+		const toolExecutor = createReadEditToolExecutor();
 		const approvalRequests: ToolApprovalRequest[] = [];
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
@@ -1284,7 +1198,7 @@ describe('RunAgentTurn', () => {
 
 	test('does not execute a tool when the model stream ends with an error', async () => {
 		const sessionStore = new InMemorySessionStore();
-		const toolExecutor = new SearchReadToolExecutor();
+		const toolExecutor = createSearchReadToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
@@ -1323,7 +1237,7 @@ describe('RunAgentTurn', () => {
 
 	test('does not execute a tool with invalid arguments', async () => {
 		const sessionStore = new InMemorySessionStore();
-		const toolExecutor = new SearchReadToolExecutor();
+		const toolExecutor = createSearchReadToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
@@ -1358,7 +1272,7 @@ describe('RunAgentTurn', () => {
 
 	test('caches read tools during a turn and clears the cache after an edit', async () => {
 		const sessionStore = new InMemorySessionStore();
-		const toolExecutor = new ReadEditToolExecutor();
+		const toolExecutor = createReadEditToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
@@ -1403,7 +1317,7 @@ describe('RunAgentTurn', () => {
 			}),
 			clock: new FixedClock(),
 			idGenerator: new SequenceIdGenerator(),
-			toolExecutor: new FailingToolExecutor(),
+			toolExecutor: createFailingToolExecutor(),
 		});
 
 		const chunks = await collectTurn(
@@ -1471,7 +1385,7 @@ describe('RunAgentTurn', () => {
 
 	test('stops tool execution after the iteration limit', async () => {
 		const sessionStore = new InMemorySessionStore();
-		const toolExecutor = new FakeToolExecutor();
+		const toolExecutor = createReadToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
