@@ -1,10 +1,10 @@
 import type { SessionStorePort, StoredSession } from '../ports/SessionStorePort';
 
-export type ListSessionsResult = {
+type ListSessionsResult = {
 	sessions: StoredSession[];
 };
 
-export type ListSessionsDependencies = {
+type ListSessionsDependencies = {
 	sessionStore: SessionStorePort;
 };
 

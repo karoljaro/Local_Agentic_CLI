@@ -3,15 +3,15 @@ import type { SessionId } from '@/domain/Ids';
 import type { SessionStorePort } from '../ports/SessionStorePort';
 import { reduceAgentState } from '../services/SessionReducer';
 
-export type LoadSessionInput = {
+type LoadSessionInput = {
 	sessionId: SessionId;
 };
 
-export type LoadSessionResult = {
+type LoadSessionResult = {
 	state: AgentState;
 };
 
-export type LoadSessionDependencies = {
+type LoadSessionDependencies = {
 	sessionStore: SessionStorePort;
 };
 

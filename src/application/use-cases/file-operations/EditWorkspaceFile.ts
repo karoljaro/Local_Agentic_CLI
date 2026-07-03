@@ -1,13 +1,13 @@
 import type { WorkspaceFilePort } from '@/application/ports/WorkspaceFilePort';
 
-export type EditWorkspaceFileInput = {
+type EditWorkspaceFileInput = {
 	path: string;
 	oldText: string;
 	newText: string;
 	maxFileBytes: number;
 };
 
-export type EditWorkspaceFileOutput = {
+type EditWorkspaceFileOutput = {
 	path: string;
 	replaced: true;
 	matchCount: 1;

@@ -1,11 +1,11 @@
 import type { AgentState } from '@/domain/AgentState';
 import type { ModelMessage } from '@/domain/ModelMessage';
 
-export type ContextBuilderOptions = {
+type ContextBuilderOptions = {
 	systemPrompt: string;
 };
 
-export type BuildContextResult = {
+type BuildContextResult = {
 	messages: ModelMessage[];
 };
 

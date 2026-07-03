@@ -22,14 +22,14 @@ const MAX_TOOL_ITERATIONS = 12;
 const CACHEABLE_TOOLS = new Set(['list_files', 'read_file', 'search_file']);
 const CACHE_INVALIDATING_TOOLS = new Set(['create_file', 'edit_file']);
 
-export type RunAgentTurnInput = {
+type RunAgentTurnInput = {
 	sessionId: SessionId;
 	prompt: string;
 	modelName?: string;
 	signal?: AbortSignal;
 };
 
-export type AgentTurnChunk = {
+type AgentTurnChunk = {
 	contentDelta: string;
 };
 

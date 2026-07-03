@@ -4,15 +4,15 @@ import type { SessionStorePort } from '../ports/SessionStorePort';
 
 export type ListedSessionEvent = PromptSubmitted | AssistantMessageCompleted;
 
-export type ListSessionEventsInput = {
+type ListSessionEventsInput = {
 	sessionId: SessionId;
 };
 
-export type ListSessionEventsResult = {
+type ListSessionEventsResult = {
 	events: ListedSessionEvent[];
 };
 
-export type ListSessionEventsDependencies = {
+type ListSessionEventsDependencies = {
 	sessionStore: SessionStorePort;
 };
 
