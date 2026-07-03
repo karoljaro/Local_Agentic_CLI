@@ -1,39 +1,39 @@
 {
-  "compilerOptions": {
-    "lib": ["ESNext", "DOM"],
-    "target": "ESNext",
+	"compilerOptions": {
+		"lib": ["ESNext", "DOM"],
+		"target": "ESNext",
 
-    "module": "Preserve",
-    "moduleResolution": "bundler",
-    "moduleDetection": "force",
+		"module": "Preserve",
+		"moduleResolution": "bundler",
+		"moduleDetection": "force",
 
-    "jsx": "react-jsx",
-    "allowJs": true,
-    "types": ["bun", "react"],
+		"jsx": "react-jsx",
+		"allowJs": true,
+		"types": ["bun", "react"],
 
-    "paths": {
-      "@/*": ["./src/*"],
-      "@domain/*": ["./src/domain/*"],
-      "@application/*": ["./src/application/*"],
-      "@infrastructure/*": ["./src/infrastructure/*"]
-    },
+		"paths": {
+			"@/*": ["./src/*"],
+			"@domain/*": ["./src/domain/*"],
+			"@application/*": ["./src/application/*"],
+			"@infrastructure/*": ["./src/infrastructure/*"]
+		},
 
-    "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": true,
-    "noEmit": true,
+		"allowImportingTsExtensions": true,
+		"verbatimModuleSyntax": true,
+		"noEmit": true,
 
-    "strict": true,
+		"strict": true,
 
-    "noUncheckedIndexedAccess": true,
-    "exactOptionalPropertyTypes": true,
-    "noPropertyAccessFromIndexSignature": true,
-    "noImplicitOverride": true,
-    "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
+		"noUncheckedIndexedAccess": true,
+		"exactOptionalPropertyTypes": true,
+		"noPropertyAccessFromIndexSignature": true,
+		"noImplicitOverride": true,
+		"noImplicitReturns": true,
+		"noFallthroughCasesInSwitch": true,
 
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
 
-    "skipLibCheck": true
-  }
+		"skipLibCheck": true
+	}
 }

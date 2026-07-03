@@ -1,35 +1,38 @@
 {
-  "name": "local_agentic_cli",
-  "module": "index.tsx",
-  "type": "module",
-  "private": true,
-  "scripts": {
-    "start": "bun run index.tsx",
-    "test": "bun test",
-    "test:unit": "bun test src/Markdown.test.tsx src/composition src/application/services src/application/use-cases",
-    "test:integration": "bun test src/infrastructure/persistence src/infrastructure/runtime src/infrastructure/tools src/infrastructure/file-system",
-    "test:contract": "bun test src/infrastructure/model/OllamaModelAdapter.test.ts",
-    "test:smoke": "bun run build && bun run smoke:build",
-    "typecheck": "bunx tsc --noEmit",
-    "build": "bun run build:all",
-    "build:linux": "bun run scripts/build-linux.ts",
-    "build:windows": "bun run scripts/build-windows.ts",
-    "build:all": "bun run scripts/build.ts",
-    "smoke:build": "bun run scripts/smoke-build.ts",
-    "check": "bun run typecheck && bun run test"
-  },
-  "devDependencies": {
-    "@types/bun": "^1.3.14",
-    "@types/react": "^19.2.16",
-    "react-devtools-core": "^7.0.1",
-    "typescript": "^6.0.3"
-  },
-  "dependencies": {
-    "@vscode/ripgrep-universal": "^1.18.0",
-    "ink": "^7.1.0",
-    "marked": "^18.0.5",
-    "react": "^19.2.7",
-    "temporal-polyfill": "^1.0.1",
-    "zod": "^4.4.3"
-  }
+	"name": "local_agentic_cli",
+	"module": "index.tsx",
+	"type": "module",
+	"private": true,
+	"scripts": {
+		"start": "bun run index.tsx",
+		"test": "bun test",
+		"test:unit": "bun test src/Markdown.test.tsx src/composition src/application/services src/application/use-cases",
+		"test:integration": "bun test src/infrastructure/persistence src/infrastructure/runtime src/infrastructure/tools src/infrastructure/file-system",
+		"test:contract": "bun test src/infrastructure/model/OllamaModelAdapter.test.ts",
+		"test:smoke": "bun run build && bun run smoke:build",
+		"typecheck": "bunx tsc --noEmit",
+		"build": "bun run build:all",
+		"build:linux": "bun run scripts/build-linux.ts",
+		"build:windows": "bun run scripts/build-windows.ts",
+		"build:all": "bun run scripts/build.ts",
+		"smoke:build": "bun run scripts/smoke-build.ts",
+		"format": "bunx biome format --write .",
+		"format:check": "bunx biome format .",
+		"check": "bun run format:check && bun run typecheck && bun run test"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.5.1",
+		"@types/bun": "^1.3.14",
+		"@types/react": "^19.2.16",
+		"react-devtools-core": "^7.0.1",
+		"typescript": "^6.0.3"
+	},
+	"dependencies": {
+		"@vscode/ripgrep-universal": "^1.18.0",
+		"ink": "^7.1.0",
+		"marked": "^18.0.5",
+		"react": "^19.2.7",
+		"temporal-polyfill": "^1.0.1",
+		"zod": "^4.4.3"
+	}
 }
