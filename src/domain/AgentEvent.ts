@@ -2,8 +2,6 @@ import type { EventId, ISODateTime, MessageId, SessionId, ToolCallId } from './I
 
 export type AgentEvent =
 	| PromptSubmitted
-	| AssistantMessageStarted
-	| AssistantMessageDelta
 	| AssistantMessageCompleted
 	| ToolCallRequested
 	| ToolCallStarted
@@ -22,15 +20,6 @@ export type PromptSubmitted = AgentEventBase<'prompt.submitted'> & {
 	messageId: MessageId;
 	prompt: string;
 	modelName?: string;
-};
-
-export type AssistantMessageStarted = AgentEventBase<'assistant.message.started'> & {
-	messageId: MessageId;
-};
-
-export type AssistantMessageDelta = AgentEventBase<'assistant.message.delta'> & {
-	messageId: MessageId;
-	delta: string;
 };
 
 export type AssistantMessageCompleted = AgentEventBase<'assistant.message.completed'> & {

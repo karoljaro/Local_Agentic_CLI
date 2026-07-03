@@ -4,7 +4,6 @@ import { asEventId, asISODateTime, asMessageId, asSessionId, asToolCallId } from
 import {
 	agentErrorOccurredEvent,
 	assistantMessageCompletedEvent,
-	assistantMessageDeltaEvent,
 	promptSubmittedEvent,
 	toolCallCompletedEvent,
 } from '@/test-support/AgentEventFixtures';
@@ -33,12 +32,13 @@ describe('ListSessionEvents', () => {
 			sessionStore: new InMemorySessionStore({
 				events: [
 					promptEvent,
-					assistantMessageDeltaEvent({
+					toolCallCompletedEvent({
 						id: asEventId('event-2'),
 						sessionId,
 						timestamp,
-						messageId: asMessageId('message-assistant-1'),
-						delta: 'Czesc',
+						toolCallId: asToolCallId('tool-call-1'),
+						toolName: 'read_file',
+						output: { ok: true },
 					}),
 					assistantEvent,
 				],

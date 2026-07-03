@@ -149,15 +149,6 @@ const AgentEventSchema = z.discriminatedUnion('type', [
 		modelName: z.string().optional(),
 	}).loose(),
 	AgentEventBaseSchema.extend({
-		type: z.literal('assistant.message.started'),
-		messageId: MessageIdSchema,
-	}).loose(),
-	AgentEventBaseSchema.extend({
-		type: z.literal('assistant.message.delta'),
-		messageId: MessageIdSchema,
-		delta: z.string(),
-	}).loose(),
-	AgentEventBaseSchema.extend({
 		type: z.literal('assistant.message.completed'),
 		messageId: MessageIdSchema,
 		content: z.string(),

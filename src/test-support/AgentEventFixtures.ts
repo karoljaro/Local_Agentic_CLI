@@ -1,7 +1,6 @@
 import type {
 	AgentErrorOccurred,
 	AssistantMessageCompleted,
-	AssistantMessageDelta,
 	PromptSubmitted,
 	ToolCallCompleted,
 	ToolCallFailed,
@@ -23,18 +22,6 @@ export const promptSubmittedEvent = (
 	timestamp: testEventTimestamp,
 	messageId: asMessageId('message-user-1'),
 	prompt: 'Hello',
-	...overrides,
-});
-
-export const assistantMessageDeltaEvent = (
-	overrides: EventOverrides<AssistantMessageDelta> = {},
-): AssistantMessageDelta => ({
-	id: asEventId('event-assistant-delta'),
-	sessionId: asSessionId('session-1'),
-	type: 'assistant.message.delta',
-	timestamp: testEventTimestamp,
-	messageId: asMessageId('message-assistant-1'),
-	delta: 'Hello',
 	...overrides,
 });
 
