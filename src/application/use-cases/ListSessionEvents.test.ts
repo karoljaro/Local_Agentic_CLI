@@ -7,29 +7,9 @@ import {
 	asMessageId,
 	asSessionId,
 	asToolCallId,
-	type SessionId,
 } from '@/domain/Ids';
-import type {
-	SessionStorePort,
-	StoredSession,
-} from '../ports/SessionStorePort';
+import { InMemorySessionStore } from '@/test-support/InMemorySessionStore';
 import { ListSessionEvents } from './ListSessionEvents';
-
-class InMemorySessionStore implements SessionStorePort {
-	constructor(private readonly events: AgentEvent[]) {}
-
-	async listSessions(): Promise<StoredSession[]> {
-		return [];
-	}
-
-	async readSessionEvents(sessionId: SessionId): Promise<AgentEvent[]> {
-		return this.events.filter((event) => event.sessionId === sessionId);
-	}
-
-	async appendSessionEvent(event: AgentEvent): Promise<void> {
-		this.events.push(event);
-	}
-}
 
 describe('ListSessionEvents', () => {
 	test('returns prompt and completed assistant events in stored order', async () => {
@@ -52,18 +32,20 @@ describe('ListSessionEvents', () => {
 			content: 'Czesc',
 		};
 		const useCase = new ListSessionEvents({
-			sessionStore: new InMemorySessionStore([
-				promptEvent,
-				{
-					id: asEventId('event-2'),
-					sessionId,
-					type: 'assistant.message.delta',
-					timestamp,
-					messageId: asMessageId('message-assistant-1'),
-					delta: 'Czesc',
-				},
-				assistantEvent,
-			]),
+			sessionStore: new InMemorySessionStore({
+				events: [
+					promptEvent,
+					{
+						id: asEventId('event-2'),
+						sessionId,
+						type: 'assistant.message.delta',
+						timestamp,
+						messageId: asMessageId('message-assistant-1'),
+						delta: 'Czesc',
+					},
+					assistantEvent,
+				],
+			}),
 		});
 
 		const result = await useCase.list({ sessionId });
@@ -76,35 +58,37 @@ describe('ListSessionEvents', () => {
 		const otherSessionId = asSessionId('session-2');
 		const timestamp = asISODateTime('2026-06-09T12:00:00.000Z');
 		const useCase = new ListSessionEvents({
-			sessionStore: new InMemorySessionStore([
-				{
-					id: asEventId('event-1'),
-					sessionId: otherSessionId,
-					type: 'prompt.submitted',
-					timestamp,
-					messageId: asMessageId('message-user-1'),
-					prompt: 'Other prompt',
-				},
-				{
-					id: asEventId('event-2'),
-					sessionId,
-					type: 'tool.call.completed',
-					timestamp,
-					toolCallId: asToolCallId('tool-call-1'),
-					toolName: 'read_file',
-					output: { ok: true },
-				},
-				{
-					id: asEventId('event-3'),
-					sessionId,
-					type: 'agent.error',
-					timestamp,
-					error: {
-						message: 'model failed',
-						recoverable: true,
+			sessionStore: new InMemorySessionStore({
+				events: [
+					{
+						id: asEventId('event-1'),
+						sessionId: otherSessionId,
+						type: 'prompt.submitted',
+						timestamp,
+						messageId: asMessageId('message-user-1'),
+						prompt: 'Other prompt',
 					},
-				},
-			]),
+					{
+						id: asEventId('event-2'),
+						sessionId,
+						type: 'tool.call.completed',
+						timestamp,
+						toolCallId: asToolCallId('tool-call-1'),
+						toolName: 'read_file',
+						output: { ok: true },
+					},
+					{
+						id: asEventId('event-3'),
+						sessionId,
+						type: 'agent.error',
+						timestamp,
+						error: {
+							message: 'model failed',
+							recoverable: true,
+						},
+					},
+				],
+			}),
 		});
 
 		const result = await useCase.list({ sessionId });

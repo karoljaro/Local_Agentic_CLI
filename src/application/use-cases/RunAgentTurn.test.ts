@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { AgentEvent } from '@/domain/AgentEvent';
 import {
 	asEventId,
 	asISODateTime,
@@ -14,33 +13,14 @@ import {
 	type ToolCallId,
 } from '@/domain/Ids';
 import type { ModelToolCall, ToolDefinition } from '@/domain/Tool';
+import { InMemorySessionStore } from '@/test-support/InMemorySessionStore';
 import { RecordingToolExecutor } from '@/test-support/RecordingToolExecutor';
 import { ScriptedModel } from '@/test-support/ScriptedModel';
 import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
 import type { ModelStreamChunk } from '../ports/ModelPort';
-import type {
-	SessionStorePort,
-	StoredSession,
-} from '../ports/SessionStorePort';
 import { ContextBuilder } from '../services/ContextBuilder';
 import { RunAgentTurn, type ToolApprovalRequest } from './RunAgentTurn';
-
-class InMemorySessionStore implements SessionStorePort {
-	readonly events: AgentEvent[] = [];
-
-	async listSessions(): Promise<StoredSession[]> {
-		return [];
-	}
-
-	async readSessionEvents(sessionId: SessionId): Promise<AgentEvent[]> {
-		return this.events.filter((event) => event.sessionId === sessionId);
-	}
-
-	async appendSessionEvent(event: AgentEvent): Promise<void> {
-		this.events.push(event);
-	}
-}
 
 const textResponse = (...contentDeltas: string[]): ModelStreamChunk[] =>
 	contentDeltas.map((contentDelta) => ({ contentDelta }));
