@@ -43,7 +43,6 @@ export type ToolCallCompleted = AgentEventBase<'tool.call.completed'> & {
 	toolCallId: ToolCallId;
 	toolName: string;
 	output: unknown;
-	durationMs?: number;
 };
 
 export type ToolCallFailed = AgentEventBase<'tool.call.failed'> & {

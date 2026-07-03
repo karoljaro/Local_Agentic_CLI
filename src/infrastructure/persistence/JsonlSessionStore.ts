@@ -170,7 +170,6 @@ const AgentEventSchema = z.discriminatedUnion('type', [
 		toolCallId: ToolCallIdSchema,
 		toolName: NonEmptyString,
 		output: z.unknown(),
-		durationMs: z.number().optional(),
 	}).loose(),
 	AgentEventBaseSchema.extend({
 		type: z.literal('tool.call.failed'),
