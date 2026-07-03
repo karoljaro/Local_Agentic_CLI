@@ -1,5 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, test } from "bun:test";
@@ -11,6 +10,7 @@ import {
 	asMessageId,
 	asSessionId,
 } from "@/domain/Ids";
+import { createTempDirectory } from "@/test-support/createTempDirectory";
 
 import { JsonlSessionStore } from "./JsonlSessionStore";
 
@@ -19,12 +19,14 @@ const createTempStore = async (): Promise<{
 	directory: string;
 	cleanup: () => Promise<void>;
 }> => {
-	const directory = await mkdtemp(join(tmpdir(), "jsonl-session-store-"));
+	const { directory, cleanup } = await createTempDirectory(
+		"jsonl-session-store-",
+	);
 
 	return {
 		store: new JsonlSessionStore(directory),
 		directory,
-		cleanup: () => rm(directory, { recursive: true, force: true }),
+		cleanup,
 	};
 };
 

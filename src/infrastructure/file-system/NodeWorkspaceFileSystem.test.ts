@@ -1,17 +1,15 @@
 import {
 	mkdir,
-	mkdtemp,
 	readdir,
 	readFile,
-	rm,
 	symlink,
 	writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, test } from 'bun:test';
 
+import { createTempDirectory } from '@/test-support/createTempDirectory';
 import { NodeWorkspaceFileSystem } from './NodeWorkspaceFileSystem';
 
 const MAX_FILE_BYTES = 1024;
@@ -21,12 +19,14 @@ const createTempWorkspace = async (): Promise<{
 	fileSystem: NodeWorkspaceFileSystem;
 	cleanup: () => Promise<void>;
 }> => {
-	const directory = await mkdtemp(join(tmpdir(), 'workspace-file-system-'));
+	const { directory, cleanup } = await createTempDirectory(
+		'workspace-file-system-',
+	);
 
 	return {
 		directory,
 		fileSystem: new NodeWorkspaceFileSystem(directory),
-		cleanup: () => rm(directory, { recursive: true, force: true }),
+		cleanup,
 	};
 };
 
@@ -247,8 +247,11 @@ describe('NodeWorkspaceFileSystem', () => {
 		test('rejects relative, absolute, and symlink escapes', async () => {
 			const { directory, fileSystem, cleanup } =
 				await createTempWorkspace();
-			const outsideDirectory = await mkdtemp(
-				join(tmpdir(), 'outside-workspace-'),
+			const {
+				directory: outsideDirectory,
+				cleanup: cleanupOutsideDirectory,
+			} = await createTempDirectory(
+				'outside-workspace-',
 			);
 
 			try {
@@ -284,10 +287,7 @@ describe('NodeWorkspaceFileSystem', () => {
 				).rejects.toThrow('Cannot access file outside workspace');
 			} finally {
 				await cleanup();
-				await rm(outsideDirectory, {
-					recursive: true,
-					force: true,
-				});
+				await cleanupOutsideDirectory();
 			}
 		});
 
@@ -506,8 +506,11 @@ describe('NodeWorkspaceFileSystem', () => {
 		test('rejects a parent directory symlink outside the workspace', async () => {
 			const { directory, fileSystem, cleanup } =
 				await createTempWorkspace();
-			const outsideDirectory = await mkdtemp(
-				join(tmpdir(), 'outside-workspace-'),
+			const {
+				directory: outsideDirectory,
+				cleanup: cleanupOutsideDirectory,
+			} = await createTempDirectory(
+				'outside-workspace-',
 			);
 
 			try {
@@ -522,10 +525,7 @@ describe('NodeWorkspaceFileSystem', () => {
 				).rejects.toThrow('Cannot access file outside workspace');
 			} finally {
 				await cleanup();
-				await rm(outsideDirectory, {
-					recursive: true,
-					force: true,
-				});
+				await cleanupOutsideDirectory();
 			}
 		});
 

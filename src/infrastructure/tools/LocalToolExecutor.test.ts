@@ -1,28 +1,19 @@
 import {
 	mkdir,
-	mkdtemp,
 	readFile,
-	rm,
 	writeFile,
 } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, test } from 'bun:test';
 
 import { createLocalToolExecutor } from '@/composition/factories/createLocalToolExecutor';
+import { createTempDirectory } from '@/test-support/createTempDirectory';
 
 const createTempWorkspace = async (): Promise<{
 	directory: string;
 	cleanup: () => Promise<void>;
-}> => {
-	const directory = await mkdtemp(join(tmpdir(), 'local-tool-executor-'));
-
-	return {
-		directory,
-		cleanup: () => rm(directory, { recursive: true, force: true }),
-	};
-};
+}> => createTempDirectory('local-tool-executor-');
 
 describe('LocalToolExecutor', () => {
 	test('lists local tool definitions', () => {
