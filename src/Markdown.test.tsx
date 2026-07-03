@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToString } from 'ink';
 
-import { Markdown } from './Markdown';
+import { Markdown } from './presentation/components/Markdown';
 
 const renderMarkdown = (markdown: string, maxWidth = 40): string =>
 	Bun.stripANSI(renderToString(<Markdown maxWidth={maxWidth}>{markdown}</Markdown>));
