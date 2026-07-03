@@ -1,73 +1,65 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { AgentEvent } from '@/domain/AgentEvent';
 import {
 	asEventId,
-	asISODateTime,
 	asMessageId,
 	asSessionId,
 	asToolCallId,
 } from '@/domain/Ids';
+import {
+	agentErrorOccurredEvent,
+	assistantMessageCompletedEvent,
+	promptSubmittedEvent,
+	toolCallCompletedEvent,
+	toolCallFailedEvent,
+	toolCallRequestedEvent,
+	toolCallStartedEvent,
+} from '@/test-support/AgentEventFixtures';
 
 import { reduceAgentState } from './SessionReducer';
 
 describe('reduceAgentState', () => {
 	test('builds session state from durable events', () => {
 		const sessionId = asSessionId('session-1');
-		const timestamp = asISODateTime('2026-06-09T12:00:00.000Z');
 		const toolCallId = asToolCallId('tool-call-1');
 
-		const events: AgentEvent[] = [
-			{
+		const events = [
+			promptSubmittedEvent({
 				id: asEventId('event-1'),
 				sessionId,
-				type: 'prompt.submitted',
-				timestamp,
 				messageId: asMessageId('message-user-1'),
 				prompt: 'Read README',
-			},
-			{
+			}),
+			assistantMessageCompletedEvent({
 				id: asEventId('event-2'),
 				sessionId,
-				type: 'assistant.message.completed',
-				timestamp,
 				messageId: asMessageId('message-assistant-1'),
 				content: 'I will check it.',
-			},
-			{
+			}),
+			toolCallRequestedEvent({
 				id: asEventId('event-3'),
 				sessionId,
-				type: 'tool.call.requested',
-				timestamp,
 				toolCallId,
 				toolName: 'read_file',
 				toolInput: { path: 'README.md' },
-				approvalRequired: false,
-			},
-			{
+			}),
+			toolCallCompletedEvent({
 				id: asEventId('event-4'),
 				sessionId,
-				type: 'tool.call.completed',
-				timestamp,
 				toolCallId,
 				toolName: 'read_file',
 				output: { path: 'README.md', content: 'hello' },
-			},
-			{
+			}),
+			toolCallRequestedEvent({
 				id: asEventId('event-5'),
 				sessionId,
-				type: 'tool.call.requested',
-				timestamp,
 				toolCallId: asToolCallId('tool-call-2'),
 				toolName: 'search_code',
 				toolInput: { query: 'UserRepository' },
-				approvalRequired: false,
-			},
-			{
+			}),
+			toolCallFailedEvent({
 				id: asEventId('event-6'),
 				sessionId,
-				type: 'tool.call.failed',
-				timestamp,
 				toolCallId: asToolCallId('tool-call-2'),
 				toolName: 'search_code',
 				error: {
@@ -75,19 +67,17 @@ describe('reduceAgentState', () => {
 					code: 'TOOL_FAILED',
 					details: { exitCode: 2 },
 				},
-			},
-			{
+			}),
+			agentErrorOccurredEvent({
 				id: asEventId('event-7'),
 				sessionId,
-				type: 'agent.error',
-				timestamp,
 				error: {
 					message: 'model unavailable',
 					code: 'MODEL_UNAVAILABLE',
 					recoverable: true,
 					details: { provider: 'ollama' },
 				},
-			},
+			}),
 		];
 
 		const state = reduceAgentState(sessionId, events);
@@ -171,24 +161,19 @@ describe('reduceAgentState', () => {
 		const toolCallId = asToolCallId('tool-call-1');
 
 		const state = reduceAgentState(sessionId, [
-			{
+			toolCallRequestedEvent({
 				id: asEventId('event-1'),
 				sessionId,
-				type: 'tool.call.requested',
-				timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
 				toolCallId,
 				toolName: 'read_file',
 				toolInput: { path: 'README.md' },
-				approvalRequired: false,
-			},
-			{
+			}),
+			toolCallStartedEvent({
 				id: asEventId('event-2'),
 				sessionId,
-				type: 'tool.call.started',
-				timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
 				toolCallId,
 				toolName: 'read_file',
-			},
+			}),
 		]);
 
 		expect(state.messages).toEqual([]);

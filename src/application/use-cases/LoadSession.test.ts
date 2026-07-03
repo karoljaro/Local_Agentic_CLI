@@ -6,6 +6,10 @@ import {
 	asMessageId,
 	asSessionId,
 } from '@/domain/Ids';
+import {
+	assistantMessageCompletedEvent,
+	promptSubmittedEvent,
+} from '@/test-support/AgentEventFixtures';
 import { InMemorySessionStore } from '@/test-support/InMemorySessionStore';
 import { LoadSession } from './LoadSession';
 
@@ -31,22 +35,20 @@ describe('LoadSession', () => {
 		const useCase = new LoadSession({
 			sessionStore: new InMemorySessionStore({
 				events: [
-					{
+					promptSubmittedEvent({
 						id: asEventId('event-1'),
 						sessionId,
-						type: 'prompt.submitted',
 						timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
 						messageId: asMessageId('message-user-1'),
 						prompt: 'Hej',
-					},
-					{
+					}),
+					assistantMessageCompletedEvent({
 						id: asEventId('event-2'),
 						sessionId,
-						type: 'assistant.message.completed',
 						timestamp: asISODateTime('2026-06-09T12:00:01.000Z'),
 						messageId: asMessageId('message-assistant-1'),
 						content: 'Czesc',
-					},
+					}),
 				],
 			}),
 		});
@@ -73,14 +75,13 @@ describe('LoadSession', () => {
 		const useCase = new LoadSession({
 			sessionStore: new InMemorySessionStore({
 				events: [
-					{
+					promptSubmittedEvent({
 						id: asEventId('event-1'),
 						sessionId: otherSessionId,
-						type: 'prompt.submitted',
 						timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
 						messageId: asMessageId('message-user-1'),
 						prompt: 'Other prompt',
-					},
+					}),
 				],
 			}),
 		});

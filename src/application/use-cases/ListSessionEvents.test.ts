@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { AgentEvent } from '@/domain/AgentEvent';
 import {
 	asEventId,
 	asISODateTime,
@@ -8,6 +7,13 @@ import {
 	asSessionId,
 	asToolCallId,
 } from '@/domain/Ids';
+import {
+	agentErrorOccurredEvent,
+	assistantMessageCompletedEvent,
+	assistantMessageDeltaEvent,
+	promptSubmittedEvent,
+	toolCallCompletedEvent,
+} from '@/test-support/AgentEventFixtures';
 import { InMemorySessionStore } from '@/test-support/InMemorySessionStore';
 import { ListSessionEvents } from './ListSessionEvents';
 
@@ -15,34 +21,31 @@ describe('ListSessionEvents', () => {
 	test('returns prompt and completed assistant events in stored order', async () => {
 		const sessionId = asSessionId('session-1');
 		const timestamp = asISODateTime('2026-06-09T12:00:00.000Z');
-		const promptEvent: AgentEvent = {
+		const promptEvent = promptSubmittedEvent({
 			id: asEventId('event-1'),
 			sessionId,
-			type: 'prompt.submitted',
 			timestamp,
 			messageId: asMessageId('message-user-1'),
 			prompt: 'Hej',
-		};
-		const assistantEvent: AgentEvent = {
+		});
+		const assistantEvent = assistantMessageCompletedEvent({
 			id: asEventId('event-3'),
 			sessionId,
-			type: 'assistant.message.completed',
 			timestamp,
 			messageId: asMessageId('message-assistant-1'),
 			content: 'Czesc',
-		};
+		});
 		const useCase = new ListSessionEvents({
 			sessionStore: new InMemorySessionStore({
 				events: [
 					promptEvent,
-					{
+					assistantMessageDeltaEvent({
 						id: asEventId('event-2'),
 						sessionId,
-						type: 'assistant.message.delta',
 						timestamp,
 						messageId: asMessageId('message-assistant-1'),
 						delta: 'Czesc',
-					},
+					}),
 					assistantEvent,
 				],
 			}),
@@ -60,33 +63,30 @@ describe('ListSessionEvents', () => {
 		const useCase = new ListSessionEvents({
 			sessionStore: new InMemorySessionStore({
 				events: [
-					{
+					promptSubmittedEvent({
 						id: asEventId('event-1'),
 						sessionId: otherSessionId,
-						type: 'prompt.submitted',
 						timestamp,
 						messageId: asMessageId('message-user-1'),
 						prompt: 'Other prompt',
-					},
-					{
+					}),
+					toolCallCompletedEvent({
 						id: asEventId('event-2'),
 						sessionId,
-						type: 'tool.call.completed',
 						timestamp,
 						toolCallId: asToolCallId('tool-call-1'),
 						toolName: 'read_file',
 						output: { ok: true },
-					},
-					{
+					}),
+					agentErrorOccurredEvent({
 						id: asEventId('event-3'),
 						sessionId,
-						type: 'agent.error',
 						timestamp,
 						error: {
 							message: 'model failed',
 							recoverable: true,
 						},
-					},
+					}),
 				],
 			}),
 		});
