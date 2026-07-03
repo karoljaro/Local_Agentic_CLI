@@ -550,6 +550,8 @@ test/support/
 
 ## 2.3. Podział typów testów
 
+- [X] - Wykonane
+
 Ustaliłbym cztery kategorie:
 
 ### Unit
