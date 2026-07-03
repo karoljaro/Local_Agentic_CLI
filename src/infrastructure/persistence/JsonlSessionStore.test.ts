@@ -1,27 +1,20 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from 'bun:test';
 
-import type { AgentEvent } from "@/domain/AgentEvent";
-import {
-	asEventId,
-	asISODateTime,
-	asMessageId,
-	asSessionId,
-} from "@/domain/Ids";
-import { createTempDirectory } from "@/test-support/createTempDirectory";
+import type { AgentEvent } from '@/domain/AgentEvent';
+import { asEventId, asISODateTime, asMessageId, asSessionId } from '@/domain/Ids';
+import { createTempDirectory } from '@/test-support/createTempDirectory';
 
-import { JsonlSessionStore } from "./JsonlSessionStore";
+import { JsonlSessionStore } from './JsonlSessionStore';
 
 const createTempStore = async (): Promise<{
 	store: JsonlSessionStore;
 	directory: string;
 	cleanup: () => Promise<void>;
 }> => {
-	const { directory, cleanup } = await createTempDirectory(
-		"jsonl-session-store-",
-	);
+	const { directory, cleanup } = await createTempDirectory('jsonl-session-store-');
 
 	return {
 		store: new JsonlSessionStore(directory),
@@ -30,8 +23,8 @@ const createTempStore = async (): Promise<{
 	};
 };
 
-describe("JsonlSessionStore", () => {
-	test("returns empty sessions for a missing sessions directory", async () => {
+describe('JsonlSessionStore', () => {
+	test('returns empty sessions for a missing sessions directory', async () => {
 		const { store, cleanup } = await createTempStore();
 
 		try {
@@ -45,49 +38,46 @@ describe("JsonlSessionStore", () => {
 		}
 	});
 
-	test("lists sessions with event files in descending id order", async () => {
+	test('lists sessions with event files in descending id order', async () => {
 		const { store, directory, cleanup } = await createTempStore();
-		const timestamp = asISODateTime("2026-06-09T12:00:00.000Z");
-		const firstSessionId = asSessionId("session-1");
-		const secondSessionId = asSessionId("session-2");
+		const timestamp = asISODateTime('2026-06-09T12:00:00.000Z');
+		const firstSessionId = asSessionId('session-1');
+		const secondSessionId = asSessionId('session-2');
 
 		try {
-			await mkdir(join(directory, "empty-session"), { recursive: true });
-			await writeFile(join(directory, "not-a-session.txt"), "ignored", "utf8");
+			await mkdir(join(directory, 'empty-session'), { recursive: true });
+			await writeFile(join(directory, 'not-a-session.txt'), 'ignored', 'utf8');
 
 			await store.appendSessionEvent({
-				id: asEventId("event-1"),
+				id: asEventId('event-1'),
 				sessionId: firstSessionId,
-				type: "prompt.submitted",
+				type: 'prompt.submitted',
 				timestamp,
-				messageId: asMessageId("message-1"),
-				prompt: "Hello",
+				messageId: asMessageId('message-1'),
+				prompt: 'Hello',
 			});
 			await store.appendSessionEvent({
-				id: asEventId("event-2"),
+				id: asEventId('event-2'),
 				sessionId: secondSessionId,
-				type: "prompt.submitted",
+				type: 'prompt.submitted',
 				timestamp,
-				messageId: asMessageId("message-2"),
-				prompt: "Hi",
+				messageId: asMessageId('message-2'),
+				prompt: 'Hi',
 			});
 
 			const sessions = await store.listSessions();
 
-			expect(sessions).toEqual([
-				{ sessionId: secondSessionId },
-				{ sessionId: firstSessionId },
-			]);
+			expect(sessions).toEqual([{ sessionId: secondSessionId }, { sessionId: firstSessionId }]);
 		} finally {
 			await cleanup();
 		}
 	});
 
-	test("returns empty events for a missing session", async () => {
+	test('returns empty events for a missing session', async () => {
 		const { store, cleanup } = await createTempStore();
 
 		try {
-			const events = await store.readSessionEvents(asSessionId("missing-session"));
+			const events = await store.readSessionEvents(asSessionId('missing-session'));
 
 			expect(events).toEqual([]);
 		} finally {
@@ -95,26 +85,26 @@ describe("JsonlSessionStore", () => {
 		}
 	});
 
-	test("appends and reads session events in order", async () => {
+	test('appends and reads session events in order', async () => {
 		const { store, cleanup } = await createTempStore();
-		const sessionId = asSessionId("session-1");
-		const timestamp = asISODateTime("2026-06-09T12:00:00.000Z");
+		const sessionId = asSessionId('session-1');
+		const timestamp = asISODateTime('2026-06-09T12:00:00.000Z');
 
 		const firstEvent: AgentEvent = {
-			id: asEventId("event-1"),
+			id: asEventId('event-1'),
 			sessionId,
-			type: "prompt.submitted",
+			type: 'prompt.submitted',
 			timestamp,
-			messageId: asMessageId("message-1"),
-			prompt: "Hello",
+			messageId: asMessageId('message-1'),
+			prompt: 'Hello',
 		};
 		const secondEvent: AgentEvent = {
-			id: asEventId("event-2"),
+			id: asEventId('event-2'),
 			sessionId,
-			type: "assistant.message.completed",
+			type: 'assistant.message.completed',
 			timestamp,
-			messageId: asMessageId("message-2"),
-			content: "Hi",
+			messageId: asMessageId('message-2'),
+			content: 'Hi',
 		};
 
 		try {
@@ -129,54 +119,52 @@ describe("JsonlSessionStore", () => {
 		}
 	});
 
-	test("reports the line number for malformed JSONL", async () => {
+	test('reports the line number for malformed JSONL', async () => {
 		const { store, directory, cleanup } = await createTempStore();
-		const sessionId = asSessionId("session-1");
+		const sessionId = asSessionId('session-1');
 		const sessionDirectory = join(directory, sessionId);
 		const validEvent: AgentEvent = {
-			id: asEventId("event-1"),
+			id: asEventId('event-1'),
 			sessionId,
-			type: "prompt.submitted",
-			timestamp: asISODateTime("2026-06-09T12:00:00.000Z"),
-			messageId: asMessageId("message-1"),
-			prompt: "Hello",
+			type: 'prompt.submitted',
+			timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
+			messageId: asMessageId('message-1'),
+			prompt: 'Hello',
 		};
 
 		try {
 			await mkdir(sessionDirectory, { recursive: true });
 			await writeFile(
-				join(sessionDirectory, "events.jsonl"),
+				join(sessionDirectory, 'events.jsonl'),
 				`${JSON.stringify(validEvent)}\nnot-json\n${JSON.stringify(validEvent)}\n`,
-				"utf8",
+				'utf8',
 			);
 
-			await expect(store.readSessionEvents(sessionId)).rejects.toThrow(
-				"line 2",
-			);
+			await expect(store.readSessionEvents(sessionId)).rejects.toThrow('line 2');
 		} finally {
 			await cleanup();
 		}
 	});
 
-	test("ignores an incomplete final JSONL line without dropping previous events", async () => {
+	test('ignores an incomplete final JSONL line without dropping previous events', async () => {
 		const { store, directory, cleanup } = await createTempStore();
-		const sessionId = asSessionId("session-1");
+		const sessionId = asSessionId('session-1');
 		const sessionDirectory = join(directory, sessionId);
 		const validEvent: AgentEvent = {
-			id: asEventId("event-1"),
+			id: asEventId('event-1'),
 			sessionId,
-			type: "prompt.submitted",
-			timestamp: asISODateTime("2026-06-09T12:00:00.000Z"),
-			messageId: asMessageId("message-1"),
-			prompt: "Hello",
+			type: 'prompt.submitted',
+			timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
+			messageId: asMessageId('message-1'),
+			prompt: 'Hello',
 		};
 
 		try {
 			await mkdir(sessionDirectory, { recursive: true });
 			await writeFile(
-				join(sessionDirectory, "events.jsonl"),
+				join(sessionDirectory, 'events.jsonl'),
 				`${JSON.stringify(validEvent)}\n{"id":"partial"`,
-				"utf8",
+				'utf8',
 			);
 
 			const events = await store.readSessionEvents(sessionId);
@@ -187,40 +175,38 @@ describe("JsonlSessionStore", () => {
 		}
 	});
 
-	test("validates event structure when reading JSONL", async () => {
+	test('validates event structure when reading JSONL', async () => {
 		const { store, directory, cleanup } = await createTempStore();
-		const sessionId = asSessionId("session-1");
+		const sessionId = asSessionId('session-1');
 		const sessionDirectory = join(directory, sessionId);
 
 		try {
 			await mkdir(sessionDirectory, { recursive: true });
 			await writeFile(
-				join(sessionDirectory, "events.jsonl"),
+				join(sessionDirectory, 'events.jsonl'),
 				JSON.stringify({
-					id: "event-1",
+					id: 'event-1',
 					sessionId,
-					type: "prompt.submitted",
-					timestamp: "2026-06-09T12:00:00.000Z",
-					messageId: "message-1",
-				}) + "\n",
-				"utf8",
+					type: 'prompt.submitted',
+					timestamp: '2026-06-09T12:00:00.000Z',
+					messageId: 'message-1',
+				}) + '\n',
+				'utf8',
 			);
 
-			await expect(store.readSessionEvents(sessionId)).rejects.toThrow(
-				"prompt",
-			);
+			await expect(store.readSessionEvents(sessionId)).rejects.toThrow('prompt');
 		} finally {
 			await cleanup();
 		}
 	});
 
-	test("rejects session ids that are unsafe path segments", async () => {
+	test('rejects session ids that are unsafe path segments', async () => {
 		const { store, cleanup } = await createTempStore();
 
 		try {
-			await expect(
-				store.readSessionEvents(asSessionId("../outside")),
-			).rejects.toThrow("Invalid session id");
+			await expect(store.readSessionEvents(asSessionId('../outside'))).rejects.toThrow(
+				'Invalid session id',
+			);
 		} finally {
 			await cleanup();
 		}

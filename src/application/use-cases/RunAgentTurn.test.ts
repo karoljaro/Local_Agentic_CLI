@@ -30,24 +30,18 @@ import {
 const textResponse = (...contentDeltas: string[]): ModelStreamChunk[] =>
 	contentDeltas.map((contentDelta) => ({ contentDelta }));
 
-const toolCall = (
-	name: string,
-	toolArguments: unknown,
-): ModelToolCall => ({
+const toolCall = (name: string, toolArguments: unknown): ModelToolCall => ({
 	name,
 	arguments: toolArguments,
 });
 
-const toolCallResponse = (
-	toolCalls: ModelToolCall[],
-	contentDelta = '',
-): ModelStreamChunk[] => [{ contentDelta, toolCalls }];
+const toolCallResponse = (toolCalls: ModelToolCall[], contentDelta = ''): ModelStreamChunk[] => [
+	{ contentDelta, toolCalls },
+];
 
-const readFileToolCall = (path: string): ModelToolCall =>
-	toolCall('read_file', { path });
+const readFileToolCall = (path: string): ModelToolCall => toolCall('read_file', { path });
 
-const searchFileToolCall = (query: unknown): ModelToolCall =>
-	toolCall('search_file', { query });
+const searchFileToolCall = (query: unknown): ModelToolCall => toolCall('search_file', { query });
 
 const editFileToolCall = (): ModelToolCall =>
 	toolCall('edit_file', {
@@ -138,33 +132,30 @@ const createEditToolExecutor = (): RecordingToolExecutor =>
 	}));
 
 const createSearchReadToolExecutor = (): RecordingToolExecutor =>
-	new RecordingToolExecutor(
-		[searchToolDefinition, readToolDefinition],
-		(request) => {
-			if (request.toolName === 'search_file') {
-				return {
-					toolName: request.toolName,
-					output: {
-						matches: [
-							{
-								path: 'src/users.py',
-								line: 10,
-								text: 'def find_by_email(self, email: str) -> User | None:',
-							},
-						],
-					},
-				};
-			}
-
+	new RecordingToolExecutor([searchToolDefinition, readToolDefinition], (request) => {
+		if (request.toolName === 'search_file') {
 			return {
 				toolName: request.toolName,
 				output: {
-					path: 'src/users.py',
-					content: 'if user.email.lower() == email.lower():',
+					matches: [
+						{
+							path: 'src/users.py',
+							line: 10,
+							text: 'def find_by_email(self, email: str) -> User | None:',
+						},
+					],
 				},
 			};
-		},
-	);
+		}
+
+		return {
+			toolName: request.toolName,
+			output: {
+				path: 'src/users.py',
+				content: 'if user.email.lower() == email.lower():',
+			},
+		};
+	});
 
 const createSecondReadFailingToolExecutor = (): RecordingToolExecutor =>
 	new RecordingToolExecutor([readToolDefinition], (request, requests) => {
@@ -284,10 +275,7 @@ describe('RunAgentTurn', () => {
 			chunks.push(chunk);
 		}
 
-		expect(chunks).toEqual([
-			{ contentDelta: 'Hello' },
-			{ contentDelta: ' there' },
-		]);
+		expect(chunks).toEqual([{ contentDelta: 'Hello' }, { contentDelta: ' there' }]);
 		expect(model.receivedInputs[0]).toEqual({
 			messages: [
 				{
@@ -345,14 +333,9 @@ describe('RunAgentTurn', () => {
 			toolExecutor,
 		});
 
-		const chunks = await collectAsyncIterable(
-			useCase.run({ sessionId, prompt: 'Say hello' }),
-		);
+		const chunks = await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Say hello' }));
 
-		expect(chunks).toEqual([
-			{ contentDelta: 'Hello' },
-			{ contentDelta: ' there' },
-		]);
+		expect(chunks).toEqual([{ contentDelta: 'Hello' }, { contentDelta: ' there' }]);
 		expect(toolExecutor.receivedRequests).toEqual([]);
 		expect(sessionStore.events.at(-1)).toMatchObject({
 			type: 'assistant.message.completed',
@@ -365,9 +348,7 @@ describe('RunAgentTurn', () => {
 			model: new ScriptedModel([[]]),
 		});
 
-		const chunks = await collectAsyncIterable(
-			useCase.run({ sessionId, prompt: 'Say nothing' }),
-		);
+		const chunks = await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Say nothing' }));
 
 		expect(chunks).toEqual([]);
 		expect(sessionStore.events.at(-1)).toMatchObject({
@@ -382,9 +363,7 @@ describe('RunAgentTurn', () => {
 		});
 
 		await expect(
-			collectAsyncIterable(
-				useCase.run({ sessionId: asSessionId('session-1'), prompt: ' ' }),
-			),
+			collectAsyncIterable(useCase.run({ sessionId: asSessionId('session-1'), prompt: ' ' })),
 		).rejects.toThrow('Prompt cannot be empty.');
 		expect(sessionStore.events).toEqual([]);
 	});
@@ -438,11 +417,9 @@ describe('RunAgentTurn', () => {
 			collectAsyncIterable(useCase.run({ sessionId, prompt: 'Say hello' })),
 		).rejects.toThrow('Ollama stream failed: model failed');
 
-		expect(
-			sessionStore.events.some(
-				(event) => event.type === 'assistant.message.completed',
-			),
-		).toBe(false);
+		expect(sessionStore.events.some((event) => event.type === 'assistant.message.completed')).toBe(
+			false,
+		);
 		expect(sessionStore.events.at(-1)).toMatchObject({
 			type: 'agent.error',
 			error: {
@@ -462,9 +439,7 @@ describe('RunAgentTurn', () => {
 			toolExecutor,
 		});
 
-		const chunks = await collectAsyncIterable(
-			useCase.run({ sessionId, prompt: 'Read README' }),
-		);
+		const chunks = await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Read README' }));
 
 		expect(chunks).toEqual([
 			{
@@ -671,10 +646,7 @@ describe('RunAgentTurn', () => {
 
 	test('keeps tool-round text in model context without publishing it as final text', async () => {
 		const model = new ScriptedModel([
-			toolCallResponse(
-				[readFileToolCall('README.md')],
-				'I will inspect the file.\n',
-			),
+			toolCallResponse([readFileToolCall('README.md')], 'I will inspect the file.\n'),
 			textResponse('The file contains hello.'),
 		]);
 		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
@@ -682,13 +654,9 @@ describe('RunAgentTurn', () => {
 			toolExecutor: createReadToolExecutor(),
 		});
 
-		const chunks = await collectAsyncIterable(
-			useCase.run({ sessionId, prompt: 'Read README' }),
-		);
+		const chunks = await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Read README' }));
 
-		expect(chunks).toEqual([
-			{ contentDelta: 'The file contains hello.' },
-		]);
+		expect(chunks).toEqual([{ contentDelta: 'The file contains hello.' }]);
 		expect(model.receivedInputs[1]?.messages.at(-2)).toMatchObject({
 			role: 'assistant',
 			content: 'I will inspect the file.\n',
@@ -721,9 +689,7 @@ describe('RunAgentTurn', () => {
 			},
 		});
 
-		const chunks = await collectAsyncIterable(
-			useCase.run({ sessionId, prompt: 'Edit file' }),
-		);
+		const chunks = await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Edit file' }));
 
 		expect(chunks).toEqual([{ contentDelta: 'Edit handled.' }]);
 		expect(approvalRequests).toEqual([
@@ -771,13 +737,9 @@ describe('RunAgentTurn', () => {
 			approveToolCall: async () => false,
 		});
 
-		const chunks = await collectAsyncIterable(
-			useCase.run({ sessionId, prompt: 'Edit file' }),
-		);
+		const chunks = await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Edit file' }));
 
-		expect(chunks).toEqual([
-			{ contentDelta: 'Tool call was not approved: edit_file' },
-		]);
+		expect(chunks).toEqual([{ contentDelta: 'Tool call was not approved: edit_file' }]);
 		expect(toolExecutor.receivedRequests).toEqual([]);
 		expect(model.receivedInputs).toHaveLength(1);
 		expect(sessionStore.events.map((event) => event.type)).toEqual([
@@ -836,9 +798,7 @@ describe('RunAgentTurn', () => {
 			},
 		]);
 		expect(model.receivedInputs).toHaveLength(3);
-		expect(model.receivedInputs.every((input) => input.tools !== undefined)).toBe(
-			true,
-		);
+		expect(model.receivedInputs.every((input) => input.tools !== undefined)).toBe(true);
 		expect(model.receivedInputs[1]?.messages.slice(-2)).toEqual([
 			{
 				role: 'assistant',
@@ -875,8 +835,7 @@ describe('RunAgentTurn', () => {
 				role: 'tool',
 				toolCallId: asToolCallId('tool-call-7'),
 				toolName: 'read_file',
-				content:
-					'{"path":"src/users.py","content":"if user.email.lower() == email.lower():"}',
+				content: '{"path":"src/users.py","content":"if user.email.lower() == email.lower():"}',
 			},
 		]);
 		expect(sessionStore.events.map((event) => event.type)).toEqual([
@@ -893,10 +852,7 @@ describe('RunAgentTurn', () => {
 
 	test('executes multiple tool calls from one model response in order', async () => {
 		const model = new ScriptedModel([
-			toolCallResponse([
-				searchFileToolCall('UserRepository'),
-				readFileToolCall('src/users.py'),
-			]),
+			toolCallResponse([searchFileToolCall('UserRepository'), readFileToolCall('src/users.py')]),
 			textResponse('Both tools completed.'),
 		]);
 		const toolExecutor = createSearchReadToolExecutor();
@@ -948,8 +904,7 @@ describe('RunAgentTurn', () => {
 				role: 'tool',
 				toolCallId: asToolCallId('tool-call-7'),
 				toolName: 'read_file',
-				content:
-					'{"path":"src/users.py","content":"if user.email.lower() == email.lower():"}',
+				content: '{"path":"src/users.py","content":"if user.email.lower() == email.lower():"}',
 			},
 		]);
 		expect(sessionStore.events.map((event) => event.type)).toEqual([
@@ -966,10 +921,7 @@ describe('RunAgentTurn', () => {
 
 	test('sends a failed second tool result back to the model', async () => {
 		const model = new ScriptedModel([
-			toolCallResponse([
-				readFileToolCall('README.md'),
-				readFileToolCall('missing.py'),
-			]),
+			toolCallResponse([readFileToolCall('README.md'), readFileToolCall('missing.py')]),
 			textResponse('Second read failed.'),
 		]);
 		const toolExecutor = createSecondReadFailingToolExecutor();
@@ -1013,10 +965,7 @@ describe('RunAgentTurn', () => {
 
 	test('requests approval before executing the second tool in a batch', async () => {
 		const model = new ScriptedModel([
-			toolCallResponse([
-				readFileToolCall('src/file.ts'),
-				editFileToolCall(),
-			]),
+			toolCallResponse([readFileToolCall('src/file.ts'), editFileToolCall()]),
 			textResponse('Edit completed.'),
 		]);
 		const toolExecutor = createReadEditToolExecutor();
@@ -1083,9 +1032,7 @@ describe('RunAgentTurn', () => {
 		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model: new ScriptedModel([
 				{
-					chunks: toolCallResponse([
-						searchFileToolCall('UserRepository'),
-					]),
+					chunks: toolCallResponse([searchFileToolCall('UserRepository')]),
 					error: new Error('Ollama stream ended before completion.'),
 				},
 			]),
@@ -1093,15 +1040,11 @@ describe('RunAgentTurn', () => {
 		});
 
 		await expect(
-			collectAsyncIterable(
-				useCase.run({ sessionId, prompt: 'Find UserRepository' }),
-			),
+			collectAsyncIterable(useCase.run({ sessionId, prompt: 'Find UserRepository' })),
 		).rejects.toThrow('Ollama stream ended before completion.');
 
 		expect(toolExecutor.receivedRequests).toEqual([]);
-		expect(
-			sessionStore.events.some((event) => event.type === 'tool.call.started'),
-		).toBe(false);
+		expect(sessionStore.events.some((event) => event.type === 'tool.call.started')).toBe(false);
 		expect(sessionStore.events.at(-1)).toMatchObject({
 			type: 'agent.error',
 			error: {
@@ -1114,24 +1057,16 @@ describe('RunAgentTurn', () => {
 	test('does not execute a tool with invalid arguments', async () => {
 		const toolExecutor = createSearchReadToolExecutor();
 		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
-			model: new ScriptedModel([
-				toolCallResponse([searchFileToolCall(42)]),
-			]),
+			model: new ScriptedModel([toolCallResponse([searchFileToolCall(42)])]),
 			toolExecutor,
 		});
 
 		await expect(
-			collectAsyncIterable(
-				useCase.run({ sessionId, prompt: 'Find UserRepository' }),
-			),
-		).rejects.toThrow(
-			'Invalid arguments for tool search_file: "query" must be string.',
-		);
+			collectAsyncIterable(useCase.run({ sessionId, prompt: 'Find UserRepository' })),
+		).rejects.toThrow('Invalid arguments for tool search_file: "query" must be string.');
 
 		expect(toolExecutor.receivedRequests).toEqual([]);
-		expect(
-			sessionStore.events.some((event) => event.type === 'tool.call.started'),
-		).toBe(false);
+		expect(sessionStore.events.some((event) => event.type === 'tool.call.started')).toBe(false);
 		expect(sessionStore.events.at(-1)).toMatchObject({
 			type: 'agent.error',
 			error: {
@@ -1159,9 +1094,11 @@ describe('RunAgentTurn', () => {
 		);
 
 		expect(chunks).toEqual([{ contentDelta: 'Done.' }]);
-		expect(toolExecutor.receivedRequests.map((request) => request.toolName)).toEqual(
-			['read_file', 'edit_file', 'read_file'],
-		);
+		expect(toolExecutor.receivedRequests.map((request) => request.toolName)).toEqual([
+			'read_file',
+			'edit_file',
+			'read_file',
+		]);
 	});
 
 	test('stores failed tool events and sends the error back to the model', async () => {
@@ -1241,9 +1178,7 @@ describe('RunAgentTurn', () => {
 		const toolExecutor = createReadToolExecutor();
 		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model: new ScriptedModel(
-				Array.from({ length: 12 }, () =>
-					toolCallResponse([readFileToolCall('README.md')])
-				),
+				Array.from({ length: 12 }, () => toolCallResponse([readFileToolCall('README.md')])),
 			),
 			toolExecutor,
 		});

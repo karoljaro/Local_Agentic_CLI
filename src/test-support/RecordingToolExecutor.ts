@@ -22,9 +22,7 @@ export class RecordingToolExecutor implements ToolExecutorPort {
 		return this.tools;
 	}
 
-	async execute(
-		request: ToolExecutionRequest,
-	): Promise<ToolExecutionResult> {
+	async execute(request: ToolExecutionRequest): Promise<ToolExecutionResult> {
 		this.receivedRequests.push(request);
 
 		return await this.handler(request, this.receivedRequests);

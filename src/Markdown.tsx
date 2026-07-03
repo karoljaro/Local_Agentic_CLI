@@ -32,14 +32,8 @@ export function Markdown({
 	codeWrap = 'truncate-end',
 }: MarkdownProps) {
 	const { stdout } = useStdout();
-	const terminalWidth = Math.max(
-		10,
-		stdout.columns ?? process.stdout.columns ?? 80
-	);
-	const width = Math.max(
-		10,
-		Math.min(maxWidth ?? terminalWidth - 2, terminalWidth)
-	);
+	const terminalWidth = Math.max(10, stdout.columns ?? process.stdout.columns ?? 80);
+	const width = Math.max(10, Math.min(maxWidth ?? terminalWidth - 2, terminalWidth));
 
 	const tokens = useMemo(
 		() =>
@@ -47,7 +41,7 @@ export function Markdown({
 				gfm: true,
 				breaks: true,
 			}),
-		[children]
+		[children],
 	);
 
 	return (
@@ -69,32 +63,19 @@ function InlineTokens({ tokens, showLinkUrls }: InlineTokensProps) {
 	return (
 		<>
 			{tokens.map((token, index) => (
-				<InlineToken
-					key={`${token.type}-${index}`}
-					token={token}
-					showLinkUrls={showLinkUrls}
-				/>
+				<InlineToken key={`${token.type}-${index}`} token={token} showLinkUrls={showLinkUrls} />
 			))}
 		</>
 	);
 }
 
-function InlineToken({
-	token,
-	showLinkUrls,
-}: {
-	token: Token;
-	showLinkUrls: boolean;
-}) {
+function InlineToken({ token, showLinkUrls }: { token: Token; showLinkUrls: boolean }) {
 	switch (token.type) {
 		case 'text': {
 			const value = token as Tokens.Text;
 
 			return value.tokens?.length ? (
-				<InlineTokens
-					tokens={value.tokens}
-					showLinkUrls={showLinkUrls}
-				/>
+				<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
 			) : (
 				value.text
 			);
@@ -107,10 +88,7 @@ function InlineToken({
 			const value = token as Tokens.Strong;
 			return (
 				<Text bold>
-					<InlineTokens
-						tokens={value.tokens}
-						showLinkUrls={showLinkUrls}
-					/>
+					<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
 				</Text>
 			);
 		}
@@ -119,10 +97,7 @@ function InlineToken({
 			const value = token as Tokens.Em;
 			return (
 				<Text italic>
-					<InlineTokens
-						tokens={value.tokens}
-						showLinkUrls={showLinkUrls}
-					/>
+					<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
 				</Text>
 			);
 		}
@@ -131,46 +106,32 @@ function InlineToken({
 			const value = token as Tokens.Del;
 			return (
 				<Text strikethrough>
-					<InlineTokens
-						tokens={value.tokens}
-						showLinkUrls={showLinkUrls}
-					/>
+					<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
 				</Text>
 			);
 		}
 
 		case 'codespan':
-			return (
-				<Text inverse>{` ${(token as Tokens.Codespan).text} `}</Text>
-			);
+			return <Text inverse>{` ${(token as Tokens.Codespan).text} `}</Text>;
 
 		case 'link': {
 			const value = token as Tokens.Link;
 			const label = inlinePlainText(value.tokens).trim();
-			const shouldShowUrl =
-				showLinkUrls &&
-				normaliseUrl(label) !== normaliseUrl(value.href);
+			const shouldShowUrl = showLinkUrls && normaliseUrl(label) !== normaliseUrl(value.href);
 
 			return (
 				<>
 					<Text underline>
-						<InlineTokens
-							tokens={value.tokens}
-							showLinkUrls={showLinkUrls}
-						/>
+						<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
 					</Text>
-					{shouldShowUrl ? (
-						<Text dimColor>{` (${value.href})`}</Text>
-					) : null}
+					{shouldShowUrl ? <Text dimColor>{` (${value.href})`}</Text> : null}
 				</>
 			);
 		}
 
 		case 'image': {
 			const value = token as Tokens.Image;
-			return (
-				<Text dimColor>{`[image: ${value.text || value.href}]`}</Text>
-			);
+			return <Text dimColor>{`[image: ${value.text || value.href}]`}</Text>;
 		}
 
 		case 'br':
@@ -184,12 +145,7 @@ function InlineToken({
 			const value = token as Tokens.Generic;
 
 			if (value.tokens?.length) {
-				return (
-					<InlineTokens
-						tokens={value.tokens}
-						showLinkUrls={showLinkUrls}
-					/>
-				);
+				return <InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />;
 			}
 
 			return typeof value['text'] === 'string' ? value['text'] : null;
@@ -197,13 +153,7 @@ function InlineToken({
 	}
 }
 
-function BlockToken({
-	token,
-	width,
-	showLinkUrls,
-	codeWrap,
-	compact = false,
-}: BlockTokenProps) {
+function BlockToken({ token, width, showLinkUrls, codeWrap, compact = false }: BlockTokenProps) {
 	switch (token.type) {
 		case 'space':
 		case 'def':
@@ -214,19 +164,9 @@ function BlockToken({
 			const value = token as Tokens.Heading;
 
 			return (
-				<Box
-					marginTop={value.depth === 1 ? 1 : 0}
-					marginBottom={value.depth <= 2 ? 1 : 0}
-				>
-					<Text
-						bold
-						underline={value.depth === 1}
-						dimColor={value.depth >= 4}
-					>
-						<InlineTokens
-							tokens={value.tokens}
-							showLinkUrls={showLinkUrls}
-						/>
+				<Box marginTop={value.depth === 1 ? 1 : 0} marginBottom={value.depth <= 2 ? 1 : 0}>
+					<Text bold underline={value.depth === 1} dimColor={value.depth >= 4}>
+						<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
 					</Text>
 				</Box>
 			);
@@ -238,10 +178,7 @@ function BlockToken({
 			return (
 				<Box marginBottom={compact ? 0 : 1}>
 					<Text wrap="wrap">
-						<InlineTokens
-							tokens={value.tokens}
-							showLinkUrls={showLinkUrls}
-						/>
+						<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
 					</Text>
 				</Box>
 			);
@@ -253,10 +190,7 @@ function BlockToken({
 			return (
 				<Text wrap="wrap">
 					{value.tokens?.length ? (
-						<InlineTokens
-							tokens={value.tokens}
-							showLinkUrls={showLinkUrls}
-						/>
+						<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
 					) : (
 						value.text
 					)}
@@ -323,9 +257,7 @@ function BlockToken({
 
 				return value.ordered ? `${start + index}.` : '•';
 			});
-			const markerWidth = Math.max(
-				...labels.map((label) => label.length)
-			);
+			const markerWidth = Math.max(...labels.map((label) => label.length));
 
 			return (
 				<Box flexDirection="column" marginBottom={compact ? 0 : 1}>
@@ -337,10 +269,7 @@ function BlockToken({
 									<BlockToken
 										key={`${child.type}-${childIndex}`}
 										token={child}
-										width={Math.max(
-											10,
-											width - markerWidth - 1
-										)}
+										width={Math.max(10, width - markerWidth - 1)}
 										showLinkUrls={showLinkUrls}
 										codeWrap={codeWrap}
 										compact={!value.loose}
@@ -366,9 +295,7 @@ function BlockToken({
 		case 'hr':
 			return (
 				<Box marginBottom={compact ? 0 : 1}>
-					<Text dimColor>
-						{'─'.repeat(Math.max(3, Math.min(width, 40)))}
-					</Text>
+					<Text dimColor>{'─'.repeat(Math.max(3, Math.min(width, 40)))}</Text>
 				</Box>
 			);
 
@@ -418,12 +345,7 @@ function TableBlock({
 		const cellWidths = [
 			displayLength(inlineDisplayText(header.tokens, showLinkUrls)),
 			...table.rows.map((row) =>
-				displayLength(
-					inlineDisplayText(
-						row[columnIndex]?.tokens ?? [],
-						showLinkUrls
-					)
-				)
+				displayLength(inlineDisplayText(row[columnIndex]?.tokens ?? [], showLinkUrls)),
 			),
 		];
 
@@ -433,18 +355,9 @@ function TableBlock({
 	// 1 znak lewego obramowania + dla każdej kolumny: 2 spacje i prawy separator.
 	const borderOverhead = 1 + columnCount * 3;
 	const availableForContent = Math.max(columnCount, width - borderOverhead);
-	const preferredContentWidth = preferredWidths.reduce(
-		(sum, cellWidth) => sum + cellWidth,
-		0
-	);
-	const tableContentWidth = Math.min(
-		availableForContent,
-		preferredContentWidth
-	);
-	const columnWidths = allocateColumnWidths(
-		preferredWidths,
-		tableContentWidth
-	);
+	const preferredContentWidth = preferredWidths.reduce((sum, cellWidth) => sum + cellWidth, 0);
+	const tableContentWidth = Math.min(availableForContent, preferredContentWidth);
+	const columnWidths = allocateColumnWidths(preferredWidths, tableContentWidth);
 
 	const topBorder = `┌${columnWidths.map((cellWidth) => '─'.repeat(cellWidth + 2)).join('┬')}┐`;
 	const headerBorder = `├${columnWidths.map((cellWidth) => '─'.repeat(cellWidth + 2)).join('┼')}┤`;
@@ -462,11 +375,7 @@ function TableBlock({
 			<Text dimColor>{headerBorder}</Text>
 			{table.rows.map((row, index) => (
 				<Fragment key={index}>
-					<TableRow
-						cells={row}
-						columnWidths={columnWidths}
-						showLinkUrls={showLinkUrls}
-					/>
+					<TableRow cells={row} columnWidths={columnWidths} showLinkUrls={showLinkUrls} />
 				</Fragment>
 			))}
 			<Text dimColor>{bottomBorder}</Text>
@@ -506,12 +415,7 @@ function TableRow({
 							}
 						>
 							<Text bold={header} wrap="truncate-end">
-								{cell ? (
-									<InlineTokens
-										tokens={cell.tokens}
-										showLinkUrls={showLinkUrls}
-									/>
-								) : null}
+								{cell ? <InlineTokens tokens={cell.tokens} showLinkUrls={showLinkUrls} /> : null}
 							</Text>
 						</Box>
 						<Text dimColor>│</Text>
@@ -522,24 +426,15 @@ function TableRow({
 	);
 }
 
-function allocateColumnWidths(
-	preferredWidths: number[],
-	totalWidth: number
-): number[] {
+function allocateColumnWidths(preferredWidths: number[], totalWidth: number): number[] {
 	if (preferredWidths.length === 0) {
 		return [];
 	}
 
-	const minimumWidth: number =
-		totalWidth >= preferredWidths.length * 3 ? 3 : 1;
+	const minimumWidth: number = totalWidth >= preferredWidths.length * 3 ? 3 : 1;
 	const widths: number[] = preferredWidths.map(() => minimumWidth);
-	const targets: number[] = preferredWidths.map((width) =>
-		Math.max(minimumWidth, width)
-	);
-	let remaining = Math.max(
-		0,
-		totalWidth - minimumWidth * preferredWidths.length
-	);
+	const targets: number[] = preferredWidths.map((width) => Math.max(minimumWidth, width));
+	let remaining = Math.max(0, totalWidth - minimumWidth * preferredWidths.length);
 
 	while (remaining > 0) {
 		const growable = widths
@@ -550,11 +445,7 @@ function allocateColumnWidths(
 			});
 
 		if (growable.length === 0) {
-			for (
-				let index = 0;
-				remaining > 0;
-				index = (index + 1) % widths.length
-			) {
+			for (let index = 0; remaining > 0; index = (index + 1) % widths.length) {
 				widths[index] = (widths[index] ?? 0) + 1;
 				remaining -= 1;
 			}
@@ -590,17 +481,14 @@ function tokenPlainText(token: Token): string {
 			return (token as Tokens.Escape).text;
 		case 'text': {
 			const value = token as Tokens.Text;
-			return value.tokens?.length
-				? inlinePlainText(value.tokens)
-				: value.text;
+			return value.tokens?.length ? inlinePlainText(value.tokens) : value.text;
 		}
 		case 'strong':
 		case 'em':
 		case 'del':
 		case 'link':
 			return inlinePlainText(
-				(token as Tokens.Strong | Tokens.Em | Tokens.Del | Tokens.Link)
-					.tokens
+				(token as Tokens.Strong | Tokens.Em | Tokens.Del | Tokens.Link).tokens,
 			);
 		default: {
 			const value = token as Tokens.Generic;
@@ -622,8 +510,7 @@ function inlineDisplayText(tokens: Token[], showLinkUrls: boolean): string {
 
 			const link = token as Tokens.Link;
 			const label = inlinePlainText(link.tokens);
-			const shouldShowUrl =
-				showLinkUrls && normaliseUrl(label) !== normaliseUrl(link.href);
+			const shouldShowUrl = showLinkUrls && normaliseUrl(label) !== normaliseUrl(link.href);
 
 			return shouldShowUrl ? `${label} (${link.href})` : label;
 		})

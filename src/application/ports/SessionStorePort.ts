@@ -1,5 +1,5 @@
-import type { AgentEvent } from "@/domain/AgentEvent";
-import type { SessionId } from "@/domain/Ids";
+import type { AgentEvent } from '@/domain/AgentEvent';
+import type { SessionId } from '@/domain/Ids';
 
 export type StoredSession = {
 	sessionId: SessionId;

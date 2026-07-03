@@ -1,8 +1,4 @@
-import type {
-	ModelChatInput,
-	ModelPort,
-	ModelStreamChunk,
-} from '@/application/ports/ModelPort';
+import type { ModelChatInput, ModelPort, ModelStreamChunk } from '@/application/ports/ModelPort';
 import {
 	toModelStreamChunk,
 	toOllamaMessage,
@@ -19,10 +15,7 @@ export class OllamaModelAdapter implements ModelPort {
 	private readonly baseUrl: string;
 	private readonly modelName: string;
 
-	constructor(
-		baseUrl: string = 'http://localhost:11434',
-		modelName: string = 'gemma4:12b-it-qat'
-	) {
+	constructor(baseUrl: string = 'http://localhost:11434', modelName: string = 'gemma4:12b-it-qat') {
 		const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, '');
 		const normalizedModelName = modelName.trim();
 
@@ -57,7 +50,7 @@ export class OllamaModelAdapter implements ModelPort {
 
 		if (!response.ok) {
 			throw new Error(
-				`Ollama request failed with status ${response.status}: ${await readBoundedResponseText(response)}`
+				`Ollama request failed with status ${response.status}: ${await readBoundedResponseText(response)}`,
 			);
 		}
 
@@ -135,9 +128,7 @@ const readBoundedResponseText = async (response: Response): Promise<string> => {
 	}
 };
 
-const parseOllamaStreamFrame = (
-	line: string,
-): ParsedOllamaStreamFrame | undefined => {
+const parseOllamaStreamFrame = (line: string): ParsedOllamaStreamFrame | undefined => {
 	const trimmedLine = line.trim();
 
 	if (trimmedLine.length === 0) {
@@ -149,8 +140,7 @@ const parseOllamaStreamFrame = (
 	try {
 		response = JSON.parse(trimmedLine) as OllamaChatStreamResponse;
 	} catch (caughtError) {
-		const message =
-			caughtError instanceof Error ? caughtError.message : String(caughtError);
+		const message = caughtError instanceof Error ? caughtError.message : String(caughtError);
 
 		throw new Error(`Invalid Ollama stream JSON: ${message}`);
 	}
@@ -160,8 +150,7 @@ const parseOllamaStreamFrame = (
 	}
 
 	const chunk = toModelStreamChunk(response);
-	const hasChunk =
-		chunk.contentDelta.length > 0 || chunk.toolCalls !== undefined;
+	const hasChunk = chunk.contentDelta.length > 0 || chunk.toolCalls !== undefined;
 
 	return {
 		done: response.done === true,

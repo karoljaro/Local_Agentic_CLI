@@ -3,11 +3,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 const distExecutable =
-	process.platform === 'win32'
-		? resolve('dist/codesh.exe')
-		: resolve('dist/codesh');
-const distRipgrep =
-	process.platform === 'win32' ? resolve('dist/rg.exe') : resolve('dist/rg');
+	process.platform === 'win32' ? resolve('dist/codesh.exe') : resolve('dist/codesh');
+const distRipgrep = process.platform === 'win32' ? resolve('dist/rg.exe') : resolve('dist/rg');
 
 type RunResult = {
 	stdout: string;
@@ -31,9 +28,7 @@ async function run(cmd: string[], cwd: string): Promise<RunResult> {
 	]);
 
 	if (exitCode !== 0) {
-		throw new Error(
-			`${cmd[0]} exited with code ${exitCode}\n${stderr || stdout}`,
-		);
+		throw new Error(`${cmd[0]} exited with code ${exitCode}\n${stderr || stdout}`);
 	}
 
 	return { stdout, stderr };

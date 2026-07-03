@@ -37,9 +37,7 @@ type RipgrepCommandOutput = {
 	exitCode: number;
 };
 
-export type RipgrepCommandRunner = (
-	input: RipgrepCommandInput,
-) => Promise<RipgrepCommandOutput>;
+export type RipgrepCommandRunner = (input: RipgrepCommandInput) => Promise<RipgrepCommandOutput>;
 
 type RipgrepMatchEvent = {
 	type?: string;
@@ -50,17 +48,9 @@ type RipgrepMatchEvent = {
 	};
 };
 
-const EXCLUDED_GLOBS = [
-	'!**/node_modules/**',
-	'!**/.git/**',
-	'!**/.agent/**',
-];
+const EXCLUDED_GLOBS = ['!**/node_modules/**', '!**/.git/**', '!**/.agent/**'];
 
-const SAFE_ENV_GLOBS = [
-	'**/.env.development',
-	'**/.env.dev',
-	'**/.env.example',
-];
+const SAFE_ENV_GLOBS = ['**/.env.development', '**/.env.dev', '**/.env.example'];
 
 const MAX_STDERR_LENGTH = 1000;
 const rgPath = resolveRipgrepPath();
@@ -209,11 +199,7 @@ const runRipgrep = async ({
 	return stdout;
 };
 
-const runRipgrepCommand: RipgrepCommandRunner = async ({
-	cmd,
-	cwd,
-	timeoutMs,
-}) => {
+const runRipgrepCommand: RipgrepCommandRunner = async ({ cmd, cwd, timeoutMs }) => {
 	const process = Bun.spawn({
 		cmd,
 		cwd,
@@ -235,17 +221,13 @@ const parseRipgrepJsonLine = (line: string): RipgrepMatchEvent => {
 	try {
 		return JSON.parse(line) as RipgrepMatchEvent;
 	} catch (caughtError) {
-		const message =
-			caughtError instanceof Error ? caughtError.message : String(caughtError);
+		const message = caughtError instanceof Error ? caughtError.message : String(caughtError);
 
 		throw new Error(`search_file failed: invalid rg JSON output: ${message}`);
 	}
 };
 
-const compareMatches = (
-	left: SearchWorkspaceMatch,
-	right: SearchWorkspaceMatch,
-): number => {
+const compareMatches = (left: SearchWorkspaceMatch, right: SearchWorkspaceMatch): number => {
 	const pathOrder = left.path.localeCompare(right.path);
 
 	if (pathOrder !== 0) {
@@ -271,7 +253,6 @@ const isNodeErrorCode = (error: unknown, code: string): boolean => {
 const truncate = (text: string, maxLength: number): string =>
 	text.length <= maxLength ? text : `${text.slice(0, maxLength)}...`;
 
-
 // TODO: Find better way to resolve the ripgrep binary path, especially when running in a packaged environment.
 function resolveRipgrepPath(): string {
 	const binaryName = process.platform === 'win32' ? 'rg.exe' : 'rg';
@@ -294,9 +275,7 @@ function resolveRipgrepPath(): string {
 		}
 	}
 
-	const packageModulePath = fileURLToPath(
-		import.meta.resolve('@vscode/ripgrep-universal'),
-	);
+	const packageModulePath = fileURLToPath(import.meta.resolve('@vscode/ripgrep-universal'));
 
 	return resolve(
 		dirname(packageModulePath),

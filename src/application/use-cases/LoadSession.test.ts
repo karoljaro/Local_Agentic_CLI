@@ -1,11 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import {
-	asEventId,
-	asISODateTime,
-	asMessageId,
-	asSessionId,
-} from '@/domain/Ids';
+import { asEventId, asISODateTime, asMessageId, asSessionId } from '@/domain/Ids';
 import {
 	assistantMessageCompletedEvent,
 	promptSubmittedEvent,

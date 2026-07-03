@@ -1,5 +1,5 @@
-import type { AgentState } from "@/domain/AgentState";
-import type { ModelMessage } from "@/domain/ModelMessage";
+import type { AgentState } from '@/domain/AgentState';
+import type { ModelMessage } from '@/domain/ModelMessage';
 
 export type ContextBuilderOptions = {
 	systemPrompt: string;
@@ -16,7 +16,7 @@ export class ContextBuilder {
 		return {
 			messages: [
 				{
-					role: "system",
+					role: 'system',
 					content: this.options.systemPrompt,
 				},
 				...state.messages,

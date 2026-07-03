@@ -1,7 +1,4 @@
-import type {
-	SessionStorePort,
-	StoredSession,
-} from '../ports/SessionStorePort';
+import type { SessionStorePort, StoredSession } from '../ports/SessionStorePort';
 
 export type ListSessionsResult = {
 	sessions: StoredSession[];

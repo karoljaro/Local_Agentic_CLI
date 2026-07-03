@@ -48,8 +48,5 @@ export const buildWindows = async (): Promise<void> => {
 		process.exit(1);
 	}
 
-	await copyFile(
-		binPathFor({ os: 'win32', arch: 'x64' }),
-		`${DIST_DIR}/rg.exe`,
-	);
+	await copyFile(binPathFor({ os: 'win32', arch: 'x64' }), `${DIST_DIR}/rg.exe`);
 };

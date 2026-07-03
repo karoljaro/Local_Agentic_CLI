@@ -16,10 +16,7 @@ import type { ModelChatInput, ModelPort } from '../ports/ModelPort';
 import type { SessionStorePort } from '../ports/SessionStorePort';
 import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
-import type {
-	ToolExecutionResult,
-	ToolExecutorPort,
-} from '../ports/ToolExecutorPort';
+import type { ToolExecutionResult, ToolExecutorPort } from '../ports/ToolExecutorPort';
 
 const MAX_TOOL_ITERATIONS = 12;
 const CACHEABLE_TOOLS = new Set(['list_files', 'read_file', 'search_file']);
@@ -43,9 +40,7 @@ export type ToolApprovalRequest = {
 	toolInput: unknown;
 };
 
-export type ToolApprovalHandler = (
-	request: ToolApprovalRequest,
-) => Promise<boolean>;
+export type ToolApprovalHandler = (request: ToolApprovalRequest) => Promise<boolean>;
 
 type ToolExecutionBatchResult = {
 	toolCalls: ModelToolCall[];
@@ -91,8 +86,7 @@ export class RunAgentTurn {
 
 		await this.dependencies.sessionStore.appendSessionEvent(promptEvent);
 
-		const sessionEvents =
-			await this.dependencies.sessionStore.readSessionEvents(sessionId);
+		const sessionEvents = await this.dependencies.sessionStore.readSessionEvents(sessionId);
 
 		const reducedState = reduceAgentState(sessionId, sessionEvents);
 		const { messages } = this.dependencies.contextBuilder.build(reducedState);
@@ -110,11 +104,7 @@ export class RunAgentTurn {
 		messages: ModelMessage[],
 		signal: AbortSignal | undefined,
 	): AsyncIterable<AgentTurnChunk> {
-		const result = yield* this.readModelResponse(
-			sessionId,
-			withSignal({ messages }, signal),
-			true,
-		);
+		const result = yield* this.readModelResponse(sessionId, withSignal({ messages }, signal), true);
 
 		await this.appendAssistantCompleted(sessionId, result.content);
 	}
@@ -161,19 +151,11 @@ export class RunAgentTurn {
 			} catch (caughtError) {
 				const error = toError(caughtError);
 
-				await this.tryAppendAgentError(
-					sessionId,
-					error,
-					'MODEL_TOOL_CALL_INVALID',
-				);
+				await this.tryAppendAgentError(sessionId, error, 'MODEL_TOOL_CALL_INVALID');
 				throw error;
 			}
 
-			const {
-				toolCalls,
-				toolMessages,
-				terminalMessage,
-			} = await this.executeToolCalls(
+			const { toolCalls, toolMessages, terminalMessage } = await this.executeToolCalls(
 				sessionId,
 				result.toolCalls,
 				toolExecutor,
@@ -203,11 +185,7 @@ export class RunAgentTurn {
 
 		const error = new Error('Tool iteration limit reached.');
 
-		await this.tryAppendAgentError(
-			sessionId,
-			error,
-			'TOOL_ITERATION_LIMIT_REACHED',
-		);
+		await this.tryAppendAgentError(sessionId, error, 'TOOL_ITERATION_LIMIT_REACHED');
 		throw error;
 	}
 
@@ -316,8 +294,7 @@ export class RunAgentTurn {
 				const cacheKey = CACHEABLE_TOOLS.has(toolName)
 					? JSON.stringify([toolName, toolCall.arguments])
 					: undefined;
-				let result =
-					cacheKey === undefined ? undefined : toolCache.get(cacheKey);
+				let result = cacheKey === undefined ? undefined : toolCache.get(cacheKey);
 
 				if (result === undefined) {
 					result = await toolExecutor.execute({
@@ -384,9 +361,7 @@ export class RunAgentTurn {
 		};
 	}
 
-	private async requestToolApproval(
-		request: ToolApprovalRequest,
-	): Promise<boolean> {
+	private async requestToolApproval(request: ToolApprovalRequest): Promise<boolean> {
 		if (this.dependencies.approveToolCall === undefined) {
 			return false;
 		}
@@ -423,10 +398,7 @@ export class RunAgentTurn {
 		await this.dependencies.sessionStore.appendSessionEvent(failedEvent);
 	}
 
-	private async appendAssistantCompleted(
-		sessionId: SessionId,
-		content: string,
-	): Promise<void> {
+	private async appendAssistantCompleted(sessionId: SessionId, content: string): Promise<void> {
 		const completedEvent: AssistantMessageCompleted = {
 			id: this.dependencies.idGenerator.nextEventId(),
 			messageId: this.dependencies.idGenerator.nextMessageId(),
@@ -439,11 +411,7 @@ export class RunAgentTurn {
 		await this.dependencies.sessionStore.appendSessionEvent(completedEvent);
 	}
 
-	private async appendAgentError(
-		sessionId: SessionId,
-		error: Error,
-		code: string,
-	): Promise<void> {
+	private async appendAgentError(sessionId: SessionId, error: Error, code: string): Promise<void> {
 		const errorEvent: AgentErrorOccurred = {
 			id: this.dependencies.idGenerator.nextEventId(),
 			sessionId,
@@ -495,19 +463,11 @@ const withSignal = (
 const toError = (caughtError: unknown): Error =>
 	caughtError instanceof Error ? caughtError : new Error(String(caughtError));
 
-const isApprovalRequired = (
-	toolName: string,
-	tools: ToolDefinition[],
-): boolean => {
-	return tools.some(
-		(tool) => tool.name === toolName && tool.requiresApproval === true,
-	);
+const isApprovalRequired = (toolName: string, tools: ToolDefinition[]): boolean => {
+	return tools.some((tool) => tool.name === toolName && tool.requiresApproval === true);
 };
 
-const validateToolCalls = (
-	toolCalls: ModelToolCall[],
-	tools: ToolDefinition[],
-): void => {
+const validateToolCalls = (toolCalls: ModelToolCall[], tools: ToolDefinition[]): void => {
 	for (const toolCall of toolCalls) {
 		const tool = tools.find((candidate) => candidate.name === toolCall.name);
 
@@ -519,27 +479,17 @@ const validateToolCalls = (
 	}
 };
 
-const validateToolArguments = (
-	toolCall: ModelToolCall,
-	tool: ToolDefinition,
-): void => {
+const validateToolArguments = (toolCall: ModelToolCall, tool: ToolDefinition): void => {
 	if (!isRecord(toolCall.arguments)) {
-		throw new Error(
-			`Invalid arguments for tool ${toolCall.name}: expected an object.`,
-		);
+		throw new Error(`Invalid arguments for tool ${toolCall.name}: expected an object.`);
 	}
 
 	const required = tool.parameters['required'];
 
 	if (Array.isArray(required)) {
 		for (const propertyName of required) {
-			if (
-				typeof propertyName === 'string' &&
-				!Object.hasOwn(toolCall.arguments, propertyName)
-			) {
-				throw new Error(
-					`Invalid arguments for tool ${toolCall.name}: missing "${propertyName}".`,
-				);
+			if (typeof propertyName === 'string' && !Object.hasOwn(toolCall.arguments, propertyName)) {
+				throw new Error(`Invalid arguments for tool ${toolCall.name}: missing "${propertyName}".`);
 			}
 		}
 	}
@@ -550,9 +500,7 @@ const validateToolArguments = (
 		return;
 	}
 
-	for (const [propertyName, propertyValue] of Object.entries(
-		toolCall.arguments,
-	)) {
+	for (const [propertyName, propertyValue] of Object.entries(toolCall.arguments)) {
 		const propertySchema = properties[propertyName];
 
 		if (propertySchema === undefined) {
@@ -565,10 +513,7 @@ const validateToolArguments = (
 			continue;
 		}
 
-		if (
-			isRecord(propertySchema) &&
-			!matchesSchemaType(propertyValue, propertySchema['type'])
-		) {
+		if (isRecord(propertySchema) && !matchesSchemaType(propertyValue, propertySchema['type'])) {
 			throw new Error(
 				`Invalid arguments for tool ${toolCall.name}: "${propertyName}" must be ${describeSchemaType(propertySchema['type'])}.`,
 			);

@@ -8,19 +8,11 @@ import type {
 	ToolCallRequested,
 	ToolCallStarted,
 } from '@/domain/AgentEvent';
-import {
-	asEventId,
-	asISODateTime,
-	asMessageId,
-	asSessionId,
-	asToolCallId,
-} from '@/domain/Ids';
+import { asEventId, asISODateTime, asMessageId, asSessionId, asToolCallId } from '@/domain/Ids';
 
 export const testEventTimestamp = asISODateTime('2026-06-09T12:00:00.000Z');
 
-type EventOverrides<TEvent extends { type: string }> = Partial<
-	Omit<TEvent, 'type'>
->;
+type EventOverrides<TEvent extends { type: string }> = Partial<Omit<TEvent, 'type'>>;
 
 export const promptSubmittedEvent = (
 	overrides: EventOverrides<PromptSubmitted> = {},

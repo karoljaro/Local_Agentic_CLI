@@ -1,8 +1,4 @@
-import {
-	mkdir,
-	readFile,
-	writeFile,
-} from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { describe, expect, test } from 'bun:test';
@@ -39,8 +35,7 @@ describe('LocalToolExecutor', () => {
 			},
 			{
 				name: 'read_file',
-				description:
-					'Read a UTF-8 text file from the current workspace. Use relative paths.',
+				description: 'Read a UTF-8 text file from the current workspace. Use relative paths.',
 				parameters: {
 					type: 'object',
 					required: ['path'],
@@ -81,8 +76,7 @@ describe('LocalToolExecutor', () => {
 					properties: {
 						path: {
 							type: 'string',
-							description:
-								'The path for the new file, relative to the workspace root.',
+							description: 'The path for the new file, relative to the workspace root.',
 						},
 						content: {
 							type: 'string',
@@ -103,8 +97,7 @@ describe('LocalToolExecutor', () => {
 					properties: {
 						path: {
 							type: 'string',
-							description:
-								'The path to the file to edit, relative to the workspace root.',
+							description: 'The path to the file to edit, relative to the workspace root.',
 						},
 						newText: {
 							type: 'string',
@@ -127,11 +120,7 @@ describe('LocalToolExecutor', () => {
 		try {
 			await mkdir(join(directory, 'src', 'nested'), { recursive: true });
 			await writeFile(join(directory, 'src', 'first.ts'), 'first', 'utf8');
-			await writeFile(
-				join(directory, 'src', 'nested', 'second.ts'),
-				'second',
-				'utf8',
-			);
+			await writeFile(join(directory, 'src', 'nested', 'second.ts'), 'second', 'utf8');
 
 			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({
@@ -198,9 +187,9 @@ describe('LocalToolExecutor', () => {
 					content: 'export const value = 1;\n',
 				},
 			});
-			await expect(
-				readFile(join(directory, 'src', 'new-file.ts'), 'utf8'),
-			).resolves.toBe('export const value = 1;\n');
+			await expect(readFile(join(directory, 'src', 'new-file.ts'), 'utf8')).resolves.toBe(
+				'export const value = 1;\n',
+			);
 		} finally {
 			await cleanup();
 		}
@@ -211,16 +200,8 @@ describe('LocalToolExecutor', () => {
 
 		try {
 			await mkdir(join(directory, 'src'));
-			await writeFile(
-				join(directory, 'src', 'first.ts'),
-				'const needle = true;\n',
-				'utf8',
-			);
-			await writeFile(
-				join(directory, 'src', 'second.ts'),
-				'const other = "value";\n',
-				'utf8',
-			);
+			await writeFile(join(directory, 'src', 'first.ts'), 'const needle = true;\n', 'utf8');
+			await writeFile(join(directory, 'src', 'second.ts'), 'const other = "value";\n', 'utf8');
 
 			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({
@@ -386,11 +367,7 @@ describe('LocalToolExecutor', () => {
 				['def add(a, b):', '    return a + b', ''].join('\n'),
 				'utf8',
 			);
-			await writeFile(
-				join(directory, 'src', 'usage.ts'),
-				'calculator.divide(10, 2);\n',
-				'utf8',
-			);
+			await writeFile(join(directory, 'src', 'usage.ts'), 'calculator.divide(10, 2);\n', 'utf8');
 
 			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({
@@ -428,11 +405,7 @@ describe('LocalToolExecutor', () => {
 
 		try {
 			await writeFile(join(directory, '.env'), 'SECRET_TOKEN=hidden\n', 'utf8');
-			await writeFile(
-				join(directory, '.env.example'),
-				'SECRET_TOKEN=example\n',
-				'utf8',
-			);
+			await writeFile(join(directory, '.env.example'), 'SECRET_TOKEN=example\n', 'utf8');
 
 			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({
@@ -526,11 +499,7 @@ describe('LocalToolExecutor', () => {
 
 		try {
 			await mkdir(join(directory, 'src'));
-			await writeFile(
-				join(directory, 'src', 'file.ts'),
-				'const value = 1;\n',
-				'utf8',
-			);
+			await writeFile(join(directory, 'src', 'file.ts'), 'const value = 1;\n', 'utf8');
 
 			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({

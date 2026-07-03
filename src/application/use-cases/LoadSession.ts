@@ -21,11 +21,10 @@ export class LoadSession {
 	async load(input: LoadSessionInput): Promise<LoadSessionResult> {
 		const { sessionId } = input;
 
-		const sessionEvents =
-			await this.dependencies.sessionStore.readSessionEvents(sessionId);
+		const sessionEvents = await this.dependencies.sessionStore.readSessionEvents(sessionId);
 
 		const state = reduceAgentState(sessionId, sessionEvents);
-        
+
 		return { state };
 	}
 }

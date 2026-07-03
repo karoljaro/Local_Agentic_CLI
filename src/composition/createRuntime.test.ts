@@ -14,8 +14,6 @@ describe('createRuntime', () => {
 		expect(runtime.workspacePath).toBe(process.cwd());
 		expect(runtime.switchModel('  next-model  ')).toBe('next-model');
 		expect(runtime.getModelName()).toBe('next-model');
-		expect(() => runtime.switchModel(' ')).toThrow(
-			'Ollama model name cannot be empty.',
-		);
+		expect(() => runtime.switchModel(' ')).toThrow('Ollama model name cannot be empty.');
 	});
 });

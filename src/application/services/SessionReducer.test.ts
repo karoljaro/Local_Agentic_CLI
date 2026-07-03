@@ -1,11 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import {
-	asEventId,
-	asMessageId,
-	asSessionId,
-	asToolCallId,
-} from '@/domain/Ids';
+import { asEventId, asMessageId, asSessionId, asToolCallId } from '@/domain/Ids';
 import {
 	agentErrorOccurredEvent,
 	assistantMessageCompletedEvent,

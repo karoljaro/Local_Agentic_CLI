@@ -40,36 +40,24 @@ export const createLocalToolExecutor = (
 	};
 
 	if (
-		[
-			searchOptions.maxMatches,
-			searchOptions.maxMatchTextLength,
-			searchOptions.timeoutMs,
-		].some((value) => !Number.isFinite(value) || value <= 0)
+		[searchOptions.maxMatches, searchOptions.maxMatchTextLength, searchOptions.timeoutMs].some(
+			(value) => !Number.isFinite(value) || value <= 0,
+		)
 	) {
 		throw new Error('Search limits must be positive numbers.');
 	}
 
 	return new LocalToolExecutor({
-		listFilesProvider: new ListFilesProvider(
-			new ListWorkspaceFiles(workspaceFiles),
-			{
-				maxEntries: options.maxListFiles ?? DEFAULT_MAX_LIST_FILES,
-			},
-		),
-		readFileProvider: new ReadFileProvider(
-			new ReadWorkspaceFile(workspaceFiles),
-			{ maxFileBytes },
-		),
+		listFilesProvider: new ListFilesProvider(new ListWorkspaceFiles(workspaceFiles), {
+			maxEntries: options.maxListFiles ?? DEFAULT_MAX_LIST_FILES,
+		}),
+		readFileProvider: new ReadFileProvider(new ReadWorkspaceFile(workspaceFiles), { maxFileBytes }),
 		searchFileProvider: new SearchFileProvider(
 			new SearchWorkspaceFiles(new RipgrepSearch(searchOptions)),
 		),
-		createFileProvider: new CreateFileProvider(
-			new CreateWorkspaceFile(workspaceFiles),
-			{ maxFileBytes },
-		),
-		editFileProvider: new EditFileProvider(
-			new EditWorkspaceFile(workspaceFiles),
-			{ maxFileBytes },
-		),
+		createFileProvider: new CreateFileProvider(new CreateWorkspaceFile(workspaceFiles), {
+			maxFileBytes,
+		}),
+		editFileProvider: new EditFileProvider(new EditWorkspaceFile(workspaceFiles), { maxFileBytes }),
 	});
 };

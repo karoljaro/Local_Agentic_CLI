@@ -45,11 +45,7 @@ type CollectFilesInput = {
 };
 
 const EXCLUDED_DIRECTORIES = new Set(['node_modules', '.git', '.agent']);
-const SAFE_ENV_FILES = new Set([
-	'.env.dev',
-	'.env.development',
-	'.env.example',
-]);
+const SAFE_ENV_FILES = new Set(['.env.dev', '.env.development', '.env.example']);
 
 export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 	private readonly workspaceRoot: string;
@@ -58,9 +54,7 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 		this.workspaceRoot = resolve(workspaceRoot);
 	}
 
-	async listFiles(
-		input: ListWorkspaceFilesInput
-	): Promise<WorkspaceFileList> {
+	async listFiles(input: ListWorkspaceFilesInput): Promise<WorkspaceFileList> {
 		if (!Number.isInteger(input.maxEntries) || input.maxEntries <= 0) {
 			throw new Error('Max list entries must be a positive integer.');
 		}
@@ -75,9 +69,7 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 		}
 
 		if (!targetStats.isDirectory()) {
-			throw new Error(
-				`Path is not a file or directory: ${input.path ?? '.'}`
-			);
+			throw new Error(`Path is not a file or directory: ${input.path ?? '.'}`);
 		}
 
 		if (shouldSkipDirectoryPath(target.relativePath)) {
@@ -98,10 +90,7 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 	}
 
 	async readFile(input: ReadWorkspaceFileInput): Promise<WorkspaceFile> {
-		const file = await this.resolveExistingFile(
-			input.path,
-			input.maxFileBytes
-		);
+		const file = await this.resolveExistingFile(input.path, input.maxFileBytes);
 
 		return {
 			path: file.relativePath,
@@ -110,31 +99,21 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 	}
 
 	async writeFile(input: WriteWorkspaceFileInput): Promise<WorkspaceFile> {
-		const file = await this.resolveExistingFile(
-			input.path,
-			input.maxFileBytes
-		);
+		const file = await this.resolveExistingFile(input.path, input.maxFileBytes);
 
 		ensureContentWithinLimit(input);
 
 		const fileStats = await stat(file.realTargetPath);
 
 		if (input.expectedContent !== undefined) {
-			const currentContent = await readFileContent(
-				file.realTargetPath,
-				'utf8'
-			);
+			const currentContent = await readFileContent(file.realTargetPath, 'utf8');
 
 			if (currentContent !== input.expectedContent) {
 				throw new Error(`File changed since it was read: ${input.path}`);
 			}
 		}
 
-		await writeFileAtomically(
-			file.realTargetPath,
-			input.content,
-			fileStats.mode
-		);
+		await writeFileAtomically(file.realTargetPath, input.content, fileStats.mode);
 
 		return {
 			path: file.relativePath,
@@ -153,11 +132,7 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 				flag: 'wx',
 			});
 		} catch (error) {
-			if (
-				error instanceof Error &&
-				'code' in error &&
-				error.code === 'EEXIST'
-			) {
+			if (error instanceof Error && 'code' in error && error.code === 'EEXIST') {
 				throw new Error(`File already exists: ${input.path}`);
 			}
 
@@ -170,14 +145,9 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 		};
 	}
 
-	private async resolveNewFilePath(
-		inputPath: string
-	): Promise<ResolvedWorkspaceFile> {
+	private async resolveNewFilePath(inputPath: string): Promise<ResolvedWorkspaceFile> {
 		const target = await this.resolveWorkspaceTarget(inputPath);
-		const relativeTargetPath = relative(
-			target.realWorkspaceRoot,
-			target.targetPath
-		);
+		const relativeTargetPath = relative(target.realWorkspaceRoot, target.targetPath);
 
 		if (shouldSkipFilePath(relativeTargetPath)) {
 			throw new Error(`Cannot access protected file: ${inputPath}`);
@@ -186,19 +156,11 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 		const realParentPath = await realpath(dirname(target.targetPath));
 
 		if (!isPathInside(target.realWorkspaceRoot, realParentPath)) {
-			throw new Error(
-				`Cannot access file outside workspace: ${inputPath}`
-			);
+			throw new Error(`Cannot access file outside workspace: ${inputPath}`);
 		}
 
-		const realTargetPath = resolve(
-			realParentPath,
-			basename(target.targetPath)
-		);
-		const relativePath = relative(
-			target.realWorkspaceRoot,
-			realTargetPath
-		);
+		const realTargetPath = resolve(realParentPath, basename(target.targetPath));
+		const relativePath = relative(target.realWorkspaceRoot, realTargetPath);
 
 		if (shouldSkipFilePath(relativePath)) {
 			throw new Error(`Cannot access protected file: ${inputPath}`);
@@ -212,7 +174,7 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 
 	private async resolveExistingFile(
 		inputPath: string,
-		maxFileBytes: number
+		maxFileBytes: number,
 	): Promise<ResolvedWorkspaceFile> {
 		const resolvedPath = await this.resolveWorkspacePath(inputPath);
 
@@ -236,16 +198,12 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 		};
 	}
 
-	private async resolveWorkspacePath(
-		inputPath: string
-	): Promise<ResolvedWorkspacePath> {
+	private async resolveWorkspacePath(inputPath: string): Promise<ResolvedWorkspacePath> {
 		const target = await this.resolveWorkspaceTarget(inputPath);
 		const realTargetPath = await realpath(target.targetPath);
 
 		if (!isPathInside(target.realWorkspaceRoot, realTargetPath)) {
-			throw new Error(
-				`Cannot access file outside workspace: ${inputPath}`
-			);
+			throw new Error(`Cannot access file outside workspace: ${inputPath}`);
 		}
 
 		return {
@@ -255,9 +213,7 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 		};
 	}
 
-	private async resolveWorkspaceTarget(
-		inputPath: string
-	): Promise<WorkspaceTarget> {
+	private async resolveWorkspaceTarget(inputPath: string): Promise<WorkspaceTarget> {
 		if (!inputPath.trim().length) {
 			throw new Error('File path cannot be empty.');
 		}
@@ -270,9 +226,7 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 		const targetPath = resolve(realWorkspaceRoot, inputPath);
 
 		if (!isPathInside(realWorkspaceRoot, targetPath)) {
-			throw new Error(
-				`Cannot access file outside workspace: ${inputPath}`
-			);
+			throw new Error(`Cannot access file outside workspace: ${inputPath}`);
 		}
 
 		return {
@@ -303,21 +257,13 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 			}
 
 			const entryPath = resolve(input.directoryPath, entry.name);
-			const realEntryPath = await realpath(entryPath).catch(
-				() => undefined
-			);
+			const realEntryPath = await realpath(entryPath).catch(() => undefined);
 
-			if (
-				realEntryPath === undefined ||
-				!isPathInside(input.realWorkspaceRoot, realEntryPath)
-			) {
+			if (realEntryPath === undefined || !isPathInside(input.realWorkspaceRoot, realEntryPath)) {
 				continue;
 			}
 
-			const relativePath = relative(
-				input.realWorkspaceRoot,
-				realEntryPath
-			);
+			const relativePath = relative(input.realWorkspaceRoot, realEntryPath);
 			const entryStats = await stat(realEntryPath);
 
 			if (entryStats.isDirectory()) {
@@ -380,9 +326,7 @@ const splitPath = (path: string): string[] => {
 	return path.split(/[\\/]+/).filter(Boolean);
 };
 
-const ensureContentWithinLimit = (
-	input: WriteWorkspaceFileInput
-): void => {
+const ensureContentWithinLimit = (input: WriteWorkspaceFileInput): void => {
 	if (new TextEncoder().encode(input.content).length > input.maxFileBytes) {
 		throw new Error(`File content is too large: ${input.path}`);
 	}
@@ -391,11 +335,11 @@ const ensureContentWithinLimit = (
 const writeFileAtomically = async (
 	targetPath: string,
 	content: string,
-	mode: number
+	mode: number,
 ): Promise<void> => {
 	const temporaryPath = resolve(
 		dirname(targetPath),
-		`.tmp-${basename(targetPath)}-${process.pid}-${randomUUID()}`
+		`.tmp-${basename(targetPath)}-${process.pid}-${randomUUID()}`,
 	);
 
 	try {

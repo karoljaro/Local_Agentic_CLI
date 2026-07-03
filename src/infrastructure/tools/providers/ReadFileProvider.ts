@@ -15,14 +15,13 @@ type ReadFileInput = {
 export class ReadFileProvider {
 	constructor(
 		private readonly readWorkspaceFile: ReadWorkspaceFile,
-		private readonly options: ReadFileProviderOptions
+		private readonly options: ReadFileProviderOptions,
 	) {}
 
 	getToolDefinition(): ToolDefinition {
 		return {
 			name: READ_FILE_TOOL_NAME,
-			description:
-				'Read a UTF-8 text file from the current workspace. Use relative paths.',
+			description: 'Read a UTF-8 text file from the current workspace. Use relative paths.',
 			parameters: {
 				type: 'object',
 				required: ['path'],
@@ -30,8 +29,7 @@ export class ReadFileProvider {
 				properties: {
 					path: {
 						type: 'string',
-						description:
-							'Relative path to a file in the current workspace.',
+						description: 'Relative path to a file in the current workspace.',
 					},
 				},
 			},

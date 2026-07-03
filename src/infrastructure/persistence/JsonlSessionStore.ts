@@ -1,12 +1,9 @@
-import { access, appendFile, mkdir, readFile, readdir } from "node:fs/promises";
-import { join } from "node:path";
-import { z } from "zod";
+import { access, appendFile, mkdir, readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
+import { z } from 'zod';
 
-import type {
-	SessionStorePort,
-	StoredSession,
-} from "@/application/ports/SessionStorePort";
-import type { AgentEvent } from "@/domain/AgentEvent";
+import type { SessionStorePort, StoredSession } from '@/application/ports/SessionStorePort';
+import type { AgentEvent } from '@/domain/AgentEvent';
 import {
 	asEventId,
 	asISODateTime,
@@ -14,14 +11,14 @@ import {
 	asSessionId,
 	asToolCallId,
 	type SessionId,
-} from "@/domain/Ids";
+} from '@/domain/Ids';
 
 export class JsonlSessionStore implements SessionStorePort {
 	private readonly sessionsDirectory: string;
 
-	constructor(sessionsDirectory = ".agent/sessions") {
+	constructor(sessionsDirectory = '.agent/sessions') {
 		if (sessionsDirectory.trim().length === 0) {
-			throw new Error("Session store directory cannot be empty.");
+			throw new Error('Session store directory cannot be empty.');
 		}
 
 		this.sessionsDirectory = sessionsDirectory;
@@ -33,7 +30,7 @@ export class JsonlSessionStore implements SessionStorePort {
 		try {
 			entries = await readdir(this.sessionsDirectory, { withFileTypes: true });
 		} catch (caughtError) {
-			if (isNodeErrorCode(caughtError, "ENOENT")) {
+			if (isNodeErrorCode(caughtError, 'ENOENT')) {
 				return [];
 			}
 
@@ -48,10 +45,10 @@ export class JsonlSessionStore implements SessionStorePort {
 			}
 
 			try {
-				await access(join(this.sessionsDirectory, entry.name, "events.jsonl"));
+				await access(join(this.sessionsDirectory, entry.name, 'events.jsonl'));
 				sessions.push({ sessionId: asSessionId(entry.name) });
 			} catch (caughtError) {
-				if (!isNodeErrorCode(caughtError, "ENOENT")) {
+				if (!isNodeErrorCode(caughtError, 'ENOENT')) {
 					throw caughtError;
 				}
 			}
@@ -66,11 +63,11 @@ export class JsonlSessionStore implements SessionStorePort {
 		const eventsFilePath = this.getEventsFilePath(sessionId);
 
 		try {
-			const content = await readFile(eventsFilePath, "utf8");
+			const content = await readFile(eventsFilePath, 'utf8');
 
 			return parseJsonlEvents(content, eventsFilePath);
 		} catch (caughtError) {
-			if (isNodeErrorCode(caughtError, "ENOENT")) {
+			if (isNodeErrorCode(caughtError, 'ENOENT')) {
 				return [];
 			}
 
@@ -83,11 +80,7 @@ export class JsonlSessionStore implements SessionStorePort {
 			recursive: true,
 		});
 
-		await appendFile(
-			this.getEventsFilePath(event.sessionId),
-			`${JSON.stringify(event)}\n`,
-			"utf8",
-		);
+		await appendFile(this.getEventsFilePath(event.sessionId), `${JSON.stringify(event)}\n`, 'utf8');
 	}
 
 	private getSessionDirectoryPath(sessionId: SessionId): string {
@@ -95,14 +88,14 @@ export class JsonlSessionStore implements SessionStorePort {
 	}
 
 	private getEventsFilePath(sessionId: SessionId): string {
-		return join(this.getSessionDirectoryPath(sessionId), "events.jsonl");
+		return join(this.getSessionDirectoryPath(sessionId), 'events.jsonl');
 	}
 }
 
 const parseJsonlEvents = (content: string, filePath: string): AgentEvent[] => {
 	const events: AgentEvent[] = [];
-	const lines = content.split("\n");
-	const lineCount = content.endsWith("\n") ? lines.length : lines.length - 1;
+	const lines = content.split('\n');
+	const lineCount = content.endsWith('\n') ? lines.length : lines.length - 1;
 
 	for (let index = 0; index < lineCount; index += 1) {
 		const line = lines[index];
@@ -118,12 +111,9 @@ const parseJsonlEvents = (content: string, filePath: string): AgentEvent[] => {
 		try {
 			events.push(parseAgentEvent(JSON.parse(line)));
 		} catch (caughtError) {
-			const message =
-				caughtError instanceof Error ? caughtError.message : String(caughtError);
+			const message = caughtError instanceof Error ? caughtError.message : String(caughtError);
 
-			throw new Error(
-				`Invalid JSONL event in ${filePath} at line ${index + 1}: ${message}`,
-			);
+			throw new Error(`Invalid JSONL event in ${filePath} at line ${index + 1}: ${message}`);
 		}
 	}
 
@@ -151,48 +141,48 @@ const AgentEventBaseSchema = z.object({
 const MessageIdSchema = NonEmptyString.transform(asMessageId);
 const ToolCallIdSchema = NonEmptyString.transform(asToolCallId);
 
-const AgentEventSchema = z.discriminatedUnion("type", [
+const AgentEventSchema = z.discriminatedUnion('type', [
 	AgentEventBaseSchema.extend({
-		type: z.literal("prompt.submitted"),
+		type: z.literal('prompt.submitted'),
 		messageId: MessageIdSchema,
 		prompt: z.string(),
 		modelName: z.string().optional(),
 	}).loose(),
 	AgentEventBaseSchema.extend({
-		type: z.literal("assistant.message.started"),
+		type: z.literal('assistant.message.started'),
 		messageId: MessageIdSchema,
 	}).loose(),
 	AgentEventBaseSchema.extend({
-		type: z.literal("assistant.message.delta"),
+		type: z.literal('assistant.message.delta'),
 		messageId: MessageIdSchema,
 		delta: z.string(),
 	}).loose(),
 	AgentEventBaseSchema.extend({
-		type: z.literal("assistant.message.completed"),
+		type: z.literal('assistant.message.completed'),
 		messageId: MessageIdSchema,
 		content: z.string(),
 	}).loose(),
 	AgentEventBaseSchema.extend({
-		type: z.literal("tool.call.requested"),
+		type: z.literal('tool.call.requested'),
 		toolCallId: ToolCallIdSchema,
 		toolName: NonEmptyString,
 		toolInput: z.unknown(),
 		approvalRequired: z.boolean(),
 	}).loose(),
 	AgentEventBaseSchema.extend({
-		type: z.literal("tool.call.started"),
+		type: z.literal('tool.call.started'),
 		toolCallId: ToolCallIdSchema,
 		toolName: NonEmptyString,
 	}).loose(),
 	AgentEventBaseSchema.extend({
-		type: z.literal("tool.call.completed"),
+		type: z.literal('tool.call.completed'),
 		toolCallId: ToolCallIdSchema,
 		toolName: NonEmptyString,
 		output: z.unknown(),
 		durationMs: z.number().optional(),
 	}).loose(),
 	AgentEventBaseSchema.extend({
-		type: z.literal("tool.call.failed"),
+		type: z.literal('tool.call.failed'),
 		toolCallId: ToolCallIdSchema,
 		toolName: NonEmptyString,
 		error: z
@@ -204,7 +194,7 @@ const AgentEventSchema = z.discriminatedUnion("type", [
 			.loose(),
 	}).loose(),
 	AgentEventBaseSchema.extend({
-		type: z.literal("agent.error"),
+		type: z.literal('agent.error'),
 		error: z
 			.object({
 				message: z.string(),
@@ -229,19 +219,19 @@ const toSafeSessionPathSegment = (sessionId: SessionId): string => {
 const isSafeSessionPathSegment = (value: string): boolean => {
 	return (
 		value.length > 0 &&
-		value !== "." &&
-		value !== ".." &&
-		!value.includes("/") &&
-		!value.includes("\\") &&
-		!value.includes("\0")
+		value !== '.' &&
+		value !== '..' &&
+		!value.includes('/') &&
+		!value.includes('\\') &&
+		!value.includes('\0')
 	);
 };
 
 const isNodeErrorCode = (error: unknown, code: string): boolean => {
 	return (
-		typeof error === "object" &&
+		typeof error === 'object' &&
 		error !== null &&
-		"code" in error &&
+		'code' in error &&
 		(error as { code?: unknown }).code === code
 	);
 };

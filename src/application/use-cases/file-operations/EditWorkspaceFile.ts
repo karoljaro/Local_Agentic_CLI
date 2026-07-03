@@ -16,9 +16,7 @@ export type EditWorkspaceFileOutput = {
 export class EditWorkspaceFile {
 	constructor(private readonly workspaceFiles: WorkspaceFilePort) {}
 
-	async execute(
-		input: EditWorkspaceFileInput,
-	): Promise<EditWorkspaceFileOutput> {
+	async execute(input: EditWorkspaceFileInput): Promise<EditWorkspaceFileOutput> {
 		const file = await this.workspaceFiles.readFile({
 			path: input.path,
 			maxFileBytes: input.maxFileBytes,
@@ -32,9 +30,7 @@ export class EditWorkspaceFile {
 		}
 
 		if (matchCount > 1) {
-			throw new Error(
-				`oldText appears multiple times in file: ${input.path}`,
-			);
+			throw new Error(`oldText appears multiple times in file: ${input.path}`);
 		}
 
 		const writtenFile = await this.workspaceFiles.writeFile({
@@ -53,7 +49,4 @@ export class EditWorkspaceFile {
 }
 
 const normalizeEscapedLineBreaks = (text: string): string =>
-	text
-		.replaceAll('\\r\\n', '\n')
-		.replaceAll('\\n', '\n')
-		.replaceAll('\\r', '\n');
+	text.replaceAll('\\r\\n', '\n').replaceAll('\\n', '\n').replaceAll('\\r', '\n');

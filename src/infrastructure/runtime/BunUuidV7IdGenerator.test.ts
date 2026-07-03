@@ -1,9 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from 'bun:test';
 
-import { BunUuidV7IdGenerator } from "./BunUuidV7IdGenerator";
+import { BunUuidV7IdGenerator } from './BunUuidV7IdGenerator';
 
-describe("BunUuidV7IdGenerator", () => {
-	test("generates UUIDv7-backed domain ids", () => {
+describe('BunUuidV7IdGenerator', () => {
+	test('generates UUIDv7-backed domain ids', () => {
 		const idGenerator = new BunUuidV7IdGenerator();
 
 		expect(idGenerator.nextEventId()).toMatch(

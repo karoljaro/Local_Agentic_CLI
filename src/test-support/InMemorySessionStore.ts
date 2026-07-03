@@ -1,7 +1,4 @@
-import type {
-	SessionStorePort,
-	StoredSession,
-} from '@/application/ports/SessionStorePort';
+import type { SessionStorePort, StoredSession } from '@/application/ports/SessionStorePort';
 import type { AgentEvent } from '@/domain/AgentEvent';
 import type { SessionId } from '@/domain/Ids';
 

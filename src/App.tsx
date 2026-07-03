@@ -30,22 +30,14 @@ export function App() {
 
 	if (!isRawModeSupported) {
 		return (
-			<AppShell
-				sessionId={sessionId}
-				status="idle"
-				statusText="interactive stdin is not available"
-			>
-				<Text color="yellow">
-					Run this CLI in an interactive terminal to type prompts.
-				</Text>
+			<AppShell sessionId={sessionId} status="idle" statusText="interactive stdin is not available">
+				<Text color="yellow">Run this CLI in an interactive terminal to type prompts.</Text>
 			</AppShell>
 		);
 	}
 
 	if (sessionId === undefined) {
-		return (
-			<SessionPicker onSelectSession={setSessionId} runtime={runtime} />
-		);
+		return <SessionPicker onSelectSession={setSessionId} runtime={runtime} />;
 	}
 
 	return (
@@ -110,10 +102,7 @@ const SessionPicker = ({ runtime, onSelectSession }: SessionPickerProps) => {
 					setSessions(result.sessions);
 				}
 			} catch (caughtError) {
-				const error =
-					caughtError instanceof Error
-						? caughtError
-						: new Error(String(caughtError));
+				const error = caughtError instanceof Error ? caughtError : new Error(String(caughtError));
 
 				if (!isCancelled) {
 					setSessions([]);
@@ -134,24 +123,18 @@ const SessionPicker = ({ runtime, onSelectSession }: SessionPickerProps) => {
 	}, [runtime]);
 
 	useEffect(() => {
-		setSelectedIndex((currentIndex) =>
-			Math.min(currentIndex, Math.max(0, options.length - 1))
-		);
+		setSelectedIndex((currentIndex) => Math.min(currentIndex, Math.max(0, options.length - 1)));
 	}, [options.length]);
 
 	useInput(
 		(_value, key) => {
 			if (key.upArrow) {
-				setSelectedIndex((currentIndex) =>
-					Math.max(0, currentIndex - 1)
-				);
+				setSelectedIndex((currentIndex) => Math.max(0, currentIndex - 1));
 				return;
 			}
 
 			if (key.downArrow) {
-				setSelectedIndex((currentIndex) =>
-					Math.min(options.length - 1, currentIndex + 1)
-				);
+				setSelectedIndex((currentIndex) => Math.min(options.length - 1, currentIndex + 1));
 				return;
 			}
 
@@ -170,23 +153,16 @@ const SessionPicker = ({ runtime, onSelectSession }: SessionPickerProps) => {
 				onSelectSession(selectedOption.sessionId);
 			}
 		},
-		{ isActive: status === 'idle' }
+		{ isActive: status === 'idle' },
 	);
 
 	return (
 		<AppShell
 			sessionId={undefined}
 			status={status}
-			statusText={
-				status === 'loading' ? 'loading sessions' : 'choose session'
-			}
+			statusText={status === 'loading' ? 'loading sessions' : 'choose session'}
 		>
-			<Box
-				backgroundColor={PANEL_BACKGROUND}
-				flexDirection="column"
-				paddingX={2}
-				paddingY={1}
-			>
+			<Box backgroundColor={PANEL_BACKGROUND} flexDirection="column" paddingX={2} paddingY={1}>
 				<SessionPickerList
 					errorMessage={errorMessage}
 					options={options}
@@ -203,11 +179,7 @@ type SessionPickerListProps = {
 	selectedIndex: number;
 };
 
-const SessionPickerList = ({
-	errorMessage,
-	options,
-	selectedIndex,
-}: SessionPickerListProps) => {
+const SessionPickerList = ({ errorMessage, options, selectedIndex }: SessionPickerListProps) => {
 	return (
 		<Box flexDirection="column" gap={1}>
 			<Box flexDirection="column">
@@ -220,13 +192,9 @@ const SessionPickerList = ({
 				))}
 			</Box>
 
-			{options.length === 1 ? (
-				<Text color="gray">No saved sessions.</Text>
-			) : null}
+			{options.length === 1 ? <Text color="gray">No saved sessions.</Text> : null}
 
-			{errorMessage === undefined ? null : (
-				<Text color="red">{errorMessage}</Text>
-			)}
+			{errorMessage === undefined ? null : <Text color="red">{errorMessage}</Text>}
 		</Box>
 	);
 };
@@ -240,9 +208,7 @@ const SessionPickerRow = ({ isSelected, option }: SessionPickerRowProps) => {
 	const prefix = isSelected ? '> ' : '  ';
 
 	if (option.type === 'new') {
-		return (
-			<Text color={isSelected ? 'cyan' : 'white'}>{prefix}New chat</Text>
-		);
+		return <Text color={isSelected ? 'cyan' : 'white'}>{prefix}New chat</Text>;
 	}
 
 	return (
@@ -272,11 +238,8 @@ const InteractiveApp = ({
 	const [status, setStatus] = useState<Status>('idle');
 	const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
 	const [streamingContent, setStreamingContent] = useState('');
-	const [pendingApproval, setPendingApproval] =
-		useState<ToolApprovalRequest | null>(null);
-	const approvalResolveRef = useRef<((approved: boolean) => void) | null>(
-		null
-	);
+	const [pendingApproval, setPendingApproval] = useState<ToolApprovalRequest | null>(null);
+	const approvalResolveRef = useRef<((approved: boolean) => void) | null>(null);
 	const turnAbort = useAbortableTurn();
 
 	const isBusy = status !== 'idle';
@@ -312,18 +275,13 @@ const InteractiveApp = ({
 					const sessionModelName = getSessionModelName(result.events);
 
 					if (sessionModelName !== undefined) {
-						onModelNameChange(
-							runtime.switchModel(sessionModelName)
-						);
+						onModelNameChange(runtime.switchModel(sessionModelName));
 					}
 
 					setTranscript(sessionEventsToTranscript(result.events));
 				}
 			} catch (caughtError) {
-				const error =
-					caughtError instanceof Error
-						? caughtError
-						: new Error(String(caughtError));
+				const error = caughtError instanceof Error ? caughtError : new Error(String(caughtError));
 
 				if (!isCancelled) {
 					setTranscript([{ role: 'error', content: error.message }]);
@@ -352,10 +310,7 @@ const InteractiveApp = ({
 
 		setStatus('streaming');
 		setStreamingContent('');
-		setTranscript((currentTranscript) => [
-			...currentTranscript,
-			{ role: 'user', content: prompt },
-		]);
+		setTranscript((currentTranscript) => [...currentTranscript, { role: 'user', content: prompt }]);
 
 		let assistantContent = '';
 		const activeTurn = turnAbort.start();
@@ -376,10 +331,7 @@ const InteractiveApp = ({
 				{ role: 'assistant', content: assistantContent },
 			]);
 		} catch (caughtError) {
-			const error =
-				caughtError instanceof Error
-					? caughtError
-					: new Error(String(caughtError));
+			const error = caughtError instanceof Error ? caughtError : new Error(String(caughtError));
 
 			setTranscript((currentTranscript) => [
 				...currentTranscript,
@@ -415,10 +367,7 @@ const InteractiveApp = ({
 				},
 			]);
 		} catch (caughtError) {
-			const error =
-				caughtError instanceof Error
-					? caughtError
-					: new Error(String(caughtError));
+			const error = caughtError instanceof Error ? caughtError : new Error(String(caughtError));
 
 			setTranscript((currentTranscript) => [
 				...currentTranscript,
@@ -452,7 +401,7 @@ const InteractiveApp = ({
 				resolveToolApproval(false);
 			}
 		},
-		{ isActive: pendingApproval !== null }
+		{ isActive: pendingApproval !== null },
 	);
 
 	useInput(
@@ -461,7 +410,7 @@ const InteractiveApp = ({
 				turnAbort.abort();
 			}
 		},
-		{ isActive: status === 'streaming' && pendingApproval === null }
+		{ isActive: status === 'streaming' && pendingApproval === null },
 	);
 
 	useInput(
@@ -485,9 +434,7 @@ const InteractiveApp = ({
 			}
 
 			if (key.rightArrow) {
-				setCursorIndex((currentIndex) =>
-					Math.min(input.length, currentIndex + 1)
-				);
+				setCursorIndex((currentIndex) => Math.min(input.length, currentIndex + 1));
 				return;
 			}
 
@@ -508,9 +455,7 @@ const InteractiveApp = ({
 
 				setInput(
 					(currentInput) =>
-						`${currentInput.slice(0, cursorIndex - 1)}${currentInput.slice(
-							cursorIndex
-						)}`
+						`${currentInput.slice(0, cursorIndex - 1)}${currentInput.slice(cursorIndex)}`,
 				);
 				setCursorIndex((currentIndex) => currentIndex - 1);
 				return;
@@ -523,9 +468,7 @@ const InteractiveApp = ({
 
 				setInput(
 					(currentInput) =>
-						`${currentInput.slice(0, cursorIndex)}${currentInput.slice(
-							cursorIndex + 1
-						)}`
+						`${currentInput.slice(0, cursorIndex)}${currentInput.slice(cursorIndex + 1)}`,
 				);
 				return;
 			}
@@ -537,34 +480,23 @@ const InteractiveApp = ({
 			if (value.length > 0) {
 				setInput(
 					(currentInput) =>
-						`${currentInput.slice(0, cursorIndex)}${value}${currentInput.slice(
-							cursorIndex
-						)}`
+						`${currentInput.slice(0, cursorIndex)}${value}${currentInput.slice(cursorIndex)}`,
 				);
 				setCursorIndex((currentIndex) => currentIndex + value.length);
 			}
 		},
-		{ isActive: !isBusy && pendingApproval === null }
+		{ isActive: !isBusy && pendingApproval === null },
 	);
 
 	return (
 		<AppShell
 			sessionId={sessionId}
 			status={status}
-			statusText={
-				pendingApproval === null
-					? getStatusText(status)
-					: 'approval required'
-			}
+			statusText={pendingApproval === null ? getStatusText(status) : 'approval required'}
 		>
-			<TranscriptView
-				streamingContent={streamingContent}
-				transcript={transcript}
-			/>
+			<TranscriptView streamingContent={streamingContent} transcript={transcript} />
 
-			{pendingApproval === null ? null : (
-				<ApprovalPrompt request={pendingApproval} />
-			)}
+			{pendingApproval === null ? null : <ApprovalPrompt request={pendingApproval} />}
 
 			<Composer
 				cursorIndex={cursorIndex}
@@ -578,9 +510,7 @@ const InteractiveApp = ({
 	);
 };
 
-const sessionEventsToTranscript = (
-	events: ListedSessionEvent[]
-): TranscriptEntry[] => {
+const sessionEventsToTranscript = (events: ListedSessionEvent[]): TranscriptEntry[] => {
 	return events.map((event) => {
 		if (event.type === 'prompt.submitted') {
 			return { role: 'user', content: event.prompt };
@@ -590,16 +520,11 @@ const sessionEventsToTranscript = (
 	});
 };
 
-const getSessionModelName = (
-	events: ListedSessionEvent[]
-): string | undefined => {
+const getSessionModelName = (events: ListedSessionEvent[]): string | undefined => {
 	for (let index = events.length - 1; index >= 0; index -= 1) {
 		const event = events[index];
 
-		if (
-			event?.type === 'prompt.submitted' &&
-			event.modelName !== undefined
-		) {
+		if (event?.type === 'prompt.submitted' && event.modelName !== undefined) {
 			return event.modelName;
 		}
 	}
@@ -614,19 +539,10 @@ type AppShellProps = {
 	statusText: string;
 };
 
-const AppShell = ({
-	children,
-	sessionId,
-	status,
-	statusText,
-}: AppShellProps) => {
+const AppShell = ({ children, sessionId, status, statusText }: AppShellProps) => {
 	return (
 		<Box flexDirection="column" gap={1} paddingX={1} paddingY={1}>
-			<Header
-				sessionId={sessionId}
-				status={status}
-				statusText={statusText}
-			/>
+			<Header sessionId={sessionId} status={status} statusText={statusText} />
 			{children}
 			<Text color="gray">Press Ctrl+C to exit.</Text>
 		</Box>
@@ -650,9 +566,7 @@ const Header = ({ sessionId, status, statusText }: HeaderProps) => {
 			</Box>
 
 			<Text color="gray">
-				{sessionId === undefined
-					? 'session not selected'
-					: `session ${sessionId}`}
+				{sessionId === undefined ? 'session not selected' : `session ${sessionId}`}
 			</Text>
 		</Box>
 	);
@@ -726,9 +640,7 @@ const parseModelCommand = (prompt: string): ModelCommand | null => {
 
 	const modelName = trimmedPrompt.slice(MODEL_COMMAND.length).trim();
 
-	return modelName.length === 0
-		? { type: 'show' }
-		: { type: 'switch', modelName };
+	return modelName.length === 0 ? { type: 'show' } : { type: 'switch', modelName };
 };
 
 type TranscriptViewProps = {
@@ -736,10 +648,7 @@ type TranscriptViewProps = {
 	transcript: TranscriptEntry[];
 };
 
-const TranscriptView = ({
-	streamingContent,
-	transcript,
-}: TranscriptViewProps) => {
+const TranscriptView = ({ streamingContent, transcript }: TranscriptViewProps) => {
 	if (transcript.length === 0 && streamingContent.length === 0) {
 		return (
 			<Box backgroundColor={PANEL_BACKGROUND} paddingX={2} paddingY={1}>
@@ -798,12 +707,7 @@ type ApprovalPromptProps = {
 
 const ApprovalPrompt = ({ request }: ApprovalPromptProps) => {
 	return (
-		<Box
-			backgroundColor={PANEL_BACKGROUND}
-			flexDirection="column"
-			paddingX={2}
-			paddingY={1}
-		>
+		<Box backgroundColor={PANEL_BACKGROUND} flexDirection="column" paddingX={2} paddingY={1}>
 			<Text color="yellow">Approve {request.toolName}? y/n</Text>
 			{formatApprovalInput(request.toolInput).map((line, index) => (
 				<Text color="gray" key={`${index}-${line}`}>
@@ -840,9 +744,7 @@ const formatApprovalInput = (toolInput: unknown): string[] => {
 
 	const fallbackInput = JSON.stringify(toolInput);
 
-	return lines.length > 0
-		? lines
-		: [`input ${fallbackInput ?? String(toolInput)}`];
+	return lines.length > 0 ? lines : [`input ${fallbackInput ?? String(toolInput)}`];
 };
 
 const formatInlinePreview = (text: string): string => {
@@ -885,9 +787,7 @@ const Composer = ({
 				<Text color="white">&gt; </Text>
 				{isDisabled ? (
 					<Text color="gray">
-						{status === 'loading'
-							? 'loading session'
-							: 'streaming response'}
+						{status === 'loading' ? 'loading session' : 'streaming response'}
 					</Text>
 				) : (
 					<InputText cursorIndex={cursorIndex} value={input} />
@@ -918,8 +818,7 @@ const InputText = ({ cursorIndex, value }: InputTextProps) => {
 
 	const beforeCursor = value.slice(0, cursorIndex);
 	const cursorCharacter = value[cursorIndex] ?? ' ';
-	const afterCursor =
-		cursorIndex >= value.length ? '' : value.slice(cursorIndex + 1);
+	const afterCursor = cursorIndex >= value.length ? '' : value.slice(cursorIndex + 1);
 
 	return (
 		<Text>

@@ -11,9 +11,7 @@ export type OllamaChatStreamResponse = {
 	done?: boolean;
 };
 
-export const toOllamaMessage = (
-	message: ModelMessage,
-): Record<string, unknown> => {
+export const toOllamaMessage = (message: ModelMessage): Record<string, unknown> => {
 	const baseMessage: Record<string, unknown> = {
 		role: message.role,
 		content: message.content,
@@ -40,9 +38,7 @@ export const toOllamaMessage = (
 	return baseMessage;
 };
 
-export const toOllamaTool = (
-	tool: ToolDefinition,
-): Record<string, unknown> => {
+export const toOllamaTool = (tool: ToolDefinition): Record<string, unknown> => {
 	return {
 		type: 'function',
 		function: {
@@ -53,9 +49,7 @@ export const toOllamaTool = (
 	};
 };
 
-export const toModelStreamChunk = (
-	response: OllamaChatStreamResponse,
-): ModelStreamChunk => {
+export const toModelStreamChunk = (response: OllamaChatStreamResponse): ModelStreamChunk => {
 	const toolCalls = parseOllamaToolCalls(response.message?.tool_calls ?? []);
 
 	return {
@@ -64,9 +58,7 @@ export const toModelStreamChunk = (
 	};
 };
 
-const toOllamaToolCall = (
-	toolCall: ModelToolCall,
-): Record<string, unknown> => {
+const toOllamaToolCall = (toolCall: ModelToolCall): Record<string, unknown> => {
 	return {
 		function: {
 			name: toolCall.name,
@@ -75,9 +67,7 @@ const toOllamaToolCall = (
 	};
 };
 
-const parseOllamaToolCalls = (
-	toolCalls: unknown,
-): ModelToolCall[] => {
+const parseOllamaToolCalls = (toolCalls: unknown): ModelToolCall[] => {
 	if (toolCalls === undefined) {
 		return [];
 	}
@@ -105,10 +95,7 @@ const parseOllamaToolCalls = (
 	});
 };
 
-const parseToolCallArguments = (
-	toolArguments: unknown,
-	toolName: string,
-): unknown => {
+const parseToolCallArguments = (toolArguments: unknown, toolName: string): unknown => {
 	if (typeof toolArguments !== 'string') {
 		return toolArguments ?? {};
 	}
@@ -116,12 +103,9 @@ const parseToolCallArguments = (
 	try {
 		return JSON.parse(toolArguments);
 	} catch (caughtError) {
-		const message =
-			caughtError instanceof Error ? caughtError.message : String(caughtError);
+		const message = caughtError instanceof Error ? caughtError.message : String(caughtError);
 
-		throw new Error(
-			`Invalid Ollama tool arguments for ${toolName}: ${message}`,
-		);
+		throw new Error(`Invalid Ollama tool arguments for ${toolName}: ${message}`);
 	}
 };
 

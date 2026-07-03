@@ -1,9 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import {
-	RipgrepSearch,
-	type RipgrepCommandRunner,
-} from './RipgrepSearch';
+import { RipgrepSearch, type RipgrepCommandRunner } from './RipgrepSearch';
 
 type CommandResult = Awaited<ReturnType<RipgrepCommandRunner>>;
 
@@ -24,9 +21,7 @@ const createSearch = (
 	});
 };
 
-const createSequenceRunner = (
-	results: CommandResult[],
-): RipgrepCommandRunner => {
+const createSequenceRunner = (results: CommandResult[]): RipgrepCommandRunner => {
 	let index = 0;
 
 	return async () => {
@@ -156,10 +151,7 @@ describe('RipgrepSearch', () => {
 
 	test('reports invalid rg JSON output', async () => {
 		const search = createSearch(
-			createSequenceRunner([
-				successful('not-json\n'),
-				{ stdout: '', stderr: '', exitCode: 1 },
-			]),
+			createSequenceRunner([successful('not-json\n'), { stdout: '', stderr: '', exitCode: 1 }]),
 		);
 
 		await expect(search.search({ query: 'needle' })).rejects.toThrow(

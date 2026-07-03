@@ -4,11 +4,8 @@ type EnvSource = Record<string, string | undefined>;
 
 const envString = (defaultValue: string) =>
 	z.preprocess(
-		(value) =>
-			typeof value === 'string' && value.trim() === ''
-				? undefined
-				: value,
-		z.string().trim().min(1).default(defaultValue)
+		(value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+		z.string().trim().min(1).default(defaultValue),
 	);
 
 const ConfigSchema = z.object({
@@ -23,9 +20,7 @@ export const readConfig = (env: EnvSource = Bun.env): AppConfig => {
 	const result = ConfigSchema.safeParse(env);
 
 	if (!result.success) {
-		throw new Error(
-			`Invalid configuration:\n${z.prettifyError(result.error)}`
-		);
+		throw new Error(`Invalid configuration:\n${z.prettifyError(result.error)}`);
 	}
 
 	return result.data;

@@ -1,10 +1,7 @@
 import type { IdGeneratorPort } from '@/application/ports/IdGeneratorPort';
 import type { ModelPort } from '@/application/ports/ModelPort';
 import { ContextBuilder } from '@/application/services/ContextBuilder';
-import {
-	RunAgentTurn,
-	type ToolApprovalHandler,
-} from '@/application/use-cases/RunAgentTurn';
+import { RunAgentTurn, type ToolApprovalHandler } from '@/application/use-cases/RunAgentTurn';
 import { OllamaModelAdapter } from '@/infrastructure/model/OllamaModelAdapter';
 import { JsonlSessionStore } from '@/infrastructure/persistence/JsonlSessionStore';
 import { BunUuidV7IdGenerator } from '@/infrastructure/runtime/BunUuidV7IdGenerator';
@@ -31,10 +28,7 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 	const sessionStore = new JsonlSessionStore();
 
 	let currentModelName = normalizeModelName(config.OLLAMA_MODEL);
-	let currentModel = new OllamaModelAdapter(
-		config.OLLAMA_BASE_URL,
-		currentModelName,
-	);
+	let currentModel = new OllamaModelAdapter(config.OLLAMA_BASE_URL, currentModelName);
 
 	const model: ModelPort = {
 		streamChat: (input) => currentModel.streamChat(input),
@@ -70,10 +64,7 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 		getModelName: () => currentModelName,
 		switchModel: (modelName) => {
 			currentModelName = normalizeModelName(modelName);
-			currentModel = new OllamaModelAdapter(
-				config.OLLAMA_BASE_URL,
-				currentModelName,
-			);
+			currentModel = new OllamaModelAdapter(config.OLLAMA_BASE_URL, currentModelName);
 
 			return currentModelName;
 		},

@@ -4,15 +4,11 @@ import { renderToString } from 'ink';
 import { Markdown } from './Markdown';
 
 const renderMarkdown = (markdown: string, maxWidth = 40): string =>
-	Bun.stripANSI(
-		renderToString(<Markdown maxWidth={maxWidth}>{markdown}</Markdown>),
-	);
+	Bun.stripANSI(renderToString(<Markdown maxWidth={maxWidth}>{markdown}</Markdown>));
 
 describe('Markdown', () => {
 	test('renders basic formatting and fenced code', () => {
-		const output = renderMarkdown(
-			'**Result**\n\n```ts\nconst value = 1;\n```',
-		);
+		const output = renderMarkdown('**Result**\n\n```ts\nconst value = 1;\n```');
 
 		expect(output).toContain('Result');
 		expect(output).toContain('ts');
@@ -20,9 +16,7 @@ describe('Markdown', () => {
 	});
 
 	test('does not render raw HTML', () => {
-		const output = renderMarkdown(
-			'<script>alert("unsafe")</script>\n\nVisible text',
-		);
+		const output = renderMarkdown('<script>alert("unsafe")</script>\n\nVisible text');
 
 		expect(output).not.toContain('unsafe');
 		expect(output).toContain('Visible text');
@@ -34,8 +28,6 @@ describe('Markdown', () => {
 			24,
 		);
 
-		expect(Math.max(...output.split('\n').map((line) => line.length))).toBeLessThanOrEqual(
-			24,
-		);
+		expect(Math.max(...output.split('\n').map((line) => line.length))).toBeLessThanOrEqual(24);
 	});
 });

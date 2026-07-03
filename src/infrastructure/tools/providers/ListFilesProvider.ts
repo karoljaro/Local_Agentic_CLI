@@ -23,8 +23,7 @@ const TOOL_DEFINITION = {
 		properties: {
 			path: {
 				type: 'string',
-				description:
-					'Optional relative file or directory path. Defaults to the workspace root.',
+				description: 'Optional relative file or directory path. Defaults to the workspace root.',
 			},
 		},
 	},
@@ -35,7 +34,7 @@ export class ListFilesProvider {
 
 	constructor(
 		private readonly listWorkspaceFiles: ListWorkspaceFiles,
-		options: ListFilesProviderOptions
+		options: ListFilesProviderOptions,
 	) {
 		if (!Number.isInteger(options.maxEntries) || options.maxEntries <= 0) {
 			throw new Error('Max list entries must be a positive integer.');
@@ -74,10 +73,7 @@ const parseListFilesInput = (toolInput: unknown): ListFilesInput => {
 		return {};
 	}
 
-	if (
-		typeof toolInput.path !== 'string' ||
-		toolInput.path.trim().length === 0
-	) {
+	if (typeof toolInput.path !== 'string' || toolInput.path.trim().length === 0) {
 		throw new Error('list_files path must be a non-empty string.');
 	}
 

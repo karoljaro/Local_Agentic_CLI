@@ -41,8 +41,7 @@ export class EditFileProvider {
 				properties: {
 					path: {
 						type: 'string',
-						description:
-							'The path to the file to edit, relative to the workspace root.',
+						description: 'The path to the file to edit, relative to the workspace root.',
 					},
 					newText: {
 						type: 'string',

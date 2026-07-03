@@ -32,8 +32,7 @@ export class CreateFileProvider {
 				properties: {
 					path: {
 						type: 'string',
-						description:
-							'The path for the new file, relative to the workspace root.',
+						description: 'The path for the new file, relative to the workspace root.',
 					},
 					content: {
 						type: 'string',

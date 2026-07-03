@@ -1,4 +1,4 @@
-import type { IdGeneratorPort } from "@/application/ports/IdGeneratorPort";
+import type { IdGeneratorPort } from '@/application/ports/IdGeneratorPort';
 import {
 	asEventId,
 	asMessageId,
@@ -8,7 +8,7 @@ import {
 	type MessageId,
 	type SessionId,
 	type ToolCallId,
-} from "@/domain/Ids";
+} from '@/domain/Ids';
 
 type BunWithUuidV7 = typeof Bun & {
 	randomUUIDv7(): string;

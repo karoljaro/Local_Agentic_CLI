@@ -1,9 +1,4 @@
-import type {
-	EventId,
-	MessageId,
-	SessionId,
-	ToolCallId,
-} from "@/domain/Ids";
+import type { EventId, MessageId, SessionId, ToolCallId } from '@/domain/Ids';
 
 export interface IdGeneratorPort {
 	nextEventId(): EventId;

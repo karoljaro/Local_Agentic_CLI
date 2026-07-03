@@ -4,10 +4,7 @@ import type { SessionId, ToolCallId } from '@/domain/Ids';
 import type { AgentEvent } from '@/domain/AgentEvent';
 import type { ModelToolCall } from '@/domain/Tool';
 
-export const reduceAgentState = (
-	sessionId: SessionId,
-	events: AgentEvent[],
-): AgentState => {
+export const reduceAgentState = (sessionId: SessionId, events: AgentEvent[]): AgentState => {
 	const state = createInitialAgentState(sessionId);
 	const pendingToolCalls = new Map<ToolCallId, ModelToolCall>();
 
@@ -74,9 +71,7 @@ export const reduceAgentState = (
 					message: event.error.message,
 					...(event.error.code === undefined ? {} : { code: event.error.code }),
 					recoverable: true,
-					...(event.error.details === undefined
-						? {}
-						: { details: event.error.details }),
+					...(event.error.details === undefined ? {} : { details: event.error.details }),
 				});
 				break;
 
@@ -89,10 +84,7 @@ export const reduceAgentState = (
 	return state;
 };
 
-const appendToolCallMessage = (
-	state: AgentState,
-	toolCall: ModelToolCall | undefined,
-): void => {
+const appendToolCallMessage = (state: AgentState, toolCall: ModelToolCall | undefined): void => {
 	if (toolCall === undefined) {
 		return;
 	}

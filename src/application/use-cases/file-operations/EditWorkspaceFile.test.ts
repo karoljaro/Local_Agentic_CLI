@@ -13,9 +13,7 @@ import { EditWorkspaceFile } from './EditWorkspaceFile';
 class RecordingWorkspaceFilePort implements WorkspaceFilePort {
 	writeInput: WriteWorkspaceFileInput | undefined;
 
-	async listFiles(
-		_input: ListWorkspaceFilesInput
-	): Promise<WorkspaceFileList> {
+	async listFiles(_input: ListWorkspaceFilesInput): Promise<WorkspaceFileList> {
 		throw new Error('not used');
 	}
 

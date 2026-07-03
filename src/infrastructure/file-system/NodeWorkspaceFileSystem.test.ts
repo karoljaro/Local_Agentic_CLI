@@ -1,10 +1,4 @@
-import {
-	mkdir,
-	readdir,
-	readFile,
-	symlink,
-	writeFile,
-} from 'node:fs/promises';
+import { mkdir, readdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { describe, expect, test } from 'bun:test';
@@ -19,9 +13,7 @@ const createTempWorkspace = async (): Promise<{
 	fileSystem: NodeWorkspaceFileSystem;
 	cleanup: () => Promise<void>;
 }> => {
-	const { directory, cleanup } = await createTempDirectory(
-		'workspace-file-system-',
-	);
+	const { directory, cleanup } = await createTempDirectory('workspace-file-system-');
 
 	return {
 		directory,
@@ -33,27 +25,16 @@ const createTempWorkspace = async (): Promise<{
 describe('NodeWorkspaceFileSystem', () => {
 	describe('listFiles', () => {
 		test('lists workspace files recursively in path order', async () => {
-			const { directory, fileSystem, cleanup } =
-				await createTempWorkspace();
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
 
 			try {
 				await mkdir(join(directory, 'src', 'nested'), {
 					recursive: true,
 				});
-				await writeFile(
-					join(directory, 'src', 'nested', 'second.ts'),
-					'second',
-					'utf8',
-				);
-				await writeFile(
-					join(directory, 'src', 'first.ts'),
-					'first',
-					'utf8',
-				);
+				await writeFile(join(directory, 'src', 'nested', 'second.ts'), 'second', 'utf8');
+				await writeFile(join(directory, 'src', 'first.ts'), 'first', 'utf8');
 
-				await expect(
-					fileSystem.listFiles({ maxEntries: 10 }),
-				).resolves.toEqual({
+				await expect(fileSystem.listFiles({ maxEntries: 10 })).resolves.toEqual({
 					files: ['src/first.ts', 'src/nested/second.ts'],
 					truncated: false,
 				});
@@ -63,22 +44,13 @@ describe('NodeWorkspaceFileSystem', () => {
 		});
 
 		test('lists files under a relative path', async () => {
-			const { directory, fileSystem, cleanup } =
-				await createTempWorkspace();
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
 
 			try {
 				await mkdir(join(directory, 'src'));
 				await mkdir(join(directory, 'tests'));
-				await writeFile(
-					join(directory, 'src', 'file.ts'),
-					'source',
-					'utf8',
-				);
-				await writeFile(
-					join(directory, 'tests', 'file.test.ts'),
-					'test',
-					'utf8',
-				);
+				await writeFile(join(directory, 'src', 'file.ts'), 'source', 'utf8');
+				await writeFile(join(directory, 'tests', 'file.test.ts'), 'test', 'utf8');
 
 				await expect(
 					fileSystem.listFiles({
@@ -95,8 +67,7 @@ describe('NodeWorkspaceFileSystem', () => {
 		});
 
 		test('excludes internal directories and unsafe env files', async () => {
-			const { directory, fileSystem, cleanup } =
-				await createTempWorkspace();
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
 
 			try {
 				await mkdir(join(directory, '.agent'));
@@ -104,40 +75,14 @@ describe('NodeWorkspaceFileSystem', () => {
 				await mkdir(join(directory, 'node_modules', 'pkg'), {
 					recursive: true,
 				});
-				await writeFile(
-					join(directory, '.agent', 'events.jsonl'),
-					'event',
-					'utf8',
-				);
-				await writeFile(
-					join(directory, '.git', 'config'),
-					'git',
-					'utf8',
-				);
-				await writeFile(
-					join(directory, 'node_modules', 'pkg', 'index.js'),
-					'module',
-					'utf8',
-				);
-				await writeFile(
-					join(directory, '.env'),
-					'SECRET=value',
-					'utf8',
-				);
-				await writeFile(
-					join(directory, '.env.local'),
-					'SECRET=local',
-					'utf8',
-				);
-				await writeFile(
-					join(directory, '.env.example'),
-					'SECRET=example',
-					'utf8',
-				);
+				await writeFile(join(directory, '.agent', 'events.jsonl'), 'event', 'utf8');
+				await writeFile(join(directory, '.git', 'config'), 'git', 'utf8');
+				await writeFile(join(directory, 'node_modules', 'pkg', 'index.js'), 'module', 'utf8');
+				await writeFile(join(directory, '.env'), 'SECRET=value', 'utf8');
+				await writeFile(join(directory, '.env.local'), 'SECRET=local', 'utf8');
+				await writeFile(join(directory, '.env.example'), 'SECRET=example', 'utf8');
 
-				await expect(
-					fileSystem.listFiles({ maxEntries: 10 }),
-				).resolves.toEqual({
+				await expect(fileSystem.listFiles({ maxEntries: 10 })).resolves.toEqual({
 					files: ['.env.example'],
 					truncated: false,
 				});
@@ -147,25 +92,20 @@ describe('NodeWorkspaceFileSystem', () => {
 		});
 
 		test('reports truncation only when more files exist', async () => {
-			const { directory, fileSystem, cleanup } =
-				await createTempWorkspace();
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
 
 			try {
 				await writeFile(join(directory, 'a.ts'), 'a', 'utf8');
 				await writeFile(join(directory, 'b.ts'), 'b', 'utf8');
 
-				await expect(
-					fileSystem.listFiles({ maxEntries: 2 }),
-				).resolves.toEqual({
+				await expect(fileSystem.listFiles({ maxEntries: 2 })).resolves.toEqual({
 					files: ['a.ts', 'b.ts'],
 					truncated: false,
 				});
 
 				await writeFile(join(directory, 'c.ts'), 'c', 'utf8');
 
-				await expect(
-					fileSystem.listFiles({ maxEntries: 2 }),
-				).resolves.toEqual({
+				await expect(fileSystem.listFiles({ maxEntries: 2 })).resolves.toEqual({
 					files: ['a.ts', 'b.ts'],
 					truncated: true,
 				});
@@ -178,9 +118,7 @@ describe('NodeWorkspaceFileSystem', () => {
 			const { fileSystem, cleanup } = await createTempWorkspace();
 
 			try {
-				await expect(
-					fileSystem.listFiles({ maxEntries: 0 }),
-				).rejects.toThrow(
+				await expect(fileSystem.listFiles({ maxEntries: 0 })).rejects.toThrow(
 					'Max list entries must be a positive integer.',
 				);
 				await expect(
@@ -197,16 +135,11 @@ describe('NodeWorkspaceFileSystem', () => {
 
 	describe('readFile', () => {
 		test('reads a UTF-8 file from the workspace', async () => {
-			const { directory, fileSystem, cleanup } =
-				await createTempWorkspace();
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
 
 			try {
 				await mkdir(join(directory, 'src'));
-				await writeFile(
-					join(directory, 'src', 'file.txt'),
-					'zażółć',
-					'utf8',
-				);
+				await writeFile(join(directory, 'src', 'file.txt'), 'zażółć', 'utf8');
 
 				await expect(
 					fileSystem.readFile({
@@ -223,15 +156,10 @@ describe('NodeWorkspaceFileSystem', () => {
 		});
 
 		test('rejects protected env files', async () => {
-			const { directory, fileSystem, cleanup } =
-				await createTempWorkspace();
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
 
 			try {
-				await writeFile(
-					join(directory, '.env'),
-					'SECRET=value',
-					'utf8',
-				);
+				await writeFile(join(directory, '.env'), 'SECRET=value', 'utf8');
 
 				await expect(
 					fileSystem.readFile({
@@ -245,25 +173,13 @@ describe('NodeWorkspaceFileSystem', () => {
 		});
 
 		test('rejects relative, absolute, and symlink escapes', async () => {
-			const { directory, fileSystem, cleanup } =
-				await createTempWorkspace();
-			const {
-				directory: outsideDirectory,
-				cleanup: cleanupOutsideDirectory,
-			} = await createTempDirectory(
-				'outside-workspace-',
-			);
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
+			const { directory: outsideDirectory, cleanup: cleanupOutsideDirectory } =
+				await createTempDirectory('outside-workspace-');
 
 			try {
-				await writeFile(
-					join(outsideDirectory, 'secret.txt'),
-					'secret',
-					'utf8',
-				);
-				await symlink(
-					join(outsideDirectory, 'secret.txt'),
-					join(directory, 'link.txt'),
-				);
+				await writeFile(join(outsideDirectory, 'secret.txt'), 'secret', 'utf8');
+				await symlink(join(outsideDirectory, 'secret.txt'), join(directory, 'link.txt'));
 
 				await expect(
 					fileSystem.readFile({
@@ -276,9 +192,7 @@ describe('NodeWorkspaceFileSystem', () => {
 						path: join(directory, 'file.txt'),
 						maxFileBytes: MAX_FILE_BYTES,
 					}),
-				).rejects.toThrow(
-					'Workspace file path must be relative.',
-				);
+				).rejects.toThrow('Workspace file path must be relative.');
 				await expect(
 					fileSystem.readFile({
 						path: 'link.txt',
@@ -292,15 +206,10 @@ describe('NodeWorkspaceFileSystem', () => {
 		});
 
 		test('rejects files above the size limit', async () => {
-			const { directory, fileSystem, cleanup } =
-				await createTempWorkspace();
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
 
 			try {
-				await writeFile(
-					join(directory, 'large.txt'),
-					'hello',
-					'utf8',
-				);
+				await writeFile(join(directory, 'large.txt'), 'hello', 'utf8');
 
 				await expect(
 					fileSystem.readFile({
@@ -316,15 +225,10 @@ describe('NodeWorkspaceFileSystem', () => {
 
 	describe('writeFile', () => {
 		test('writes an existing UTF-8 file', async () => {
-			const { directory, fileSystem, cleanup } =
-				await createTempWorkspace();
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
 
 			try {
-				await writeFile(
-					join(directory, 'file.txt'),
-					'before',
-					'utf8',
-				);
+				await writeFile(join(directory, 'file.txt'), 'before', 'utf8');
 
 				await expect(
 					fileSystem.writeFile({
@@ -336,29 +240,18 @@ describe('NodeWorkspaceFileSystem', () => {
 					path: 'file.txt',
 					content: 'after',
 				});
-				await expect(
-					readFile(join(directory, 'file.txt'), 'utf8'),
-				).resolves.toBe('after');
+				await expect(readFile(join(directory, 'file.txt'), 'utf8')).resolves.toBe('after');
 			} finally {
 				await cleanup();
 			}
 		});
 
 		test('rejects a stale write when expected content no longer matches', async () => {
-			const { directory, fileSystem, cleanup } =
-				await createTempWorkspace();
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
 
 			try {
-				await writeFile(
-					join(directory, 'file.txt'),
-					'before',
-					'utf8',
-				);
-				await writeFile(
-					join(directory, 'file.txt'),
-					'changed elsewhere',
-					'utf8',
-				);
+				await writeFile(join(directory, 'file.txt'), 'before', 'utf8');
+				await writeFile(join(directory, 'file.txt'), 'changed elsewhere', 'utf8');
 
 				await expect(
 					fileSystem.writeFile({
@@ -368,24 +261,19 @@ describe('NodeWorkspaceFileSystem', () => {
 						maxFileBytes: MAX_FILE_BYTES,
 					}),
 				).rejects.toThrow('File changed since it was read');
-				await expect(
-					readFile(join(directory, 'file.txt'), 'utf8'),
-				).resolves.toBe('changed elsewhere');
+				await expect(readFile(join(directory, 'file.txt'), 'utf8')).resolves.toBe(
+					'changed elsewhere',
+				);
 			} finally {
 				await cleanup();
 			}
 		});
 
 		test('does not leave temporary files after writing', async () => {
-			const { directory, fileSystem, cleanup } =
-				await createTempWorkspace();
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
 
 			try {
-				await writeFile(
-					join(directory, 'file.txt'),
-					'before',
-					'utf8',
-				);
+				await writeFile(join(directory, 'file.txt'), 'before', 'utf8');
 
 				await fileSystem.writeFile({
 					path: 'file.txt',
@@ -402,15 +290,10 @@ describe('NodeWorkspaceFileSystem', () => {
 		});
 
 		test('rejects content above the size limit', async () => {
-			const { directory, fileSystem, cleanup } =
-				await createTempWorkspace();
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
 
 			try {
-				await writeFile(
-					join(directory, 'file.txt'),
-					'short',
-					'utf8',
-				);
+				await writeFile(join(directory, 'file.txt'), 'short', 'utf8');
 
 				await expect(
 					fileSystem.writeFile({
@@ -419,9 +302,7 @@ describe('NodeWorkspaceFileSystem', () => {
 						maxFileBytes: 8,
 					}),
 				).rejects.toThrow('File content is too large');
-				await expect(
-					readFile(join(directory, 'file.txt'), 'utf8'),
-				).resolves.toBe('short');
+				await expect(readFile(join(directory, 'file.txt'), 'utf8')).resolves.toBe('short');
 			} finally {
 				await cleanup();
 			}
@@ -430,8 +311,7 @@ describe('NodeWorkspaceFileSystem', () => {
 
 	describe('createFile', () => {
 		test('creates a new UTF-8 file in an existing directory', async () => {
-			const { directory, fileSystem, cleanup } =
-				await createTempWorkspace();
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
 
 			try {
 				await mkdir(join(directory, 'src'));
@@ -446,24 +326,19 @@ describe('NodeWorkspaceFileSystem', () => {
 					path: 'src/new-file.ts',
 					content: 'export const value = 1;\n',
 				});
-				await expect(
-					readFile(join(directory, 'src', 'new-file.ts'), 'utf8'),
-				).resolves.toBe('export const value = 1;\n');
+				await expect(readFile(join(directory, 'src', 'new-file.ts'), 'utf8')).resolves.toBe(
+					'export const value = 1;\n',
+				);
 			} finally {
 				await cleanup();
 			}
 		});
 
 		test('does not overwrite an existing file', async () => {
-			const { directory, fileSystem, cleanup } =
-				await createTempWorkspace();
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
 
 			try {
-				await writeFile(
-					join(directory, 'file.txt'),
-					'existing',
-					'utf8',
-				);
+				await writeFile(join(directory, 'file.txt'), 'existing', 'utf8');
 
 				await expect(
 					fileSystem.createFile({
@@ -472,9 +347,7 @@ describe('NodeWorkspaceFileSystem', () => {
 						maxFileBytes: MAX_FILE_BYTES,
 					}),
 				).rejects.toThrow('File already exists');
-				await expect(
-					readFile(join(directory, 'file.txt'), 'utf8'),
-				).resolves.toBe('existing');
+				await expect(readFile(join(directory, 'file.txt'), 'utf8')).resolves.toBe('existing');
 			} finally {
 				await cleanup();
 			}
@@ -504,14 +377,9 @@ describe('NodeWorkspaceFileSystem', () => {
 		});
 
 		test('rejects a parent directory symlink outside the workspace', async () => {
-			const { directory, fileSystem, cleanup } =
-				await createTempWorkspace();
-			const {
-				directory: outsideDirectory,
-				cleanup: cleanupOutsideDirectory,
-			} = await createTempDirectory(
-				'outside-workspace-',
-			);
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
+			const { directory: outsideDirectory, cleanup: cleanupOutsideDirectory } =
+				await createTempDirectory('outside-workspace-');
 
 			try {
 				await symlink(outsideDirectory, join(directory, 'outside'));

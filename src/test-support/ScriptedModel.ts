@@ -1,18 +1,11 @@
-import type {
-	ModelChatInput,
-	ModelPort,
-	ModelStreamChunk,
-} from '@/application/ports/ModelPort';
+import type { ModelChatInput, ModelPort, ModelStreamChunk } from '@/application/ports/ModelPort';
 
 type ScriptedModelInterruptedResponse = {
 	chunks: ModelStreamChunk[];
 	error: Error;
 };
 
-type ScriptedModelResponse =
-	| ModelStreamChunk[]
-	| Error
-	| ScriptedModelInterruptedResponse;
+type ScriptedModelResponse = ModelStreamChunk[] | Error | ScriptedModelInterruptedResponse;
 
 export class ScriptedModel implements ModelPort {
 	readonly receivedInputs: ModelChatInput[] = [];
