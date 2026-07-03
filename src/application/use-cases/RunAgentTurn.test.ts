@@ -14,13 +14,10 @@ import {
 	type ToolCallId,
 } from '@/domain/Ids';
 import type { ModelToolCall } from '@/domain/Tool';
+import { ScriptedModel } from '@/test-support/ScriptedModel';
 import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
-import type {
-	ModelChatInput,
-	ModelPort,
-	ModelStreamChunk,
-} from '../ports/ModelPort';
+import type { ModelStreamChunk } from '../ports/ModelPort';
 import type {
 	SessionStorePort,
 	StoredSession,
@@ -49,424 +46,34 @@ class InMemorySessionStore implements SessionStorePort {
 	}
 }
 
-class FakeModel implements ModelPort {
-	receivedInput: ModelChatInput | null = null;
-
-	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
-		this.receivedInput = input;
-
-		yield { contentDelta: 'Hello' };
-		yield { contentDelta: ' there' };
-	}
-}
-
-class EmptyModel implements ModelPort {
-	async *streamChat(): AsyncIterable<ModelStreamChunk> {}
-}
-
-class FailingModel implements ModelPort {
-	async *streamChat(): AsyncIterable<ModelStreamChunk> {
-		throw new Error('model failed');
-	}
-}
-
-class DeltaThenFailingModel implements ModelPort {
-	async *streamChat(): AsyncIterable<ModelStreamChunk> {
-		yield { contentDelta: 'partial ' };
-		yield { contentDelta: 'answer' };
-
-		throw new Error('Ollama stream failed: model failed');
-	}
-}
-
-type FakeModelResult = {
-	content: string;
-	toolCalls: ModelToolCall[];
-};
-
-const streamResult = async function* (
-	result: FakeModelResult,
-): AsyncIterable<ModelStreamChunk> {
-	if (result.content.length > 0) {
-		yield { contentDelta: result.content };
-	}
-
-	if (result.toolCalls.length > 0) {
-		yield { contentDelta: '', toolCalls: result.toolCalls };
-	}
-};
-
-class ToolCallingModel implements ModelPort {
-	readonly receivedInputs: ModelChatInput[] = [];
-
-	private nextResult(input: ModelChatInput): FakeModelResult {
-		this.receivedInputs.push(input);
-
-		if (this.receivedInputs.length === 1) {
-			return {
-				content: '',
-				toolCalls: [
-					{
-						name: 'read_file',
-						arguments: { path: 'README.md' },
-					},
-				],
-			};
-		}
-
-		return {
-			content: 'The file contains hello.',
-			toolCalls: [],
-		};
-	}
-
-	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
-		const result = this.nextResult(input);
-
-		if (result.toolCalls.length > 0) {
-			yield { contentDelta: '', toolCalls: result.toolCalls };
-			return;
-		}
-
-		yield { contentDelta: 'The file contains ' };
-		yield { contentDelta: 'hello.' };
-	}
-}
-
-class ContentThenToolCallingModel implements ModelPort {
-	readonly receivedInputs: ModelChatInput[] = [];
-	private callCount = 0;
-
-	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
-		this.receivedInputs.push(input);
-		this.callCount += 1;
-
-		if (this.callCount === 1) {
-			yield { contentDelta: 'I will inspect the file.\n' };
-			yield {
-				contentDelta: '',
-				toolCalls: [
-					{
-						name: 'read_file',
-						arguments: { path: 'README.md' },
-					},
-				],
-			};
-			return;
-		}
-
-		yield { contentDelta: 'The file contains hello.' };
-	}
-}
-
-class SearchCallingModel implements ModelPort {
-	readonly receivedInputs: ModelChatInput[] = [];
-
-	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
-		this.receivedInputs.push(input);
-
-		if (this.receivedInputs.length === 1) {
-			yield {
-				contentDelta: '',
-				toolCalls: [
-					{
-						name: 'search_file',
-						arguments: { query: 'UserRepository' },
-					},
-				],
-			};
-			return;
-		}
-
-		yield { contentDelta: 'UserRepository is defined ' };
-		yield { contentDelta: 'in src/users.py.' };
-	}
-}
-
-class InterruptedToolCallingModel implements ModelPort {
-	async *streamChat(): AsyncIterable<ModelStreamChunk> {
-		yield {
-			contentDelta: '',
-			toolCalls: [
-				{
-					name: 'search_file',
-					arguments: { query: 'UserRepository' },
-				},
-			],
-		};
-
-		throw new Error('Ollama stream ended before completion.');
-	}
-}
-
-class InvalidToolArgumentsModel implements ModelPort {
-	async *streamChat(): AsyncIterable<ModelStreamChunk> {
-		yield {
-			contentDelta: '',
-			toolCalls: [
-				{
-					name: 'search_file',
-					arguments: { query: 42 },
-				},
-			],
-		};
-	}
-}
-
-class EditToolCallingModel implements ModelPort {
-	readonly receivedInputs: ModelChatInput[] = [];
-
-	private nextResult(input: ModelChatInput): FakeModelResult {
-		this.receivedInputs.push(input);
-
-		if (this.receivedInputs.length === 1) {
-			return {
-				content: '',
-				toolCalls: [
-					{
-						name: 'edit_file',
-						arguments: {
-							path: 'src/file.ts',
-							oldText: 'const value = 1;',
-							newText: 'const value = 2;',
-						},
-					},
-				],
-			};
-		}
-
-		return {
-			content: 'Edit handled.',
-			toolCalls: [],
-		};
-	}
-
-	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
-		yield* streamResult(this.nextResult(input));
-	}
-}
-
-class FailingToolCallingModel implements ModelPort {
-	private callCount = 0;
-
-	private nextResult(): FakeModelResult {
-		this.callCount += 1;
-
-		if (this.callCount > 1) {
-			return {
-				content: 'I could not read the file.',
-				toolCalls: [],
-			};
-		}
-
-		return {
-			content: '',
-			toolCalls: [
-				{
-					name: 'read_file',
-					arguments: { path: 'missing.txt' },
-				},
-			],
-		};
-	}
-
-	async *streamChat(): AsyncIterable<ModelStreamChunk> {
-		yield* streamResult(this.nextResult());
-	}
-}
-
-class SearchThenReadModel implements ModelPort {
-	readonly receivedInputs: ModelChatInput[] = [];
-
-	private nextResult(input: ModelChatInput): FakeModelResult {
-		this.receivedInputs.push(input);
-
-		if (this.receivedInputs.length === 1) {
-			return {
-				content: '',
-				toolCalls: [
-					{
-						name: 'search_file',
-						arguments: { query: 'find_by_email' },
-					},
-				],
-			};
-		}
-
-		if (this.receivedInputs.length === 2) {
-			return {
-				content: '',
-				toolCalls: [
-					{
-						name: 'read_file',
-						arguments: { path: 'src/users.py' },
-					},
-				],
-			};
-		}
-
-		return {
-			content: 'find_by_email compares lowercased emails.',
-			toolCalls: [],
-		};
-	}
-
-	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
-		const result = this.nextResult(input);
-
-		if (this.receivedInputs.length === 3) {
-			yield { contentDelta: 'find_by_email compares ' };
-			yield { contentDelta: 'lowercased emails.' };
-			return;
-		}
-
-		yield* streamResult(result);
-	}
-}
-
-class MultipleToolCallingModel implements ModelPort {
-	readonly receivedInputs: ModelChatInput[] = [];
-
-	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
-		this.receivedInputs.push(input);
-
-		if (this.receivedInputs.length === 1) {
-			yield {
-				contentDelta: '',
-				toolCalls: [
-					{
-						name: 'search_file',
-						arguments: { query: 'UserRepository' },
-					},
-					{
-						name: 'read_file',
-						arguments: { path: 'src/users.py' },
-					},
-				],
-			};
-			return;
-		}
-
-		yield { contentDelta: 'Both tools completed.' };
-	}
-}
-
-class MultipleReadsSecondFailingModel implements ModelPort {
-	readonly receivedInputs: ModelChatInput[] = [];
-
-	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
-		this.receivedInputs.push(input);
-
-		if (this.receivedInputs.length === 1) {
-			yield {
-				contentDelta: '',
-				toolCalls: [
-					{
-						name: 'read_file',
-						arguments: { path: 'README.md' },
-					},
-					{
-						name: 'read_file',
-						arguments: { path: 'missing.py' },
-					},
-				],
-			};
-			return;
-		}
-
-		yield { contentDelta: 'Second read failed.' };
-	}
-}
-
-class ReadThenEditModel implements ModelPort {
-	readonly receivedInputs: ModelChatInput[] = [];
-
-	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
-		this.receivedInputs.push(input);
-
-		if (this.receivedInputs.length > 1) {
-			yield { contentDelta: 'Edit completed.' };
-			return;
-		}
-
-		yield {
-			contentDelta: '',
-			toolCalls: [
-				{
-					name: 'read_file',
-					arguments: { path: 'src/file.ts' },
-				},
-				{
-					name: 'edit_file',
-					arguments: {
-						path: 'src/file.ts',
-						oldText: 'const value = 1;',
-						newText: 'const value = 2;',
-					},
-				},
-			],
-		};
-	}
-}
-
-class ReadReadEditReadModel implements ModelPort {
-	private callCount = 0;
-
-	private nextResult(): FakeModelResult {
-		this.callCount += 1;
-
-		if (this.callCount === 1 || this.callCount === 2 || this.callCount === 4) {
-			return {
-				content: '',
-				toolCalls: [
-					{
-						name: 'read_file',
-						arguments: { path: 'src/file.ts' },
-					},
-				],
-			};
-		}
-
-		if (this.callCount === 3) {
-			return {
-				content: '',
-				toolCalls: [
-					{
-						name: 'edit_file',
-						arguments: {
-							path: 'src/file.ts',
-							oldText: 'const value = 1;',
-							newText: 'const value = 2;',
-						},
-					},
-				],
-			};
-		}
-
-		return {
-			content: 'Done.',
-			toolCalls: [],
-		};
-	}
-
-	async *streamChat(): AsyncIterable<ModelStreamChunk> {
-		yield* streamResult(this.nextResult());
-	}
-}
-
-class InfiniteToolCallingModel implements ModelPort {
-	async *streamChat(): AsyncIterable<ModelStreamChunk> {
-		yield {
-			contentDelta: '',
-			toolCalls: [
-				{
-					name: 'read_file',
-					arguments: { path: 'README.md' },
-				},
-			],
-		};
-	}
-}
+const textResponse = (...contentDeltas: string[]): ModelStreamChunk[] =>
+	contentDeltas.map((contentDelta) => ({ contentDelta }));
+
+const toolCall = (
+	name: string,
+	toolArguments: unknown,
+): ModelToolCall => ({
+	name,
+	arguments: toolArguments,
+});
+
+const toolCallResponse = (
+	toolCalls: ModelToolCall[],
+	contentDelta = '',
+): ModelStreamChunk[] => [{ contentDelta, toolCalls }];
+
+const readFileToolCall = (path: string): ModelToolCall =>
+	toolCall('read_file', { path });
+
+const searchFileToolCall = (query: unknown): ModelToolCall =>
+	toolCall('search_file', { query });
+
+const editFileToolCall = (): ModelToolCall =>
+	toolCall('edit_file', {
+		path: 'src/file.ts',
+		oldText: 'const value = 1;',
+		newText: 'const value = 2;',
+	});
 
 class ReadEditToolExecutor implements ToolExecutorPort {
 	readonly receivedRequests: ToolExecutionRequest[] = [];
@@ -732,7 +339,7 @@ class SequenceIdGenerator implements IdGeneratorPort {
 describe('RunAgentTurn', () => {
 	test('stores prompt, streams model chunks, and stores completed assistant message', async () => {
 		const sessionStore = new InMemorySessionStore();
-		const model = new FakeModel();
+		const model = new ScriptedModel([textResponse('Hello', ' there')]);
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
@@ -758,7 +365,7 @@ describe('RunAgentTurn', () => {
 			{ contentDelta: 'Hello' },
 			{ contentDelta: ' there' },
 		]);
-		expect(model.receivedInput).toEqual({
+		expect(model.receivedInputs[0]).toEqual({
 			messages: [
 				{
 					role: 'system',
@@ -794,7 +401,7 @@ describe('RunAgentTurn', () => {
 
 	test('passes an abort signal to the model request', async () => {
 		const sessionStore = new InMemorySessionStore();
-		const model = new FakeModel();
+		const model = new ScriptedModel([textResponse('Hello', ' there')]);
 		const sessionId = asSessionId('session-1');
 		const abortController = new AbortController();
 		const useCase = new RunAgentTurn({
@@ -815,7 +422,7 @@ describe('RunAgentTurn', () => {
 			}),
 		);
 
-		expect(model.receivedInput?.signal).toBe(abortController.signal);
+		expect(model.receivedInputs[0]?.signal).toBe(abortController.signal);
 	});
 
 	test('streams a final text response without executing available tools', async () => {
@@ -824,7 +431,7 @@ describe('RunAgentTurn', () => {
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
-			model: new FakeModel(),
+			model: new ScriptedModel([textResponse('Hello', ' there')]),
 			contextBuilder: new ContextBuilder({
 				systemPrompt: 'You are a local coding agent.',
 			}),
@@ -853,7 +460,7 @@ describe('RunAgentTurn', () => {
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
-			model: new EmptyModel(),
+			model: new ScriptedModel([[]]),
 			contextBuilder: new ContextBuilder({
 				systemPrompt: 'You are a local coding agent.',
 			}),
@@ -876,7 +483,7 @@ describe('RunAgentTurn', () => {
 		const sessionStore = new InMemorySessionStore();
 		const useCase = new RunAgentTurn({
 			sessionStore,
-			model: new FakeModel(),
+			model: new ScriptedModel([]),
 			contextBuilder: new ContextBuilder({
 				systemPrompt: 'You are a local coding agent.',
 			}),
@@ -895,7 +502,7 @@ describe('RunAgentTurn', () => {
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
-			model: new FailingModel(),
+			model: new ScriptedModel([new Error('model failed')]),
 			contextBuilder: new ContextBuilder({
 				systemPrompt: 'You are a local coding agent.',
 			}),
@@ -938,7 +545,12 @@ describe('RunAgentTurn', () => {
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
-			model: new DeltaThenFailingModel(),
+			model: new ScriptedModel([
+				{
+					chunks: textResponse('partial ', 'answer'),
+					error: new Error('Ollama stream failed: model failed'),
+				},
+			]),
 			contextBuilder: new ContextBuilder({
 				systemPrompt: 'You are a local coding agent.',
 			}),
@@ -965,7 +577,10 @@ describe('RunAgentTurn', () => {
 
 	test('executes one model tool call and stores the completed tool event', async () => {
 		const sessionStore = new InMemorySessionStore();
-		const model = new ToolCallingModel();
+		const model = new ScriptedModel([
+			toolCallResponse([readFileToolCall('README.md')]),
+			textResponse('The file contains ', 'hello.'),
+		]);
 		const toolExecutor = new FakeToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
@@ -1124,7 +739,10 @@ describe('RunAgentTurn', () => {
 
 	test('passes an abort signal through tool-enabled model rounds', async () => {
 		const sessionStore = new InMemorySessionStore();
-		const model = new ToolCallingModel();
+		const model = new ScriptedModel([
+			toolCallResponse([readFileToolCall('README.md')]),
+			textResponse('The file contains ', 'hello.'),
+		]);
 		const toolExecutor = new FakeToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const abortController = new AbortController();
@@ -1155,7 +773,10 @@ describe('RunAgentTurn', () => {
 
 	test('executes search once and sends its complete result to the final model round', async () => {
 		const sessionStore = new InMemorySessionStore();
-		const model = new SearchCallingModel();
+		const model = new ScriptedModel([
+			toolCallResponse([searchFileToolCall('UserRepository')]),
+			textResponse('UserRepository is defined ', 'in src/users.py.'),
+		]);
 		const toolExecutor = new SearchReadToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
@@ -1199,7 +820,13 @@ describe('RunAgentTurn', () => {
 	test('keeps tool-round text in model context without publishing it as final text', async () => {
 		const sessionStore = new InMemorySessionStore();
 		const sessionId = asSessionId('session-1');
-		const model = new ContentThenToolCallingModel();
+		const model = new ScriptedModel([
+			toolCallResponse(
+				[readFileToolCall('README.md')],
+				'I will inspect the file.\n',
+			),
+			textResponse('The file contains hello.'),
+		]);
 		const useCase = new RunAgentTurn({
 			sessionStore,
 			model,
@@ -1236,7 +863,10 @@ describe('RunAgentTurn', () => {
 
 	test('requires approval before executing a mutating tool call', async () => {
 		const sessionStore = new InMemorySessionStore();
-		const model = new EditToolCallingModel();
+		const model = new ScriptedModel([
+			toolCallResponse([editFileToolCall()]),
+			textResponse('Edit handled.'),
+		]);
 		const toolExecutor = new EditToolExecutor();
 		const approvalRequests: ToolApprovalRequest[] = [];
 		const sessionId = asSessionId('session-1');
@@ -1298,7 +928,7 @@ describe('RunAgentTurn', () => {
 
 	test('does not execute a mutating tool call when approval is denied', async () => {
 		const sessionStore = new InMemorySessionStore();
-		const model = new EditToolCallingModel();
+		const model = new ScriptedModel([toolCallResponse([editFileToolCall()])]);
 		const toolExecutor = new EditToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
@@ -1349,7 +979,11 @@ describe('RunAgentTurn', () => {
 
 	test('allows the model to chain search and read tool calls before answering', async () => {
 		const sessionStore = new InMemorySessionStore();
-		const model = new SearchThenReadModel();
+		const model = new ScriptedModel([
+			toolCallResponse([searchFileToolCall('find_by_email')]),
+			toolCallResponse([readFileToolCall('src/users.py')]),
+			textResponse('find_by_email compares ', 'lowercased emails.'),
+		]);
 		const toolExecutor = new SearchReadToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
@@ -1439,7 +1073,13 @@ describe('RunAgentTurn', () => {
 
 	test('executes multiple tool calls from one model response in order', async () => {
 		const sessionStore = new InMemorySessionStore();
-		const model = new MultipleToolCallingModel();
+		const model = new ScriptedModel([
+			toolCallResponse([
+				searchFileToolCall('UserRepository'),
+				readFileToolCall('src/users.py'),
+			]),
+			textResponse('Both tools completed.'),
+		]);
 		const toolExecutor = new SearchReadToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
@@ -1514,7 +1154,13 @@ describe('RunAgentTurn', () => {
 
 	test('sends a failed second tool result back to the model', async () => {
 		const sessionStore = new InMemorySessionStore();
-		const model = new MultipleReadsSecondFailingModel();
+		const model = new ScriptedModel([
+			toolCallResponse([
+				readFileToolCall('README.md'),
+				readFileToolCall('missing.py'),
+			]),
+			textResponse('Second read failed.'),
+		]);
 		const toolExecutor = new SecondReadFailingToolExecutor();
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
@@ -1563,7 +1209,13 @@ describe('RunAgentTurn', () => {
 
 	test('requests approval before executing the second tool in a batch', async () => {
 		const sessionStore = new InMemorySessionStore();
-		const model = new ReadThenEditModel();
+		const model = new ScriptedModel([
+			toolCallResponse([
+				readFileToolCall('src/file.ts'),
+				editFileToolCall(),
+			]),
+			textResponse('Edit completed.'),
+		]);
 		const toolExecutor = new ReadEditToolExecutor();
 		const approvalRequests: ToolApprovalRequest[] = [];
 		const sessionId = asSessionId('session-1');
@@ -1636,7 +1288,14 @@ describe('RunAgentTurn', () => {
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
-			model: new InterruptedToolCallingModel(),
+			model: new ScriptedModel([
+				{
+					chunks: toolCallResponse([
+						searchFileToolCall('UserRepository'),
+					]),
+					error: new Error('Ollama stream ended before completion.'),
+				},
+			]),
 			contextBuilder: new ContextBuilder({
 				systemPrompt: 'You are a local coding agent.',
 			}),
@@ -1668,7 +1327,9 @@ describe('RunAgentTurn', () => {
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
-			model: new InvalidToolArgumentsModel(),
+			model: new ScriptedModel([
+				toolCallResponse([searchFileToolCall(42)]),
+			]),
 			contextBuilder: new ContextBuilder({
 				systemPrompt: 'You are a local coding agent.',
 			}),
@@ -1701,7 +1362,13 @@ describe('RunAgentTurn', () => {
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
-			model: new ReadReadEditReadModel(),
+			model: new ScriptedModel([
+				toolCallResponse([readFileToolCall('src/file.ts')]),
+				toolCallResponse([readFileToolCall('src/file.ts')]),
+				toolCallResponse([editFileToolCall()]),
+				toolCallResponse([readFileToolCall('src/file.ts')]),
+				textResponse('Done.'),
+			]),
 			contextBuilder: new ContextBuilder({
 				systemPrompt: 'You are a local coding agent.',
 			}),
@@ -1723,7 +1390,10 @@ describe('RunAgentTurn', () => {
 
 	test('stores failed tool events and sends the error back to the model', async () => {
 		const sessionStore = new InMemorySessionStore();
-		const model = new FailingToolCallingModel();
+		const model = new ScriptedModel([
+			toolCallResponse([readFileToolCall('missing.txt')]),
+			textResponse('I could not read the file.'),
+		]);
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
@@ -1805,7 +1475,11 @@ describe('RunAgentTurn', () => {
 		const sessionId = asSessionId('session-1');
 		const useCase = new RunAgentTurn({
 			sessionStore,
-			model: new InfiniteToolCallingModel(),
+			model: new ScriptedModel(
+				Array.from({ length: 12 }, () =>
+					toolCallResponse([readFileToolCall('README.md')])
+				),
+			),
 			contextBuilder: new ContextBuilder({
 				systemPrompt: 'You are a local coding agent.',
 			}),
