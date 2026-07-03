@@ -1,24 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import { asMessageId, asToolCallId } from "@/domain/Ids";
-import type { ModelStreamChunk } from "@/application/ports/ModelPort";
+import { collectAsyncIterable } from "@/test-support/collectAsyncIterable";
 
 import { OllamaModelAdapter } from "./OllamaModelAdapter";
 
 type FetchInput = Parameters<typeof fetch>[0];
 type FetchInit = Parameters<typeof fetch>[1];
-
-const collectStream = async (
-	stream: AsyncIterable<ModelStreamChunk>,
-): Promise<ModelStreamChunk[]> => {
-	const chunks: ModelStreamChunk[] = [];
-
-	for await (const chunk of stream) {
-		chunks.push(chunk);
-	}
-
-	return chunks;
-};
 
 describe("OllamaModelAdapter", () => {
 	test("posts assistant tool calls and tool messages", async () => {
@@ -34,7 +22,7 @@ describe("OllamaModelAdapter", () => {
 		try {
 			const adapter = new OllamaModelAdapter();
 
-			await collectStream(
+			await collectAsyncIterable(
 				adapter.streamChat({
 					messages: [
 						{
@@ -107,7 +95,7 @@ describe("OllamaModelAdapter", () => {
 				" test-model ",
 			);
 
-			const chunks = await collectStream(
+			const chunks = await collectAsyncIterable(
 				adapter.streamChat({
 					messages: [
 						{
@@ -161,7 +149,7 @@ describe("OllamaModelAdapter", () => {
 		try {
 			const adapter = new OllamaModelAdapter();
 
-			await collectStream(
+			await collectAsyncIterable(
 				adapter.streamChat({
 					messages: [],
 					signal: abortController.signal,
@@ -187,7 +175,7 @@ describe("OllamaModelAdapter", () => {
 		try {
 			const adapter = new OllamaModelAdapter();
 
-			await collectStream(adapter.streamChat({ messages: [] }));
+			await collectAsyncIterable(adapter.streamChat({ messages: [] }));
 
 			expect(requestSignal).toBeUndefined();
 		} finally {
@@ -222,7 +210,7 @@ describe("OllamaModelAdapter", () => {
 				},
 			};
 
-			const chunks = await collectStream(
+			const chunks = await collectAsyncIterable(
 				adapter.streamChat({
 					messages: [],
 					tools: [tool],
@@ -272,7 +260,7 @@ describe("OllamaModelAdapter", () => {
 		try {
 			const adapter = new OllamaModelAdapter();
 
-			const chunks = await collectStream(
+			const chunks = await collectAsyncIterable(
 				adapter.streamChat({ messages: [] }),
 			);
 
@@ -299,7 +287,7 @@ describe("OllamaModelAdapter", () => {
 		try {
 			const adapter = new OllamaModelAdapter();
 
-			const chunks = await collectStream(
+			const chunks = await collectAsyncIterable(
 				adapter.streamChat({ messages: [] }),
 			);
 
@@ -339,7 +327,7 @@ describe("OllamaModelAdapter", () => {
 			const adapter = new OllamaModelAdapter();
 
 			await expect(
-				collectStream(adapter.streamChat({ messages: [] })),
+				collectAsyncIterable(adapter.streamChat({ messages: [] })),
 			).rejects.toThrow("Ollama request failed with status 404");
 		} finally {
 			globalThis.fetch = originalFetch;
@@ -368,7 +356,7 @@ describe("OllamaModelAdapter", () => {
 			const adapter = new OllamaModelAdapter();
 
 			await expect(
-				collectStream(adapter.streamChat({ messages: [] })),
+				collectAsyncIterable(adapter.streamChat({ messages: [] })),
 			).rejects.toThrow("Invalid Ollama stream JSON");
 			expect(wasCancelled).toBe(true);
 		} finally {
@@ -387,7 +375,7 @@ describe("OllamaModelAdapter", () => {
 			const adapter = new OllamaModelAdapter();
 
 			await expect(
-				collectStream(adapter.streamChat({ messages: [] })),
+				collectAsyncIterable(adapter.streamChat({ messages: [] })),
 			).rejects.toThrow("Ollama stream failed: model failed");
 		} finally {
 			globalThis.fetch = originalFetch;
@@ -408,7 +396,7 @@ describe("OllamaModelAdapter", () => {
 			const adapter = new OllamaModelAdapter();
 
 			await expect(
-				collectStream(adapter.streamChat({ messages: [] })),
+				collectAsyncIterable(adapter.streamChat({ messages: [] })),
 			).rejects.toThrow("Ollama stream failed: model failed");
 		} finally {
 			globalThis.fetch = originalFetch;
@@ -429,7 +417,7 @@ describe("OllamaModelAdapter", () => {
 			const adapter = new OllamaModelAdapter();
 
 			await expect(
-				collectStream(adapter.streamChat({ messages: [] })),
+				collectAsyncIterable(adapter.streamChat({ messages: [] })),
 			).rejects.toThrow("Ollama stream ended before completion.");
 		} finally {
 			globalThis.fetch = originalFetch;
@@ -450,7 +438,7 @@ describe("OllamaModelAdapter", () => {
 			const adapter = new OllamaModelAdapter();
 
 			await expect(
-				collectStream(adapter.streamChat({ messages: [] })),
+				collectAsyncIterable(adapter.streamChat({ messages: [] })),
 			).rejects.toThrow("Invalid Ollama tool arguments for read_file");
 		} finally {
 			globalThis.fetch = originalFetch;

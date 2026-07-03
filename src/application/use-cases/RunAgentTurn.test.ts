@@ -16,6 +16,7 @@ import type { ModelToolCall, ToolDefinition } from '@/domain/Tool';
 import { InMemorySessionStore } from '@/test-support/InMemorySessionStore';
 import { RecordingToolExecutor } from '@/test-support/RecordingToolExecutor';
 import { ScriptedModel } from '@/test-support/ScriptedModel';
+import { collectAsyncIterable } from '@/test-support/collectAsyncIterable';
 import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
 import type { ModelStreamChunk } from '../ports/ModelPort';
@@ -308,7 +309,7 @@ describe('RunAgentTurn', () => {
 			idGenerator: new SequenceIdGenerator(),
 		});
 
-		await collectTurn(
+		await collectAsyncIterable(
 			useCase.run({
 				sessionId,
 				prompt: 'Say hello',
@@ -334,7 +335,7 @@ describe('RunAgentTurn', () => {
 			toolExecutor,
 		});
 
-		const chunks = await collectTurn(
+		const chunks = await collectAsyncIterable(
 			useCase.run({ sessionId, prompt: 'Say hello' }),
 		);
 
@@ -362,7 +363,7 @@ describe('RunAgentTurn', () => {
 			idGenerator: new SequenceIdGenerator(),
 		});
 
-		const chunks = await collectTurn(
+		const chunks = await collectAsyncIterable(
 			useCase.run({ sessionId, prompt: 'Say nothing' }),
 		);
 
@@ -386,7 +387,9 @@ describe('RunAgentTurn', () => {
 		});
 
 		await expect(
-			collectTurn(useCase.run({ sessionId: asSessionId('session-1'), prompt: ' ' })),
+			collectAsyncIterable(
+				useCase.run({ sessionId: asSessionId('session-1'), prompt: ' ' }),
+			),
 		).rejects.toThrow('Prompt cannot be empty.');
 		expect(sessionStore.events).toEqual([]);
 	});
@@ -405,7 +408,7 @@ describe('RunAgentTurn', () => {
 		});
 
 		await expect(
-			collectTurn(useCase.run({ sessionId, prompt: 'Say hello' })),
+			collectAsyncIterable(useCase.run({ sessionId, prompt: 'Say hello' })),
 		).rejects.toThrow('model failed');
 
 		expect(sessionStore.events).toEqual([
@@ -453,7 +456,7 @@ describe('RunAgentTurn', () => {
 		});
 
 		await expect(
-			collectTurn(useCase.run({ sessionId, prompt: 'Say hello' })),
+			collectAsyncIterable(useCase.run({ sessionId, prompt: 'Say hello' })),
 		).rejects.toThrow('Ollama stream failed: model failed');
 
 		expect(
@@ -488,7 +491,7 @@ describe('RunAgentTurn', () => {
 			toolExecutor,
 		});
 
-		const chunks = await collectTurn(
+		const chunks = await collectAsyncIterable(
 			useCase.run({ sessionId, prompt: 'Read README' }),
 		);
 
@@ -651,7 +654,7 @@ describe('RunAgentTurn', () => {
 			toolExecutor,
 		});
 
-		await collectTurn(
+		await collectAsyncIterable(
 			useCase.run({
 				sessionId,
 				prompt: 'Read README',
@@ -684,7 +687,7 @@ describe('RunAgentTurn', () => {
 			toolExecutor,
 		});
 
-		const chunks = await collectTurn(
+		const chunks = await collectAsyncIterable(
 			useCase.run({ sessionId, prompt: 'Find UserRepository' }),
 		);
 
@@ -732,7 +735,7 @@ describe('RunAgentTurn', () => {
 			toolExecutor: createReadToolExecutor(),
 		});
 
-		const chunks = await collectTurn(
+		const chunks = await collectAsyncIterable(
 			useCase.run({ sessionId, prompt: 'Read README' }),
 		);
 
@@ -779,7 +782,7 @@ describe('RunAgentTurn', () => {
 			},
 		});
 
-		const chunks = await collectTurn(
+		const chunks = await collectAsyncIterable(
 			useCase.run({ sessionId, prompt: 'Edit file' }),
 		);
 
@@ -837,7 +840,7 @@ describe('RunAgentTurn', () => {
 			approveToolCall: async () => false,
 		});
 
-		const chunks = await collectTurn(
+		const chunks = await collectAsyncIterable(
 			useCase.run({ sessionId, prompt: 'Edit file' }),
 		);
 
@@ -891,7 +894,7 @@ describe('RunAgentTurn', () => {
 			toolExecutor,
 		});
 
-		const chunks = await collectTurn(
+		const chunks = await collectAsyncIterable(
 			useCase.run({ sessionId, prompt: 'Explain find_by_email' }),
 		);
 
@@ -987,7 +990,7 @@ describe('RunAgentTurn', () => {
 			toolExecutor,
 		});
 
-		const chunks = await collectTurn(
+		const chunks = await collectAsyncIterable(
 			useCase.run({ sessionId, prompt: 'Search and read' }),
 		);
 
@@ -1068,7 +1071,7 @@ describe('RunAgentTurn', () => {
 			toolExecutor,
 		});
 
-		const chunks = await collectTurn(
+		const chunks = await collectAsyncIterable(
 			useCase.run({ sessionId, prompt: 'Search and read missing file' }),
 		);
 
@@ -1128,7 +1131,7 @@ describe('RunAgentTurn', () => {
 			},
 		});
 
-		const chunks = await collectTurn(
+		const chunks = await collectAsyncIterable(
 			useCase.run({ sessionId, prompt: 'Search and edit' }),
 		);
 
@@ -1199,7 +1202,9 @@ describe('RunAgentTurn', () => {
 		});
 
 		await expect(
-			collectTurn(useCase.run({ sessionId, prompt: 'Find UserRepository' })),
+			collectAsyncIterable(
+				useCase.run({ sessionId, prompt: 'Find UserRepository' }),
+			),
 		).rejects.toThrow('Ollama stream ended before completion.');
 
 		expect(toolExecutor.receivedRequests).toEqual([]);
@@ -1233,7 +1238,9 @@ describe('RunAgentTurn', () => {
 		});
 
 		await expect(
-			collectTurn(useCase.run({ sessionId, prompt: 'Find UserRepository' })),
+			collectAsyncIterable(
+				useCase.run({ sessionId, prompt: 'Find UserRepository' }),
+			),
 		).rejects.toThrow(
 			'Invalid arguments for tool search_file: "query" must be string.',
 		);
@@ -1272,7 +1279,7 @@ describe('RunAgentTurn', () => {
 			approveToolCall: async () => true,
 		});
 
-		const chunks = await collectTurn(
+		const chunks = await collectAsyncIterable(
 			useCase.run({ sessionId, prompt: 'Read, edit, and read again' }),
 		);
 
@@ -1300,7 +1307,7 @@ describe('RunAgentTurn', () => {
 			toolExecutor: createFailingToolExecutor(),
 		});
 
-		const chunks = await collectTurn(
+		const chunks = await collectAsyncIterable(
 			useCase.run({ sessionId, prompt: 'Read missing file' }),
 		);
 
@@ -1383,7 +1390,7 @@ describe('RunAgentTurn', () => {
 		});
 
 		await expect(
-			collectTurn(useCase.run({ sessionId, prompt: 'Keep reading' })),
+			collectAsyncIterable(useCase.run({ sessionId, prompt: 'Keep reading' })),
 		).rejects.toThrow('Tool iteration limit reached.');
 
 		expect(toolExecutor.receivedRequests).toHaveLength(1);
@@ -1403,15 +1410,3 @@ describe('RunAgentTurn', () => {
 		});
 	});
 });
-
-const collectTurn = async (
-	stream: AsyncIterable<ModelStreamChunk>,
-): Promise<ModelStreamChunk[]> => {
-	const chunks: ModelStreamChunk[] = [];
-
-	for await (const chunk of stream) {
-		chunks.push(chunk);
-	}
-
-	return chunks;
-};
