@@ -26,11 +26,14 @@ Implemented:
 - loading previous chat messages when continuing a session
 - tool calling through Ollama
 - multi-step tool loop with an iteration limit
+- per-turn cache for read-only tools
 - workspace tools:
+  - `list_files`
   - `search_file`
   - `read_file`
+  - `create_file`
   - `edit_file`
-- approval prompt before `edit_file`
+- approval prompt before mutating tools
 - path safety checks for file tools
 - tests for config, sessions, runtime, Ollama adapter, tools, and agent turn flow
 
@@ -48,17 +51,29 @@ The current MVP loop is:
 
 ```text
 user prompt
--> model may request search_file/read_file/edit_file
--> CLI executes safe read/search tools automatically
--> CLI asks for approval before edit_file
+-> model may request list_files/search_file/read_file/create_file/edit_file
+-> CLI executes safe read/list/search tools automatically
+-> CLI asks for approval before create_file/edit_file
 -> approved edits are applied to workspace files
 -> events are persisted to the current session
 -> model returns the final answer
 ```
 
-If an edit is denied, the turn ends immediately. This prevents the model from repeatedly requesting the same edit until the tool iteration limit is reached.
+If a mutating tool is denied, the turn ends immediately. This prevents the model from repeatedly requesting the same change until the tool iteration limit is reached.
 
 ## Tools
+
+### `list_files`
+
+Recursively lists file paths in the current workspace, or under an optional relative path:
+
+```ts
+{
+  path?: string;
+}
+```
+
+Use it to discover project structure. It is not a content search tool.
 
 ### `search_file`
 
@@ -67,6 +82,19 @@ Searches the current workspace with ripgrep and returns paths, line numbers, and
 ### `read_file`
 
 Reads a UTF-8 file from the current workspace. It requires a relative path and rejects paths outside the workspace.
+
+### `create_file`
+
+Creates a new UTF-8 file in an existing workspace directory:
+
+```ts
+{
+  path: string;
+  content: string;
+}
+```
+
+The tool fails if the file already exists. `create_file` requires interactive approval.
 
 ### `edit_file`
 
@@ -83,6 +111,10 @@ Replaces exact text in a UTF-8 file:
 The edit is applied only when `oldText` appears exactly once. The tool also normalizes escaped line breaks like `\\n` when models provide multiline edits as escaped text.
 
 `edit_file` requires interactive approval. Press `y` to approve, `n` or `Esc` to deny.
+
+## Architecture
+
+The short architecture note is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The active roadmap is currently kept in [ROADMAP.md](ROADMAP.md).
 
 ## Sessions
 
@@ -186,13 +218,19 @@ bun test
 Type check:
 
 ```bash
-bun run tsc --noEmit
+bun run typecheck
 ```
 
 Build check:
 
 ```bash
 bun run build
+```
+
+Run the full local check:
+
+```bash
+bun run check
 ```
 
 ## Next Steps
