@@ -598,6 +598,8 @@ Dopiero po zamknięciu stabilności funkcjonalnej zrobiłbym czyszczenie.
 
 ## 3.1. Jeden formatter
 
+- [X] - Wykonane
+
 Kod ma obecnie trochę mieszanego stylu:
 
 - pojedyncze i podwójne cudzysłowy;
@@ -628,6 +630,8 @@ style: format project
 Bez zmian zachowania. Dzięki temu późniejsze diffy będą czytelniejsze.
 
 ## 3.2. Nie dodawaj lintera bez konkretnego celu
+
+- [X] - Wykonane
 
 Masz już bardzo ścisły TypeScript:
 
