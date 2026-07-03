@@ -19,7 +19,7 @@ Implemented:
 
 - Ink-based terminal UI
 - Ollama chat integration with streaming final responses
-- model switching from the CLI with `/model <name>`
+- model picker with `/model` and direct switching with `/model <name>`
 - current model and workspace path shown under the input
 - resume session picker with `New chat`
 - persisted sessions in `.agent/sessions/<session-id>/events.jsonl`
@@ -212,7 +212,7 @@ Inside the chat:
 /resume
 ```
 
-`/model` shows the current model. `/model <name>` switches the model for subsequent turns. `/resume` opens the session picker.
+`/model` opens the local Ollama model picker. `/model <name>` switches the model directly for subsequent turns. `/resume` opens the session picker.
 
 ## Tests
 

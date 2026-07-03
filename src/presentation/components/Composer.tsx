@@ -40,9 +40,7 @@ export const Composer = ({
 				<Text color="gray">
 					{modelName} · {formatWorkspacePath(workspacePath)}
 				</Text>
-				<Text color="gray">
-					{status === 'streaming' ? 'Esc cancels' : '/model <name> · /resume'}
-				</Text>
+				<Text color="gray">{status === 'streaming' ? 'Esc cancels' : '/model · /resume'}</Text>
 			</Box>
 		</Box>
 	);

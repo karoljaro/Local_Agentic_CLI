@@ -4,7 +4,7 @@ import { parseChatCommand } from './chatCommand';
 
 describe('parseChatCommand', () => {
 	test('parses model commands', () => {
-		expect(parseChatCommand('/model')).toEqual({ type: 'show-model' });
+		expect(parseChatCommand('/model')).toEqual({ type: 'open-models' });
 		expect(parseChatCommand('/model llama3.2')).toEqual({
 			type: 'switch-model',
 			modelName: 'llama3.2',

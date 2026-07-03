@@ -9,16 +9,20 @@ import { useAbortableTurn } from './useAbortableTurn';
 
 type UseChatSessionInput = {
 	modelName: string;
+	onOpenModels: () => void;
 	onModelNameChange: (modelName: string) => void;
 	onResume: () => void;
+	restoreSessionModel: boolean;
 	runtime: Runtime;
 	sessionId: SessionId;
 };
 
 export const useChatSession = ({
 	modelName,
+	onOpenModels,
 	onModelNameChange,
 	onResume,
+	restoreSessionModel,
 	runtime,
 	sessionId,
 }: UseChatSessionInput) => {
@@ -37,7 +41,9 @@ export const useChatSession = ({
 				const result = await runtime.listSessionEvents.list({ sessionId });
 
 				if (!isCancelled) {
-					const sessionModelName = getSessionModelName(result.events);
+					const sessionModelName = restoreSessionModel
+						? getSessionModelName(result.events)
+						: undefined;
 
 					if (sessionModelName !== undefined) {
 						onModelNameChange(runtime.switchModel(sessionModelName));
@@ -63,13 +69,13 @@ export const useChatSession = ({
 		return () => {
 			isCancelled = true;
 		};
-	}, [onModelNameChange, runtime, sessionId]);
+	}, [onModelNameChange, restoreSessionModel, runtime, sessionId]);
 
 	const runPrompt = async (prompt: string): Promise<void> => {
 		const command = parseChatCommand(prompt);
 
 		if (command !== null) {
-			handleChatCommand(command, modelName, runtime, onModelNameChange, onResume, setTranscript);
+			handleChatCommand(command, runtime, onOpenModels, onModelNameChange, onResume, setTranscript);
 			return;
 		}
 
@@ -123,8 +129,8 @@ export const useChatSession = ({
 
 const handleChatCommand = (
 	command: ChatCommand,
-	modelName: string,
 	runtime: Runtime,
+	onOpenModels: () => void,
 	onModelNameChange: (modelName: string) => void,
 	onResume: () => void,
 	setTranscript: Dispatch<SetStateAction<TranscriptEntry[]>>,
@@ -134,11 +140,8 @@ const handleChatCommand = (
 		return;
 	}
 
-	if (command.type === 'show-model') {
-		setTranscript((currentTranscript) => [
-			...currentTranscript,
-			{ role: 'assistant', content: `Current model: ${modelName}` },
-		]);
+	if (command.type === 'open-models') {
+		onOpenModels();
 		return;
 	}
 

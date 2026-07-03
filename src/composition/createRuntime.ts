@@ -1,4 +1,5 @@
 import type { IdGeneratorPort } from '@/application/ports/IdGeneratorPort';
+import type { ListModelsResult, ModelCatalogPort } from '@/application/ports/ModelCatalogPort';
 import type { ModelPort } from '@/application/ports/ModelPort';
 import { ContextBuilder } from '@/application/services/ContextBuilder';
 import { RunAgentTurn, type ToolApprovalHandler } from '@/application/use-cases/RunAgentTurn';
@@ -11,6 +12,7 @@ import { createLocalToolExecutor } from '@/composition/factories/createLocalTool
 import { LoadSession } from '@/application/use-cases/LoadSession';
 import { ListSessionEvents } from '@/application/use-cases/ListSessionEvents';
 import { ListSessions } from '@/application/use-cases/ListSessions';
+import { OllamaModelCatalog } from '@/infrastructure/model/OllamaModelCatalog';
 
 export type Runtime = {
 	runAgentTurn: RunAgentTurn;
@@ -20,6 +22,7 @@ export type Runtime = {
 	idGenerator: IdGeneratorPort;
 	workspacePath: string;
 	getModelName: () => string;
+	listModels: () => Promise<ListModelsResult>;
 	switchModel: (modelName: string) => string;
 	setToolApprovalHandler: (handler: ToolApprovalHandler) => () => void;
 };
@@ -33,6 +36,7 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 	const model: ModelPort = {
 		streamChat: (input) => currentModel.streamChat(input),
 	};
+	const modelCatalog: ModelCatalogPort = new OllamaModelCatalog(config.OLLAMA_BASE_URL);
 
 	const idGenerator = new BunUuidV7IdGenerator();
 	const clock = new TemporalClock();
@@ -62,6 +66,7 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 		listSessions,
 		workspacePath: process.cwd(),
 		getModelName: () => currentModelName,
+		listModels: () => modelCatalog.listModels(),
 		switchModel: (modelName) => {
 			currentModelName = normalizeModelName(modelName);
 			currentModel = new OllamaModelAdapter(config.OLLAMA_BASE_URL, currentModelName);

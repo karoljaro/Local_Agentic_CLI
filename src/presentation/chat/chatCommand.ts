@@ -3,7 +3,7 @@ const RESUME_COMMAND = '/resume';
 
 export type ChatCommand =
 	| {
-			type: 'show-model';
+			type: 'open-models';
 	  }
 	| {
 			type: 'switch-model';
@@ -21,7 +21,7 @@ export const parseChatCommand = (prompt: string): ChatCommand | null => {
 	}
 
 	if (trimmedPrompt === MODEL_COMMAND) {
-		return { type: 'show-model' };
+		return { type: 'open-models' };
 	}
 
 	if (!trimmedPrompt.startsWith(`${MODEL_COMMAND} `)) {
@@ -30,5 +30,5 @@ export const parseChatCommand = (prompt: string): ChatCommand | null => {
 
 	const modelName = trimmedPrompt.slice(MODEL_COMMAND.length).trim();
 
-	return modelName.length === 0 ? { type: 'show-model' } : { type: 'switch-model', modelName };
+	return modelName.length === 0 ? { type: 'open-models' } : { type: 'switch-model', modelName };
 };
