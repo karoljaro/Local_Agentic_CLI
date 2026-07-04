@@ -3,8 +3,6 @@ import { Box, Text } from 'ink';
 import type { SessionId } from '@/domain/Ids';
 import type { SessionPickerOption } from '@/presentation/chat/types';
 
-const PANEL_BACKGROUND = '#1f1f1f';
-
 type SessionPickerProps = {
 	currentSessionId?: SessionId | undefined;
 	errorMessage?: string | undefined;
@@ -19,7 +17,12 @@ export const SessionPicker = ({
 	selectedIndex,
 }: SessionPickerProps) => {
 	return (
-		<Box backgroundColor={PANEL_BACKGROUND} flexDirection="column" paddingX={2} paddingY={1}>
+		<Box flexDirection="column" gap={1}>
+			<Box justifyContent="space-between">
+				<Text bold>Resume session</Text>
+				<Text color="gray">↑/↓ or j/k · Enter</Text>
+			</Box>
+
 			<Box flexDirection="column">
 				{options.map((option, index) => (
 					<SessionPickerRow
@@ -44,22 +47,34 @@ type SessionPickerRowProps = {
 };
 
 const SessionPickerRow = ({ currentSessionId, isSelected, option }: SessionPickerRowProps) => {
-	const prefix = isSelected ? '> ' : '  ';
-	const color = isSelected ? 'cyan' : 'white';
+	const marker = isSelected ? '›' : ' ';
+	const markerColor = isSelected ? 'cyan' : 'gray';
+	const textColor = isSelected ? 'cyan' : 'white';
 
 	if (option.type === 'new') {
-		return <Text color={color}>{prefix}New chat</Text>;
+		return (
+			<Box>
+				<Text color={markerColor}>{marker} </Text>
+				<Text color={textColor}>New chat</Text>
+			</Box>
+		);
 	}
 
 	return (
-		<Text color={color}>
-			{prefix}
-			{option.sessionId}
+		<Box>
+			<Text color={markerColor}>{marker} </Text>
+			<Text color={textColor}>{compactSessionId(option.sessionId)}</Text>
 			{option.sessionId === currentSessionId ? <Text color="green"> current</Text> : null}
-		</Text>
+		</Box>
 	);
 };
 
 const getSessionPickerOptionKey = (option: SessionPickerOption): string => {
 	return option.type === 'new' ? 'new-chat' : String(option.sessionId);
+};
+
+const compactSessionId = (sessionId: SessionId): string => {
+	const value = String(sessionId);
+
+	return value.length <= 42 ? value : `${value.slice(0, 18)}…${value.slice(-18)}`;
 };

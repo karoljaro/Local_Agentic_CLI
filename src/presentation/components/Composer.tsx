@@ -1,16 +1,18 @@
 import { Box, Text } from 'ink';
 
+import type { SessionId } from '@/domain/Ids';
 import type { UiStatus } from '@/presentation/chat/types';
 import { formatWorkspacePath } from '@/presentation/formatters/workspacePath';
 
-const INPUT_BACKGROUND = '#2b2b2b';
 const INPUT_PLACEHOLDER = 'Ask local model...';
+const TEXT_PADDING_X = 1;
 
 type ComposerProps = {
 	cursorIndex: number;
 	input: string;
 	isDisabled: boolean;
 	modelName: string;
+	sessionId: SessionId;
 	status: UiStatus;
 	workspacePath: string;
 };
@@ -20,13 +22,14 @@ export const Composer = ({
 	input,
 	isDisabled,
 	modelName,
+	sessionId,
 	status,
 	workspacePath,
 }: ComposerProps) => {
 	return (
 		<Box flexDirection="column">
-			<Box backgroundColor={INPUT_BACKGROUND} paddingX={2} paddingY={1}>
-				<Text color="cyan">&gt; </Text>
+			<Box borderColor="gray" borderStyle="single" paddingX={1} paddingY={0}>
+				<Text color="cyan">› </Text>
 				{isDisabled ? (
 					<Text color="gray">
 						{status === 'loading' ? 'loading session' : 'streaming response'}
@@ -36,12 +39,28 @@ export const Composer = ({
 				)}
 			</Box>
 
-			<Box justifyContent="space-between">
-				<Text color="gray">
-					{modelName} · {formatWorkspacePath(workspacePath)}
-				</Text>
+			<Box justifyContent="space-between" paddingX={TEXT_PADDING_X}>
+				<Text color="gray">Enter submit · Ctrl+U clear</Text>
 				<Text color="gray">{status === 'streaming' ? 'Esc cancels' : '/model · /resume'}</Text>
 			</Box>
+
+			<FooterContext modelName={modelName} sessionId={sessionId} workspacePath={workspacePath} />
+		</Box>
+	);
+};
+
+type FooterContextProps = {
+	modelName: string;
+	sessionId: SessionId;
+	workspacePath: string;
+};
+
+const FooterContext = ({ modelName, sessionId, workspacePath }: FooterContextProps) => {
+	return (
+		<Box paddingX={TEXT_PADDING_X}>
+			<Text color="gray">
+				{modelName} · {formatWorkspacePath(workspacePath)} · session {sessionId}
+			</Text>
 		</Box>
 	);
 };
@@ -66,7 +85,7 @@ const InputText = ({ cursorIndex, value }: InputTextProps) => {
 	const afterCursor = cursorIndex >= value.length ? '' : value.slice(cursorIndex + 1);
 
 	return (
-		<Text>
+		<Text wrap="wrap">
 			{beforeCursor}
 			<Text inverse>{cursorCharacter}</Text>
 			{afterCursor}

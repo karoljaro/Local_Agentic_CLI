@@ -40,17 +40,14 @@ export function App({ initialMode = 'new' }: AppProps) {
 		setScreen('chat');
 	};
 
-	const openResumeScreen = (): void => {
-		setScreen('resume');
-	};
-
-	const openModelsScreen = (): void => {
-		setScreen('models');
-	};
-
 	if (!isRawModeSupported) {
 		return (
-			<AppFrame status="idle" statusText="interactive stdin is not available">
+			<AppFrame
+				modelName={modelName}
+				status="idle"
+				statusText="non-interactive"
+				workspacePath={runtime.workspacePath}
+			>
 				<Text color="yellow">Run this CLI in an interactive terminal.</Text>
 			</AppFrame>
 		);
@@ -60,6 +57,7 @@ export function App({ initialMode = 'new' }: AppProps) {
 		return (
 			<SessionPickerScreen
 				currentSessionId={sessionId}
+				modelName={modelName}
 				onSelectSession={selectSession}
 				runtime={runtime}
 			/>
@@ -85,9 +83,9 @@ export function App({ initialMode = 'new' }: AppProps) {
 		<ChatScreen
 			key={String(sessionId)}
 			modelName={modelName}
-			onOpenModels={openModelsScreen}
+			onOpenModels={() => setScreen('models')}
 			onModelNameChange={setModelName}
-			onResume={openResumeScreen}
+			onResume={() => setScreen('resume')}
 			restoreSessionModel={restoreSessionModel}
 			runtime={runtime}
 			sessionId={sessionId}
@@ -97,12 +95,14 @@ export function App({ initialMode = 'new' }: AppProps) {
 
 type SessionPickerScreenProps = {
 	currentSessionId?: SessionId | undefined;
+	modelName: string;
 	onSelectSession: (sessionId: SessionId) => void;
 	runtime: Runtime;
 };
 
 const SessionPickerScreen = ({
 	currentSessionId,
+	modelName,
 	onSelectSession,
 	runtime,
 }: SessionPickerScreenProps) => {
@@ -110,8 +110,10 @@ const SessionPickerScreen = ({
 
 	return (
 		<AppFrame
+			modelName={modelName}
 			status={picker.status}
-			statusText={picker.status === 'loading' ? 'loading' : 'session'}
+			statusText={picker.status === 'loading' ? 'loading sessions' : 'session'}
+			workspacePath={runtime.workspacePath}
 		>
 			<SessionPicker
 				currentSessionId={currentSessionId}
@@ -140,9 +142,11 @@ const ModelPickerScreen = ({
 
 	return (
 		<AppFrame
+			modelName={currentModelName}
 			sessionId={sessionId}
 			status={picker.status}
 			statusText={picker.status === 'loading' ? 'loading models' : 'model'}
+			workspacePath={runtime.workspacePath}
 		>
 			<ModelPicker
 				currentModelName={currentModelName}
@@ -200,13 +204,24 @@ const ChatScreen = ({
 		{ isActive: chat.status === 'streaming' && approval.pendingApproval === null },
 	);
 
+	const transcriptHasHeader = chat.transcript.length > 0;
+
 	return (
 		<AppFrame
+			modelName={modelName}
 			sessionId={sessionId}
+			showHeader={!transcriptHasHeader}
 			status={chat.status}
 			statusText={approval.pendingApproval === null ? undefined : 'approval'}
+			workspacePath={runtime.workspacePath}
 		>
-			<Transcript streamingContent={chat.streamingContent} transcript={chat.transcript} />
+			<Transcript
+				modelName={modelName}
+				sessionId={sessionId}
+				streamingContent={chat.streamingContent}
+				transcript={chat.transcript}
+				workspacePath={runtime.workspacePath}
+			/>
 
 			{approval.pendingApproval === null ? null : (
 				<ApprovalPrompt request={approval.pendingApproval} />
@@ -217,6 +232,7 @@ const ChatScreen = ({
 				input={composer.input}
 				isDisabled={isBusy}
 				modelName={modelName}
+				sessionId={sessionId}
 				status={chat.status}
 				workspacePath={runtime.workspacePath}
 			/>

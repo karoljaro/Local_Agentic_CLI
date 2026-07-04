@@ -19,14 +19,38 @@ export const useSelectableList = <TItem>({
 	}, [items.length]);
 
 	useInput(
-		(_value, key) => {
-			if (key.upArrow) {
+		(value, key) => {
+			if (items.length === 0) {
+				return;
+			}
+
+			if (key.upArrow || value === 'k') {
 				setSelectedIndex((currentIndex) => Math.max(0, currentIndex - 1));
 				return;
 			}
 
-			if (key.downArrow) {
+			if (key.downArrow || value === 'j') {
 				setSelectedIndex((currentIndex) => Math.min(items.length - 1, currentIndex + 1));
+				return;
+			}
+
+			if (key.pageUp) {
+				setSelectedIndex((currentIndex) => Math.max(0, currentIndex - 10));
+				return;
+			}
+
+			if (key.pageDown) {
+				setSelectedIndex((currentIndex) => Math.min(items.length - 1, currentIndex + 10));
+				return;
+			}
+
+			if (key.home) {
+				setSelectedIndex(0);
+				return;
+			}
+
+			if (key.end) {
+				setSelectedIndex(items.length - 1);
 				return;
 			}
 

@@ -1,5 +1,5 @@
 import { Fragment, useMemo } from 'react';
-import { Box, Text, useStdout } from 'ink';
+import { Box, Text, Transform, useWindowSize } from 'ink';
 import { marked, type Token, type Tokens } from 'marked';
 
 type MarkdownProps = {
@@ -10,6 +10,8 @@ type MarkdownProps = {
 	showLinkUrls?: boolean;
 	/** Sposób obsługi zbyt długich linii kodu. */
 	codeWrap?: 'wrap' | 'truncate-end';
+	/** Poziomy padding dla zwykłych bloków tekstu. Bloki kodu zostają bez paddingu. */
+	textPaddingX?: number;
 };
 
 type BlockTokenProps = {
@@ -17,6 +19,7 @@ type BlockTokenProps = {
 	width: number;
 	showLinkUrls: boolean;
 	codeWrap: 'wrap' | 'truncate-end';
+	textPaddingX: number;
 	compact?: boolean;
 };
 
@@ -30,9 +33,10 @@ export function Markdown({
 	maxWidth,
 	showLinkUrls = true,
 	codeWrap = 'truncate-end',
+	textPaddingX = 0,
 }: MarkdownProps) {
-	const { stdout } = useStdout();
-	const terminalWidth = Math.max(10, stdout.columns ?? process.stdout.columns ?? 80);
+	const { columns } = useWindowSize();
+	const terminalWidth = Math.max(10, columns);
 	const width = Math.max(10, Math.min(maxWidth ?? terminalWidth - 2, terminalWidth));
 
 	const tokens = useMemo(
@@ -53,6 +57,7 @@ export function Markdown({
 					width={width}
 					showLinkUrls={showLinkUrls}
 					codeWrap={codeWrap}
+					textPaddingX={textPaddingX}
 				/>
 			))}
 		</Box>
@@ -153,7 +158,14 @@ function InlineToken({ token, showLinkUrls }: { token: Token; showLinkUrls: bool
 	}
 }
 
-function BlockToken({ token, width, showLinkUrls, codeWrap, compact = false }: BlockTokenProps) {
+function BlockToken({
+	token,
+	width,
+	showLinkUrls,
+	codeWrap,
+	textPaddingX,
+	compact = false,
+}: BlockTokenProps) {
 	switch (token.type) {
 		case 'space':
 		case 'def':
@@ -164,7 +176,11 @@ function BlockToken({ token, width, showLinkUrls, codeWrap, compact = false }: B
 			const value = token as Tokens.Heading;
 
 			return (
-				<Box marginTop={value.depth === 1 ? 1 : 0} marginBottom={value.depth <= 2 ? 1 : 0}>
+				<Box
+					marginTop={value.depth === 1 ? 1 : 0}
+					marginBottom={value.depth <= 2 ? 1 : 0}
+					paddingX={textPaddingX}
+				>
 					<Text bold underline={value.depth === 1} dimColor={value.depth >= 4}>
 						<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
 					</Text>
@@ -176,7 +192,7 @@ function BlockToken({ token, width, showLinkUrls, codeWrap, compact = false }: B
 			const value = token as Tokens.Paragraph;
 
 			return (
-				<Box marginBottom={compact ? 0 : 1}>
+				<Box marginBottom={compact ? 0 : 1} paddingX={textPaddingX}>
 					<Text wrap="wrap">
 						<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
 					</Text>
@@ -188,13 +204,15 @@ function BlockToken({ token, width, showLinkUrls, codeWrap, compact = false }: B
 			const value = token as Tokens.Text;
 
 			return (
-				<Text wrap="wrap">
-					{value.tokens?.length ? (
-						<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
-					) : (
-						value.text
-					)}
-				</Text>
+				<Box paddingX={textPaddingX}>
+					<Text wrap="wrap">
+						{value.tokens?.length ? (
+							<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
+						) : (
+							value.text
+						)}
+					</Text>
+				</Box>
 			);
 		}
 
@@ -204,17 +222,17 @@ function BlockToken({ token, width, showLinkUrls, codeWrap, compact = false }: B
 
 			return (
 				<Box
+					backgroundColor="#1f1f1f"
 					flexDirection="column"
-					borderStyle="round"
-					paddingX={1}
-					width={width}
 					marginBottom={compact ? 0 : 1}
+					paddingX={0}
+					width={width}
 				>
 					{value.lang ? <Text dimColor>{value.lang}</Text> : null}
 					{lines.map((line, index) => (
-						<Text key={index} wrap={codeWrap}>
-							{line || ' '}
-						</Text>
+						<Transform key={index} transform={normaliseTerminalLine}>
+							<Text wrap={codeWrap}>{line || ' '}</Text>
+						</Transform>
 					))}
 				</Box>
 			);
@@ -224,22 +242,18 @@ function BlockToken({ token, width, showLinkUrls, codeWrap, compact = false }: B
 			const value = token as Tokens.Blockquote;
 
 			return (
-				<Box
-					flexDirection="column"
-					borderStyle="single"
-					borderTop={false}
-					borderRight={false}
-					borderBottom={false}
-					paddingLeft={1}
-					marginBottom={compact ? 0 : 1}
-				>
+				<Box flexDirection="column" marginBottom={compact ? 0 : 1}>
+					<Box paddingX={textPaddingX}>
+						<Text color="gray">quote</Text>
+					</Box>
 					{value.tokens.map((child, index) => (
 						<BlockToken
 							key={`${child.type}-${index}`}
 							token={child}
-							width={Math.max(10, width - 2)}
+							width={Math.max(10, width)}
 							showLinkUrls={showLinkUrls}
 							codeWrap={codeWrap}
+							textPaddingX={textPaddingX}
 							compact
 						/>
 					))}
@@ -260,7 +274,7 @@ function BlockToken({ token, width, showLinkUrls, codeWrap, compact = false }: B
 			const markerWidth = Math.max(...labels.map((label) => label.length));
 
 			return (
-				<Box flexDirection="column" marginBottom={compact ? 0 : 1}>
+				<Box flexDirection="column" marginBottom={compact ? 0 : 1} paddingX={textPaddingX}>
 					{value.items.map((item, index) => (
 						<Box key={index} alignItems="flex-start">
 							<Text>{`${(labels[index] ?? '').padStart(markerWidth)} `}</Text>
@@ -272,6 +286,7 @@ function BlockToken({ token, width, showLinkUrls, codeWrap, compact = false }: B
 										width={Math.max(10, width - markerWidth - 1)}
 										showLinkUrls={showLinkUrls}
 										codeWrap={codeWrap}
+										textPaddingX={textPaddingX}
 										compact={!value.loose}
 									/>
 								))}
@@ -288,13 +303,14 @@ function BlockToken({ token, width, showLinkUrls, codeWrap, compact = false }: B
 					table={token as Tokens.Table}
 					width={width}
 					showLinkUrls={showLinkUrls}
+					textPaddingX={textPaddingX}
 					compact={compact}
 				/>
 			);
 
 		case 'hr':
 			return (
-				<Box marginBottom={compact ? 0 : 1}>
+				<Box marginBottom={compact ? 0 : 1} paddingX={textPaddingX}>
 					<Text dimColor>{'─'.repeat(Math.max(3, Math.min(width, 40)))}</Text>
 				</Box>
 			);
@@ -312,6 +328,7 @@ function BlockToken({ token, width, showLinkUrls, codeWrap, compact = false }: B
 								width={width}
 								showLinkUrls={showLinkUrls}
 								codeWrap={codeWrap}
+								textPaddingX={textPaddingX}
 								compact={compact}
 							/>
 						))}
@@ -328,11 +345,13 @@ function TableBlock({
 	table,
 	width,
 	showLinkUrls,
+	textPaddingX,
 	compact,
 }: {
 	table: Tokens.Table;
 	width: number;
 	showLinkUrls: boolean;
+	textPaddingX: number;
 	compact: boolean;
 }) {
 	const columnCount = table.header.length;
@@ -364,7 +383,7 @@ function TableBlock({
 	const bottomBorder = `└${columnWidths.map((cellWidth) => '─'.repeat(cellWidth + 2)).join('┴')}┘`;
 
 	return (
-		<Box flexDirection="column" marginBottom={compact ? 0 : 1}>
+		<Box flexDirection="column" marginBottom={compact ? 0 : 1} paddingX={textPaddingX}>
 			<Text dimColor>{topBorder}</Text>
 			<TableRow
 				cells={table.header}
@@ -528,3 +547,7 @@ function normaliseUrl(value: string): string {
 		.replace(/^https?:\/\//, '')
 		.replace(/\/$/, '');
 }
+
+const normaliseTerminalLine = (line: string): string => {
+	return line.replaceAll('\r', '').replaceAll('\t', '  ');
+};

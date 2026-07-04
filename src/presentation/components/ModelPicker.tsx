@@ -2,8 +2,6 @@ import { Box, Text } from 'ink';
 
 import type { ListedModel } from '@/application/ports/ModelCatalogPort';
 
-const PANEL_BACKGROUND = '#1f1f1f';
-
 type ModelPickerProps = {
 	currentModelName: string;
 	errorMessage?: string | undefined;
@@ -18,7 +16,9 @@ export const ModelPicker = ({
 	selectedIndex,
 }: ModelPickerProps) => {
 	return (
-		<Box backgroundColor={PANEL_BACKGROUND} flexDirection="column" paddingX={2} paddingY={1}>
+		<Box flexDirection="column" gap={1}>
+			<PickerHeader title="Select model" />
+
 			<Box flexDirection="column">
 				{models.map((model, index) => (
 					<ModelPickerRow
@@ -36,6 +36,19 @@ export const ModelPicker = ({
 	);
 };
 
+type PickerHeaderProps = {
+	title: string;
+};
+
+const PickerHeader = ({ title }: PickerHeaderProps) => {
+	return (
+		<Box justifyContent="space-between">
+			<Text bold>{title}</Text>
+			<Text color="gray">↑/↓ or j/k · Enter</Text>
+		</Box>
+	);
+};
+
 type ModelPickerRowProps = {
 	currentModelName: string;
 	isSelected: boolean;
@@ -43,17 +56,17 @@ type ModelPickerRowProps = {
 };
 
 const ModelPickerRow = ({ currentModelName, isSelected, model }: ModelPickerRowProps) => {
-	const prefix = isSelected ? '> ' : '  ';
-	const color = isSelected ? 'cyan' : 'white';
+	const marker = isSelected ? '›' : ' ';
 	const details = formatModelDetails(model);
+	const isCurrent = model.name === currentModelName;
 
 	return (
-		<Text color={color}>
-			{prefix}
-			{model.name}
+		<Box>
+			<Text color={isSelected ? 'cyan' : 'gray'}>{marker} </Text>
+			<Text color={isSelected ? 'cyan' : 'white'}>{model.name}</Text>
 			{details.length === 0 ? null : <Text color="gray"> {details}</Text>}
-			{model.name === currentModelName ? <Text color="green"> current</Text> : null}
-		</Text>
+			{isCurrent ? <Text color="green"> current</Text> : null}
+		</Box>
 	);
 };
 

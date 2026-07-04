@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useInput } from 'ink';
+import { useCallback, useState } from 'react';
+import { useInput, usePaste, type Key } from 'ink';
 
 type UseTextInputOptions = {
 	isActive: boolean;
@@ -10,6 +10,33 @@ export const useTextInput = ({ isActive, onSubmit }: UseTextInputOptions) => {
 	const [input, setInput] = useState('');
 	const [cursorIndex, setCursorIndex] = useState(0);
 
+	const insertText = useCallback(
+		(text: string): void => {
+			if (text.length === 0) {
+				return;
+			}
+
+			setInput(
+				(currentInput) =>
+					`${currentInput.slice(0, cursorIndex)}${text}${currentInput.slice(cursorIndex)}`,
+			);
+			setCursorIndex((currentIndex) => currentIndex + text.length);
+		},
+		[cursorIndex],
+	);
+
+	const clearInput = useCallback((): void => {
+		setInput('');
+		setCursorIndex(0);
+	}, []);
+
+	usePaste(
+		(text) => {
+			insertText(text.replaceAll('\r\n', '\n'));
+		},
+		{ isActive },
+	);
+
 	useInput(
 		(value, key) => {
 			if (key.return) {
@@ -19,9 +46,23 @@ export const useTextInput = ({ isActive, onSubmit }: UseTextInputOptions) => {
 					return;
 				}
 
-				setInput('');
-				setCursorIndex(0);
+				clearInput();
 				onSubmit(prompt);
+				return;
+			}
+
+			if (key.ctrl && value === 'a') {
+				setCursorIndex(0);
+				return;
+			}
+
+			if (key.ctrl && value === 'e') {
+				setCursorIndex(input.length);
+				return;
+			}
+
+			if (key.ctrl && value === 'u') {
+				clearInput();
 				return;
 			}
 
@@ -74,13 +115,7 @@ export const useTextInput = ({ isActive, onSubmit }: UseTextInputOptions) => {
 				return;
 			}
 
-			if (value.length > 0) {
-				setInput(
-					(currentInput) =>
-						`${currentInput.slice(0, cursorIndex)}${value}${currentInput.slice(cursorIndex)}`,
-				);
-				setCursorIndex((currentIndex) => currentIndex + value.length);
-			}
+			insertText(value);
 		},
 		{ isActive },
 	);
@@ -91,19 +126,12 @@ export const useTextInput = ({ isActive, onSubmit }: UseTextInputOptions) => {
 	};
 };
 
-const isControlKey = (key: {
-	ctrl: boolean;
-	downArrow: boolean;
-	escape: boolean;
-	meta: boolean;
-	pageDown: boolean;
-	pageUp: boolean;
-	tab: boolean;
-	upArrow: boolean;
-}): boolean => {
+const isControlKey = (key: Key): boolean => {
 	return (
 		key.ctrl ||
 		key.meta ||
+		key.super ||
+		key.hyper ||
 		key.tab ||
 		key.escape ||
 		key.upArrow ||

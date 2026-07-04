@@ -3,6 +3,7 @@ import type { SessionId } from '@/domain/Ids';
 export type UiStatus = 'idle' | 'loading' | 'streaming';
 
 export type TranscriptEntry = {
+	id: string;
 	role: 'user' | 'assistant' | 'error';
 	content: string;
 };

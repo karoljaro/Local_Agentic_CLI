@@ -4,10 +4,10 @@ import type { TranscriptEntry } from './types';
 export const sessionEventsToTranscript = (events: ListedSessionEvent[]): TranscriptEntry[] => {
 	return events.map((event) => {
 		if (event.type === 'prompt.submitted') {
-			return { role: 'user', content: event.prompt };
+			return { id: String(event.id), role: 'user', content: event.prompt };
 		}
 
-		return { role: 'assistant', content: event.content };
+		return { id: String(event.id), role: 'assistant', content: event.content };
 	});
 };
 
