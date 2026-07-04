@@ -2,6 +2,12 @@ import { Fragment, useMemo } from 'react';
 import { Box, Text, Transform, useWindowSize } from 'ink';
 import { marked, type Token, type Tokens } from 'marked';
 
+import { displayLength } from '@/presentation/formatters/displayLength';
+
+const MIN_RENDER_WIDTH = 10;
+const CODE_BACKGROUND = '#1f1f1f';
+const TABLE_CELL_PADDING_X = 1;
+
 type MarkdownProps = {
 	children: string;
 	/** Maksymalna szerokość bloków takich jak tabela, kod i separator. */
@@ -36,8 +42,8 @@ export function Markdown({
 	textPaddingX = 0,
 }: MarkdownProps) {
 	const { columns } = useWindowSize();
-	const terminalWidth = Math.max(10, columns);
-	const width = Math.max(10, Math.min(maxWidth ?? terminalWidth - 2, terminalWidth));
+	const terminalWidth = Math.max(MIN_RENDER_WIDTH, columns);
+	const width = Math.max(MIN_RENDER_WIDTH, Math.min(maxWidth ?? terminalWidth - 2, terminalWidth));
 
 	const tokens = useMemo(
 		() =>
@@ -222,7 +228,7 @@ function BlockToken({
 
 			return (
 				<Box
-					backgroundColor="#1f1f1f"
+					backgroundColor={CODE_BACKGROUND}
 					flexDirection="column"
 					marginBottom={compact ? 0 : 1}
 					paddingX={0}
@@ -231,7 +237,7 @@ function BlockToken({
 					{value.lang ? <Text dimColor>{value.lang}</Text> : null}
 					{lines.map((line, index) => (
 						<Transform key={index} transform={normaliseTerminalLine}>
-							<Text wrap={codeWrap}>{line || ' '}</Text>
+							<Text wrap={codeWrap}>{line}</Text>
 						</Transform>
 					))}
 				</Box>
@@ -250,7 +256,7 @@ function BlockToken({
 						<BlockToken
 							key={`${child.type}-${index}`}
 							token={child}
-							width={Math.max(10, width)}
+							width={Math.max(MIN_RENDER_WIDTH, width)}
 							showLinkUrls={showLinkUrls}
 							codeWrap={codeWrap}
 							textPaddingX={textPaddingX}
@@ -263,6 +269,11 @@ function BlockToken({
 
 		case 'list': {
 			const value = token as Tokens.List;
+
+			if (value.items.length === 0) {
+				return null;
+			}
+
 			const start = value.start === '' ? 1 : value.start;
 			const labels = value.items.map((item, index) => {
 				if (item.task) {
@@ -283,7 +294,7 @@ function BlockToken({
 									<BlockToken
 										key={`${child.type}-${childIndex}`}
 										token={child}
-										width={Math.max(10, width - markerWidth - 1)}
+										width={Math.max(MIN_RENDER_WIDTH, width - markerWidth - 1)}
 										showLinkUrls={showLinkUrls}
 										codeWrap={codeWrap}
 										textPaddingX={textPaddingX}
@@ -424,7 +435,7 @@ function TableRow({
 					<Fragment key={index}>
 						<Box
 							width={columnWidth + 2}
-							paddingX={1}
+							paddingX={TABLE_CELL_PADDING_X}
 							justifyContent={
 								alignment === 'right'
 									? 'flex-end'
@@ -534,11 +545,6 @@ function inlineDisplayText(tokens: Token[], showLinkUrls: boolean): string {
 			return shouldShowUrl ? `${label} (${link.href})` : label;
 		})
 		.join('');
-}
-
-function displayLength(value: string): number {
-	// Poprawnie liczy pary surogatów (np. emoji). Dla pełnego CJK można podmienić na string-width.
-	return Array.from(value).length;
 }
 
 function normaliseUrl(value: string): string {

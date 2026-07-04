@@ -1,29 +1,26 @@
 import { Box, Text, useWindowSize } from 'ink';
 
-import type { SessionId } from '@/domain/Ids';
 import type { UiStatus } from '@/presentation/chat/types';
 import { getStatusColor, getStatusText } from '@/presentation/formatters/status';
 
 const APP_TITLE = 'codesh';
 const DIVIDER = '─';
 const MIN_HEADER_WIDTH = 40;
+const FRAME_HORIZONTAL_PADDING = 2;
 
 export type AppHeaderProps = {
-	modelName?: string | undefined;
-	sessionId?: SessionId | undefined;
 	status: UiStatus;
 	statusText?: string | undefined;
-	workspacePath?: string | undefined;
 };
 
 export const AppHeader = ({ status, statusText }: AppHeaderProps) => {
 	const { columns } = useWindowSize();
-	const width = Math.max(MIN_HEADER_WIDTH, columns - 2);
+	const width = Math.max(MIN_HEADER_WIDTH, columns - FRAME_HORIZONTAL_PADDING);
 
 	return <AppHeaderContent status={status} statusText={statusText} width={width} />;
 };
 
-type AppHeaderContentProps = Pick<AppHeaderProps, 'status' | 'statusText'> & {
+type AppHeaderContentProps = AppHeaderProps & {
 	width: number;
 };
 

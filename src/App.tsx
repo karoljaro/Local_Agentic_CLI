@@ -42,12 +42,7 @@ export function App({ initialMode = 'new' }: AppProps) {
 
 	if (!isRawModeSupported) {
 		return (
-			<AppFrame
-				modelName={modelName}
-				status="idle"
-				statusText="non-interactive"
-				workspacePath={runtime.workspacePath}
-			>
+			<AppFrame status="idle" statusText="non-interactive">
 				<Text color="yellow">Run this CLI in an interactive terminal.</Text>
 			</AppFrame>
 		);
@@ -57,7 +52,6 @@ export function App({ initialMode = 'new' }: AppProps) {
 		return (
 			<SessionPickerScreen
 				currentSessionId={sessionId}
-				modelName={modelName}
 				onSelectSession={selectSession}
 				runtime={runtime}
 			/>
@@ -74,7 +68,6 @@ export function App({ initialMode = 'new' }: AppProps) {
 					setScreen('chat');
 				}}
 				runtime={runtime}
-				sessionId={sessionId}
 			/>
 		);
 	}
@@ -95,14 +88,12 @@ export function App({ initialMode = 'new' }: AppProps) {
 
 type SessionPickerScreenProps = {
 	currentSessionId?: SessionId | undefined;
-	modelName: string;
 	onSelectSession: (sessionId: SessionId) => void;
 	runtime: Runtime;
 };
 
 const SessionPickerScreen = ({
 	currentSessionId,
-	modelName,
 	onSelectSession,
 	runtime,
 }: SessionPickerScreenProps) => {
@@ -110,10 +101,8 @@ const SessionPickerScreen = ({
 
 	return (
 		<AppFrame
-			modelName={modelName}
 			status={picker.status}
 			statusText={picker.status === 'loading' ? 'loading sessions' : 'session'}
-			workspacePath={runtime.workspacePath}
 		>
 			<SessionPicker
 				currentSessionId={currentSessionId}
@@ -129,24 +118,19 @@ type ModelPickerScreenProps = {
 	currentModelName: string;
 	onSelectModel: (modelName: string) => void;
 	runtime: Runtime;
-	sessionId: SessionId;
 };
 
 const ModelPickerScreen = ({
 	currentModelName,
 	onSelectModel,
 	runtime,
-	sessionId,
 }: ModelPickerScreenProps) => {
 	const picker = useModelPicker({ onSelectModel, runtime });
 
 	return (
 		<AppFrame
-			modelName={currentModelName}
-			sessionId={sessionId}
 			status={picker.status}
 			statusText={picker.status === 'loading' ? 'loading models' : 'model'}
-			workspacePath={runtime.workspacePath}
 		>
 			<ModelPicker
 				currentModelName={currentModelName}
@@ -208,20 +192,11 @@ const ChatScreen = ({
 
 	return (
 		<AppFrame
-			modelName={modelName}
-			sessionId={sessionId}
 			showHeader={!transcriptHasHeader}
 			status={chat.status}
 			statusText={approval.pendingApproval === null ? undefined : 'approval'}
-			workspacePath={runtime.workspacePath}
 		>
-			<Transcript
-				modelName={modelName}
-				sessionId={sessionId}
-				streamingContent={chat.streamingContent}
-				transcript={chat.transcript}
-				workspacePath={runtime.workspacePath}
-			/>
+			<Transcript streamingContent={chat.streamingContent} transcript={chat.transcript} />
 
 			{approval.pendingApproval === null ? null : (
 				<ApprovalPrompt request={approval.pendingApproval} />

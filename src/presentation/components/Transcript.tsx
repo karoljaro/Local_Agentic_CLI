@@ -1,31 +1,26 @@
 import { memo, useMemo, type ReactNode } from 'react';
 import { Box, Static, Text, useWindowSize } from 'ink';
 
-import type { SessionId } from '@/domain/Ids';
 import type { TranscriptEntry } from '@/presentation/chat/types';
+import { displayLength } from '@/presentation/formatters/displayLength';
 import { AppHeader } from './AppHeader';
 import { Markdown } from './Markdown';
 
 const STREAMING_CURSOR = '▌';
+const HISTORY_HEADER_ID = 'history-header';
 const MESSAGE_TEXT_PADDING_X = 1;
 const MESSAGE_RULE_MIN_WIDTH = 32;
 const MESSAGE_RULE_MARGIN = 4;
 
 type TranscriptProps = {
-	modelName: string;
-	sessionId: SessionId;
 	streamingContent: string;
 	transcript: TranscriptEntry[];
-	workspacePath: string;
 };
 
 type TranscriptStaticItem =
 	| {
-			id: string;
+			id: typeof HISTORY_HEADER_ID;
 			type: 'header';
-			modelName: string;
-			sessionId: SessionId;
-			workspacePath: string;
 	  }
 	| {
 			id: string;
@@ -33,18 +28,11 @@ type TranscriptStaticItem =
 			entry: TranscriptEntry;
 	  };
 
-export const Transcript = ({
-	modelName,
-	sessionId,
-	streamingContent,
-	transcript,
-	workspacePath,
-}: TranscriptProps) => {
+export const Transcript = ({ streamingContent, transcript }: TranscriptProps) => {
+	const { columns } = useWindowSize();
+	const ruleWidth = Math.max(MESSAGE_RULE_MIN_WIDTH, columns - MESSAGE_RULE_MARGIN);
 	const hasLiveResponse = streamingContent.length > 0;
-	const staticItems = useMemo(
-		() => buildStaticItems({ modelName, sessionId, transcript, workspacePath }),
-		[modelName, sessionId, transcript, workspacePath],
-	);
+	const staticItems = useMemo(() => buildStaticItems(transcript), [transcript]);
 
 	if (staticItems.length === 0 && !hasLiveResponse) {
 		return <EmptyTranscript />;
@@ -53,70 +41,49 @@ export const Transcript = ({
 	return (
 		<Box flexDirection="column">
 			<Static items={staticItems}>
-				{(item) => <TranscriptStaticBlock item={item} key={item.id} />}
+				{(item) => <TranscriptStaticBlock item={item} key={item.id} ruleWidth={ruleWidth} />}
 			</Static>
 
-			{hasLiveResponse ? <LiveAssistantMessage content={streamingContent} /> : null}
+			{hasLiveResponse ? (
+				<LiveAssistantMessage content={streamingContent} ruleWidth={ruleWidth} />
+			) : null}
 		</Box>
 	);
 };
 
-type BuildStaticItemsInput = {
-	modelName: string;
-	sessionId: SessionId;
-	transcript: TranscriptEntry[];
-	workspacePath: string;
-};
-
-const buildStaticItems = ({
-	modelName,
-	sessionId,
-	transcript,
-	workspacePath,
-}: BuildStaticItemsInput): TranscriptStaticItem[] => {
+const buildStaticItems = (transcript: TranscriptEntry[]): TranscriptStaticItem[] => {
 	if (transcript.length === 0) {
 		return [];
 	}
 
 	return [
-		{
-			id: `history-header:${sessionId}`,
-			type: 'header',
-			modelName,
-			sessionId,
-			workspacePath,
-		},
+		{ id: HISTORY_HEADER_ID, type: 'header' },
 		...transcript.map((entry) => ({ id: entry.id, type: 'message' as const, entry })),
 	];
 };
 
 type TranscriptStaticBlockProps = {
 	item: TranscriptStaticItem;
+	ruleWidth: number;
 };
 
-const TranscriptStaticBlock = memo(({ item }: TranscriptStaticBlockProps) => {
+const TranscriptStaticBlock = memo(({ item, ruleWidth }: TranscriptStaticBlockProps) => {
 	if (item.type === 'header') {
 		return (
 			<Box flexDirection="column" marginBottom={1}>
-				<AppHeader
-					modelName={item.modelName}
-					sessionId={item.sessionId}
-					status="idle"
-					statusText="ready"
-					workspacePath={item.workspacePath}
-				/>
+				<AppHeader status="idle" statusText="ready" />
 			</Box>
 		);
 	}
 
-	return <MessageBlock entry={item.entry} />;
+	return <MessageBlock entry={item.entry} ruleWidth={ruleWidth} />;
 });
 
 TranscriptStaticBlock.displayName = 'TranscriptStaticBlock';
 
 const EmptyTranscript = () => {
 	return (
-		<Box flexDirection="column">
+		<Box flexDirection="column" paddingX={MESSAGE_TEXT_PADDING_X}>
 			<Text color="gray">No messages yet.</Text>
 			<Text color="gray">Use /model to switch model or /resume to load a previous session.</Text>
 		</Box>
@@ -125,28 +92,36 @@ const EmptyTranscript = () => {
 
 type MessageBlockProps = {
 	entry: TranscriptEntry;
+	ruleWidth: number;
 };
 
-const MessageBlock = memo(({ entry }: MessageBlockProps) => {
+const MessageBlock = memo(({ entry, ruleWidth }: MessageBlockProps) => {
 	if (entry.role === 'user') {
-		return <UserMessage content={entry.content} />;
+		return <UserMessage content={entry.content} ruleWidth={ruleWidth} />;
 	}
 
 	if (entry.role === 'error') {
-		return <ErrorMessage content={entry.content} />;
+		return <ErrorMessage content={entry.content} ruleWidth={ruleWidth} />;
 	}
 
-	return <AssistantMessage content={entry.content} />;
+	return <AssistantMessage content={entry.content} ruleWidth={ruleWidth} />;
 });
 
 MessageBlock.displayName = 'MessageBlock';
 
-const UserMessage = memo(({ content }: { content: string }) => {
+type MessageProps = {
+	content: string;
+	ruleWidth: number;
+};
+
+const UserMessage = memo(({ content, ruleWidth }: MessageProps) => {
 	return (
-		<MessageSection color="cyan" label="user request">
+		<MessageSection color="cyan" label="user request" ruleWidth={ruleWidth}>
 			<Box paddingX={MESSAGE_TEXT_PADDING_X}>
-				<Text color="cyan">› </Text>
-				<Text wrap="wrap">{content}</Text>
+				<Text wrap="wrap">
+					<Text color="cyan">› </Text>
+					{content}
+				</Text>
 			</Box>
 		</MessageSection>
 	);
@@ -154,9 +129,9 @@ const UserMessage = memo(({ content }: { content: string }) => {
 
 UserMessage.displayName = 'UserMessage';
 
-const AssistantMessage = memo(({ content }: { content: string }) => {
+const AssistantMessage = memo(({ content, ruleWidth }: MessageProps) => {
 	return (
-		<MessageSection color="green" label="model response">
+		<MessageSection color="green" label="model response" ruleWidth={ruleWidth}>
 			<Markdown maxWidth={100} showLinkUrls codeWrap="wrap" textPaddingX={MESSAGE_TEXT_PADDING_X}>
 				{content}
 			</Markdown>
@@ -166,9 +141,9 @@ const AssistantMessage = memo(({ content }: { content: string }) => {
 
 AssistantMessage.displayName = 'AssistantMessage';
 
-const LiveAssistantMessage = ({ content }: { content: string }) => {
+const LiveAssistantMessage = ({ content, ruleWidth }: MessageProps) => {
 	return (
-		<MessageSection color="yellow" label="model response · streaming">
+		<MessageSection color="yellow" label="model response · streaming" ruleWidth={ruleWidth}>
 			<Markdown maxWidth={100} showLinkUrls codeWrap="wrap" textPaddingX={MESSAGE_TEXT_PADDING_X}>
 				{`${content}${STREAMING_CURSOR}`}
 			</Markdown>
@@ -176,9 +151,9 @@ const LiveAssistantMessage = ({ content }: { content: string }) => {
 	);
 };
 
-const ErrorMessage = memo(({ content }: { content: string }) => {
+const ErrorMessage = memo(({ content, ruleWidth }: MessageProps) => {
 	return (
-		<MessageSection color="red" label="error">
+		<MessageSection color="red" label="error" ruleWidth={ruleWidth}>
 			<Box paddingX={MESSAGE_TEXT_PADDING_X}>
 				<Text color="red" wrap="wrap">
 					{content}
@@ -194,19 +169,17 @@ type MessageSectionProps = {
 	children: ReactNode;
 	color: 'cyan' | 'green' | 'red' | 'yellow';
 	label: string;
+	ruleWidth: number;
 };
 
-const MessageSection = ({ children, color, label }: MessageSectionProps) => {
-	const { columns } = useWindowSize();
-	const width = Math.max(MESSAGE_RULE_MIN_WIDTH, columns - MESSAGE_RULE_MARGIN);
-
+const MessageSection = ({ children, color, label, ruleWidth }: MessageSectionProps) => {
 	return (
 		<Box flexDirection="column" marginBottom={1}>
-			<Text color={color}>{buildTopRule(label, width)}</Text>
+			<Text color={color}>{buildTopRule(label, ruleWidth)}</Text>
 			<Box flexDirection="column" marginY={1}>
 				{children}
 			</Box>
-			<Text color={color}>{buildBottomRule(width)}</Text>
+			<Text color={color}>{buildBottomRule(ruleWidth)}</Text>
 		</Box>
 	);
 };
@@ -218,8 +191,4 @@ const buildTopRule = (label: string, width: number): string => {
 
 const buildBottomRule = (width: number): string => {
 	return `╰${'─'.repeat(Math.max(0, width - 1))}`;
-};
-
-const displayLength = (value: string): number => {
-	return Array.from(value).length;
 };

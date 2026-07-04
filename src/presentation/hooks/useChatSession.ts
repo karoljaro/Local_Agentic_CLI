@@ -1,11 +1,4 @@
-import {
-	useCallback,
-	useEffect,
-	useRef,
-	useState,
-	type Dispatch,
-	type SetStateAction,
-} from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { Runtime } from '@/composition/createRuntime';
 import type { SessionId } from '@/domain/Ids';
@@ -49,6 +42,16 @@ export const useChatSession = ({
 		[sessionId],
 	);
 
+	const appendTranscriptEntry = useCallback(
+		(prefix: string, role: TranscriptEntry['role'], content: string): void => {
+			setTranscript((currentTranscript) => [
+				...currentTranscript,
+				{ id: nextUiEntryId(prefix), role, content },
+			]);
+		},
+		[nextUiEntryId],
+	);
+
 	useEffect(() => {
 		let isCancelled = false;
 		nextUiEntryIndexRef.current = 0;
@@ -60,19 +63,21 @@ export const useChatSession = ({
 			try {
 				const result = await runtime.listSessionEvents.list({ sessionId });
 
-				if (!isCancelled) {
-					const sessionModelName = restoreSessionModel
-						? getSessionModelName(result.events)
-						: undefined;
-
-					if (sessionModelName !== undefined) {
-						onModelNameChange(runtime.switchModel(sessionModelName));
-					}
-
-					setTranscript(sessionEventsToTranscript(result.events));
+				if (isCancelled) {
+					return;
 				}
+
+				const sessionModelName = restoreSessionModel
+					? getSessionModelName(result.events)
+					: undefined;
+
+				if (sessionModelName !== undefined) {
+					onModelNameChange(runtime.switchModel(sessionModelName));
+				}
+
+				setTranscript(sessionEventsToTranscript(result.events));
 			} catch (caughtError) {
-				const error = caughtError instanceof Error ? caughtError : new Error(String(caughtError));
+				const error = toError(caughtError);
 
 				if (!isCancelled) {
 					setTranscript([
@@ -94,29 +99,42 @@ export const useChatSession = ({
 		};
 	}, [abortTurn, nextUiEntryId, onModelNameChange, restoreSessionModel, runtime, sessionId]);
 
+	const handleCommand = useCallback(
+		(command: ChatCommand): void => {
+			if (command.type === 'resume') {
+				onResume();
+				return;
+			}
+
+			if (command.type === 'open-models') {
+				onOpenModels();
+				return;
+			}
+
+			try {
+				const nextModelName = runtime.switchModel(command.modelName);
+
+				onModelNameChange(nextModelName);
+				appendTranscriptEntry('system', 'assistant', `Model switched to ${nextModelName}.`);
+			} catch (caughtError) {
+				appendTranscriptEntry('command-error', 'error', toError(caughtError).message);
+			}
+		},
+		[appendTranscriptEntry, onModelNameChange, onOpenModels, onResume, runtime],
+	);
+
 	const runPrompt = useCallback(
 		async (prompt: string): Promise<void> => {
 			const command = parseChatCommand(prompt);
 
 			if (command !== null) {
-				handleChatCommand(
-					command,
-					runtime,
-					onOpenModels,
-					onModelNameChange,
-					onResume,
-					setTranscript,
-					nextUiEntryId,
-				);
+				handleCommand(command);
 				return;
 			}
 
 			setStatus('streaming');
 			setStreamingContent('');
-			setTranscript((currentTranscript) => [
-				...currentTranscript,
-				{ id: nextUiEntryId('user'), role: 'user', content: prompt },
-			]);
+			appendTranscriptEntry('user', 'user', prompt);
 
 			let assistantContent = '';
 			const activeTurn = startTurn();
@@ -128,43 +146,29 @@ export const useChatSession = ({
 					modelName,
 					signal: activeTurn.signal,
 				})) {
+					if (chunk.contentDelta.length === 0) {
+						continue;
+					}
+
 					assistantContent += chunk.contentDelta;
 					setStreamingContent(assistantContent);
 				}
 
 				if (assistantContent.trim().length > 0) {
-					setTranscript((currentTranscript) => [
-						...currentTranscript,
-						{ id: nextUiEntryId('assistant'), role: 'assistant', content: assistantContent },
-					]);
+					appendTranscriptEntry('assistant', 'assistant', assistantContent);
 				}
 			} catch (caughtError) {
-				const error = caughtError instanceof Error ? caughtError : new Error(String(caughtError));
+				const error = toError(caughtError);
+				const message = isAbortError(error) ? 'Request cancelled.' : error.message;
 
-				setTranscript((currentTranscript) => [
-					...currentTranscript,
-					{
-						id: nextUiEntryId('turn-error'),
-						role: 'error',
-						content: isAbortError(error) ? 'Request cancelled.' : error.message,
-					},
-				]);
+				appendTranscriptEntry('turn-error', 'error', message);
 			} finally {
 				activeTurn.clear();
 				setStreamingContent('');
 				setStatus('idle');
 			}
 		},
-		[
-			modelName,
-			nextUiEntryId,
-			onModelNameChange,
-			onOpenModels,
-			onResume,
-			runtime,
-			sessionId,
-			startTurn,
-		],
+		[appendTranscriptEntry, handleCommand, modelName, runtime, sessionId, startTurn],
 	);
 
 	return {
@@ -176,45 +180,8 @@ export const useChatSession = ({
 	};
 };
 
-const handleChatCommand = (
-	command: ChatCommand,
-	runtime: Runtime,
-	onOpenModels: () => void,
-	onModelNameChange: (modelName: string) => void,
-	onResume: () => void,
-	setTranscript: Dispatch<SetStateAction<TranscriptEntry[]>>,
-	nextUiEntryId: (prefix: string) => string,
-): void => {
-	if (command.type === 'resume') {
-		onResume();
-		return;
-	}
-
-	if (command.type === 'open-models') {
-		onOpenModels();
-		return;
-	}
-
-	try {
-		const nextModelName = runtime.switchModel(command.modelName);
-
-		onModelNameChange(nextModelName);
-		setTranscript((currentTranscript) => [
-			...currentTranscript,
-			{
-				id: nextUiEntryId('system'),
-				role: 'assistant',
-				content: `Model switched to ${nextModelName}.`,
-			},
-		]);
-	} catch (caughtError) {
-		const error = caughtError instanceof Error ? caughtError : new Error(String(caughtError));
-
-		setTranscript((currentTranscript) => [
-			...currentTranscript,
-			{ id: nextUiEntryId('command-error'), role: 'error', content: error.message },
-		]);
-	}
+const toError = (caughtError: unknown): Error => {
+	return caughtError instanceof Error ? caughtError : new Error(String(caughtError));
 };
 
 const isAbortError = (error: Error): boolean => {
