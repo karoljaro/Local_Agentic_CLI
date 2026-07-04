@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Box, Text } from 'ink';
 
 import type { TranscriptEntry } from '@/presentation/chat/types';
@@ -34,7 +35,7 @@ type MessageRowProps = {
 	entry: TranscriptEntry;
 };
 
-const MessageRow = ({ entry }: MessageRowProps) => {
+const MessageRow = memo(({ entry }: MessageRowProps) => {
 	if (entry.role === 'user') {
 		return <UserMessage content={entry.content} />;
 	}
@@ -48,17 +49,21 @@ const MessageRow = ({ entry }: MessageRowProps) => {
 	}
 
 	return <AssistantMessage content={entry.content} />;
-};
+});
 
-const UserMessage = ({ content }: { content: string }) => {
+MessageRow.displayName = 'MessageRow';
+
+const UserMessage = memo(({ content }: { content: string }) => {
 	return (
 		<Box backgroundColor={USER_BACKGROUND} paddingX={2} paddingY={1}>
 			<Text color="white">&gt; {content}</Text>
 		</Box>
 	);
-};
+});
 
-const AssistantMessage = ({ content }: { content: string }) => {
+UserMessage.displayName = 'UserMessage';
+
+const AssistantMessage = memo(({ content }: { content: string }) => {
 	return (
 		<Box paddingLeft={2}>
 			<Markdown maxWidth={100} showLinkUrls codeWrap="wrap">
@@ -66,4 +71,6 @@ const AssistantMessage = ({ content }: { content: string }) => {
 			</Markdown>
 		</Box>
 	);
-};
+});
+
+AssistantMessage.displayName = 'AssistantMessage';
