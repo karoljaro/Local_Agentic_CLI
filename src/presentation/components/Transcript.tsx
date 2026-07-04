@@ -26,6 +26,7 @@ type TranscriptStaticItem =
 			id: string;
 			type: 'message';
 			entry: TranscriptEntry;
+			hasLeadingSpace: boolean;
 	  };
 
 export const Transcript = ({ streamingContent, transcript }: TranscriptProps) => {
@@ -45,7 +46,11 @@ export const Transcript = ({ streamingContent, transcript }: TranscriptProps) =>
 			</Static>
 
 			{hasLiveResponse ? (
-				<LiveAssistantMessage content={streamingContent} ruleWidth={ruleWidth} />
+				<LiveAssistantMessage
+					content={streamingContent}
+					hasLeadingSpace={transcript.length > 0}
+					ruleWidth={ruleWidth}
+				/>
 			) : null}
 		</Box>
 	);
@@ -58,7 +63,12 @@ const buildStaticItems = (transcript: TranscriptEntry[]): TranscriptStaticItem[]
 
 	return [
 		{ id: HISTORY_HEADER_ID, type: 'header' },
-		...transcript.map((entry) => ({ id: entry.id, type: 'message' as const, entry })),
+		...transcript.map((entry, index) => ({
+			id: entry.id,
+			type: 'message' as const,
+			entry,
+			hasLeadingSpace: index > 0,
+		})),
 	];
 };
 
@@ -76,7 +86,9 @@ const TranscriptStaticBlock = memo(({ item, ruleWidth }: TranscriptStaticBlockPr
 		);
 	}
 
-	return <MessageBlock entry={item.entry} ruleWidth={ruleWidth} />;
+	return (
+		<MessageBlock entry={item.entry} hasLeadingSpace={item.hasLeadingSpace} ruleWidth={ruleWidth} />
+	);
 });
 
 TranscriptStaticBlock.displayName = 'TranscriptStaticBlock';
@@ -92,31 +104,56 @@ const EmptyTranscript = () => {
 
 type MessageBlockProps = {
 	entry: TranscriptEntry;
+	hasLeadingSpace: boolean;
 	ruleWidth: number;
 };
 
-const MessageBlock = memo(({ entry, ruleWidth }: MessageBlockProps) => {
+const MessageBlock = memo(({ entry, hasLeadingSpace, ruleWidth }: MessageBlockProps) => {
 	if (entry.role === 'user') {
-		return <UserMessage content={entry.content} ruleWidth={ruleWidth} />;
+		return (
+			<UserMessage
+				content={entry.content}
+				hasLeadingSpace={hasLeadingSpace}
+				ruleWidth={ruleWidth}
+			/>
+		);
 	}
 
 	if (entry.role === 'error') {
-		return <ErrorMessage content={entry.content} ruleWidth={ruleWidth} />;
+		return (
+			<ErrorMessage
+				content={entry.content}
+				hasLeadingSpace={hasLeadingSpace}
+				ruleWidth={ruleWidth}
+			/>
+		);
 	}
 
-	return <AssistantMessage content={entry.content} ruleWidth={ruleWidth} />;
+	return (
+		<AssistantMessage
+			content={entry.content}
+			hasLeadingSpace={hasLeadingSpace}
+			ruleWidth={ruleWidth}
+		/>
+	);
 });
 
 MessageBlock.displayName = 'MessageBlock';
 
 type MessageProps = {
 	content: string;
+	hasLeadingSpace: boolean;
 	ruleWidth: number;
 };
 
-const UserMessage = memo(({ content, ruleWidth }: MessageProps) => {
+const UserMessage = memo(({ content, hasLeadingSpace, ruleWidth }: MessageProps) => {
 	return (
-		<MessageSection color="cyan" label="user request" ruleWidth={ruleWidth}>
+		<MessageSection
+			color="cyan"
+			hasLeadingSpace={hasLeadingSpace}
+			label="user request"
+			ruleWidth={ruleWidth}
+		>
 			<Box paddingX={MESSAGE_TEXT_PADDING_X}>
 				<Text wrap="wrap">
 					<Text color="cyan">› </Text>
@@ -129,9 +166,14 @@ const UserMessage = memo(({ content, ruleWidth }: MessageProps) => {
 
 UserMessage.displayName = 'UserMessage';
 
-const AssistantMessage = memo(({ content, ruleWidth }: MessageProps) => {
+const AssistantMessage = memo(({ content, hasLeadingSpace, ruleWidth }: MessageProps) => {
 	return (
-		<MessageSection color="green" label="model response" ruleWidth={ruleWidth}>
+		<MessageSection
+			color="green"
+			hasLeadingSpace={hasLeadingSpace}
+			label="model response"
+			ruleWidth={ruleWidth}
+		>
 			<Markdown maxWidth={100} showLinkUrls codeWrap="wrap" textPaddingX={MESSAGE_TEXT_PADDING_X}>
 				{content}
 			</Markdown>
@@ -141,9 +183,14 @@ const AssistantMessage = memo(({ content, ruleWidth }: MessageProps) => {
 
 AssistantMessage.displayName = 'AssistantMessage';
 
-const LiveAssistantMessage = ({ content, ruleWidth }: MessageProps) => {
+const LiveAssistantMessage = ({ content, hasLeadingSpace, ruleWidth }: MessageProps) => {
 	return (
-		<MessageSection color="yellow" label="model response · streaming" ruleWidth={ruleWidth}>
+		<MessageSection
+			color="yellow"
+			hasLeadingSpace={hasLeadingSpace}
+			label="model response · streaming"
+			ruleWidth={ruleWidth}
+		>
 			<Markdown maxWidth={100} showLinkUrls codeWrap="wrap" textPaddingX={MESSAGE_TEXT_PADDING_X}>
 				{`${content}${STREAMING_CURSOR}`}
 			</Markdown>
@@ -151,9 +198,14 @@ const LiveAssistantMessage = ({ content, ruleWidth }: MessageProps) => {
 	);
 };
 
-const ErrorMessage = memo(({ content, ruleWidth }: MessageProps) => {
+const ErrorMessage = memo(({ content, hasLeadingSpace, ruleWidth }: MessageProps) => {
 	return (
-		<MessageSection color="red" label="error" ruleWidth={ruleWidth}>
+		<MessageSection
+			color="red"
+			hasLeadingSpace={hasLeadingSpace}
+			label="error"
+			ruleWidth={ruleWidth}
+		>
 			<Box paddingX={MESSAGE_TEXT_PADDING_X}>
 				<Text color="red" wrap="wrap">
 					{content}
@@ -168,13 +220,20 @@ ErrorMessage.displayName = 'ErrorMessage';
 type MessageSectionProps = {
 	children: ReactNode;
 	color: 'cyan' | 'green' | 'red' | 'yellow';
+	hasLeadingSpace: boolean;
 	label: string;
 	ruleWidth: number;
 };
 
-const MessageSection = ({ children, color, label, ruleWidth }: MessageSectionProps) => {
+const MessageSection = ({
+	children,
+	color,
+	hasLeadingSpace,
+	label,
+	ruleWidth,
+}: MessageSectionProps) => {
 	return (
-		<Box flexDirection="column" marginBottom={1}>
+		<Box flexDirection="column" marginTop={hasLeadingSpace ? 1 : 0}>
 			<Text color={color}>{buildTopRule(label, ruleWidth)}</Text>
 			<Box flexDirection="column" marginY={1}>
 				{children}

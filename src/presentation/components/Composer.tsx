@@ -27,7 +27,7 @@ export const Composer = ({
 	workspacePath,
 }: ComposerProps) => {
 	return (
-		<Box flexDirection="column">
+		<Box flexDirection="column" marginTop={1}>
 			<Box borderColor="gray" borderStyle="single" paddingX={1} paddingY={0}>
 				<Text color="cyan">› </Text>
 				{isDisabled ? (

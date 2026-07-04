@@ -13,7 +13,7 @@ type AppFrameProps = {
 
 export const AppFrame = ({ children, showHeader = true, status, statusText }: AppFrameProps) => {
 	return (
-		<Box flexDirection="column" gap={1} paddingX={1} paddingY={1}>
+		<Box flexDirection="column" paddingX={1} paddingY={1}>
 			{showHeader ? <AppHeader status={status} statusText={statusText} /> : null}
 			{children}
 		</Box>
