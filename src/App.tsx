@@ -10,6 +10,7 @@ import { Composer } from '@/presentation/components/Composer';
 import { ModelPicker } from '@/presentation/components/ModelPicker';
 import { SessionPicker } from '@/presentation/components/SessionPicker';
 import { Transcript } from '@/presentation/components/Transcript';
+import { WaitingForResponse } from '@/presentation/components/WaitingForResponse';
 import { useChatSession } from '@/presentation/hooks/useChatSession';
 import { useModelPicker } from '@/presentation/hooks/useModelPicker';
 import { useSessionPicker } from '@/presentation/hooks/useSessionPicker';
@@ -189,6 +190,7 @@ const ChatScreen = ({
 	);
 
 	const transcriptHasHeader = chat.transcript.length > 0;
+	const isWaitingForResponse = chat.status === 'streaming' && chat.streamingContent.length === 0;
 
 	return (
 		<AppFrame
@@ -197,6 +199,8 @@ const ChatScreen = ({
 			statusText={approval.pendingApproval === null ? undefined : 'approval'}
 		>
 			<Transcript streamingContent={chat.streamingContent} transcript={chat.transcript} />
+
+			{isWaitingForResponse ? <WaitingForResponse /> : null}
 
 			{approval.pendingApproval === null ? null : (
 				<ApprovalPrompt request={approval.pendingApproval} />
