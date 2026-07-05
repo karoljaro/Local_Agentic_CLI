@@ -4,32 +4,23 @@ import type {
 	ListModelsResult,
 	ModelCatalogPort,
 } from '@/application/ports/ModelCatalogPort';
+import { OllamaHttpClient } from './ollama/OllamaHttpClient';
 
 export class OllamaModelCatalog implements ModelCatalogPort {
-	private readonly baseUrl: string;
+	private readonly client: OllamaHttpClient;
 
 	constructor(baseUrl: string = 'http://localhost:11434') {
-		const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, '');
-
-		if (normalizedBaseUrl.length === 0) {
-			throw new Error('Ollama base URL cannot be empty.');
-		}
-
-		this.baseUrl = normalizedBaseUrl;
+		this.client = new OllamaHttpClient(baseUrl);
 	}
 
 	async listModels(options: ListModelsOptions = {}): Promise<ListModelsResult> {
-		const response = await fetch(`${this.baseUrl}/api/tags`, {
-			...(options.signal === undefined ? {} : { signal: options.signal }),
+		const text = await this.client.getText({
+			path: '/api/tags',
+			errorPrefix: 'Ollama model list failed',
+			signal: options.signal,
 		});
 
-		if (!response.ok) {
-			throw new Error(
-				`Ollama model list failed with status ${response.status}: ${await readBoundedResponseText(response)}`,
-			);
-		}
-
-		return parseOllamaTagsResponse(await response.text());
+		return parseOllamaTagsResponse(text);
 	}
 }
 
@@ -95,16 +86,6 @@ const readNonEmptyString = (value: unknown): string | undefined => {
 	const trimmed = value.trim();
 
 	return trimmed.length === 0 ? undefined : trimmed;
-};
-
-const readBoundedResponseText = async (response: Response): Promise<string> => {
-	try {
-		const text = await response.text();
-
-		return text.length <= 1000 ? text : `${text.slice(0, 1000)}...`;
-	} catch (caughtError) {
-		return caughtError instanceof Error ? caughtError.message : String(caughtError);
-	}
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

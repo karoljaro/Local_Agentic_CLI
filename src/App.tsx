@@ -198,7 +198,7 @@ const ChatScreen = ({
 				chat.abortTurn();
 			}
 		},
-		{ isActive: chat.status === 'streaming' && approval.pendingApproval === null },
+		{ isActive: chat.status !== 'idle' && approval.pendingApproval === null },
 	);
 
 	const transcriptHasHeader = chat.transcript.length > 0;

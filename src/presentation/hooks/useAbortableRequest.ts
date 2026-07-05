@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef } from 'react';
 
-export type ActiveTurnSignal = {
+export type ActiveRequestSignal = {
 	signal: AbortSignal;
 	clear: () => void;
 };
 
-export const useAbortableTurn = () => {
+export const useAbortableRequest = () => {
 	const controllerRef = useRef<AbortController | null>(null);
 
 	useEffect(() => {
@@ -15,7 +15,7 @@ export const useAbortableTurn = () => {
 		};
 	}, []);
 
-	const start = useCallback((): ActiveTurnSignal => {
+	const start = useCallback((): ActiveRequestSignal => {
 		controllerRef.current?.abort();
 
 		const controller = new AbortController();

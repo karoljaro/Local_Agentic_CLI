@@ -5,7 +5,7 @@ import type { SessionId } from '@/domain/Ids';
 import { parseChatCommand, type ChatCommand } from '@/presentation/chat/chatCommand';
 import { getSessionModelName, sessionEventsToTranscript } from '@/presentation/chat/sessionEvents';
 import type { TranscriptEntry, UiStatus } from '@/presentation/chat/types';
-import { useAbortableTurn } from './useAbortableTurn';
+import { useAbortableRequest } from './useAbortableRequest';
 
 type UseChatSessionInput = {
 	modelName: string;
@@ -29,7 +29,7 @@ export const useChatSession = ({
 	const [status, setStatus] = useState<UiStatus>('loading');
 	const [streamingContent, setStreamingContent] = useState('');
 	const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
-	const { start: startTurn, abort: abortTurn } = useAbortableTurn();
+	const { start: startRequest, abort: abortRequest } = useAbortableRequest();
 	const nextUiEntryIndexRef = useRef(0);
 
 	const nextUiEntryId = useCallback(
@@ -95,9 +95,9 @@ export const useChatSession = ({
 
 		return () => {
 			isCancelled = true;
-			abortTurn();
+			abortRequest();
 		};
-	}, [abortTurn, nextUiEntryId, onModelNameChange, restoreSessionModel, runtime, sessionId]);
+	}, [abortRequest, nextUiEntryId, onModelNameChange, restoreSessionModel, runtime, sessionId]);
 
 	const releaseChatView = useCallback((): void => {
 		setStreamingContent('');
@@ -108,15 +108,24 @@ export const useChatSession = ({
 	const unloadCurrentModel = useCallback(async (): Promise<boolean> => {
 		setStatus('loading');
 
+		const activeRequest = startRequest();
+
 		try {
-			await runtime.unloadCurrentModel();
+			await runtime.unloadCurrentModel({ signal: activeRequest.signal });
 			return true;
 		} catch (caughtError) {
-			appendTranscriptEntry('command-error', 'error', toError(caughtError).message);
+			const error = toError(caughtError);
+
+			if (!isAbortError(error)) {
+				appendTranscriptEntry('command-error', 'error', error.message);
+			}
+
 			setStatus('idle');
 			return false;
+		} finally {
+			activeRequest.clear();
 		}
-	}, [appendTranscriptEntry, runtime]);
+	}, [appendTranscriptEntry, runtime, startRequest]);
 
 	const handleCommand = useCallback(
 		async (command: ChatCommand): Promise<void> => {
@@ -180,7 +189,7 @@ export const useChatSession = ({
 			appendTranscriptEntry('user', 'user', prompt);
 
 			let assistantContent = '';
-			const activeTurn = startTurn();
+			const activeTurn = startRequest();
 
 			try {
 				for await (const chunk of runtime.runAgentTurn.run({
@@ -211,11 +220,11 @@ export const useChatSession = ({
 				setStatus('idle');
 			}
 		},
-		[appendTranscriptEntry, handleCommand, modelName, runtime, sessionId, startTurn],
+		[appendTranscriptEntry, handleCommand, modelName, runtime, sessionId, startRequest],
 	);
 
 	return {
-		abortTurn,
+		abortTurn: abortRequest,
 		runPrompt,
 		status,
 		streamingContent,
