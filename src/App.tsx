@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Text, useInput, useStdin } from 'ink';
 
 import { createRuntime, type Runtime } from '@/composition/createRuntime';
@@ -34,6 +34,18 @@ export function App({ initialMode = 'new' }: AppProps) {
 	);
 	const [modelName, setModelName] = useState(() => runtime.getModelName());
 	const [restoreSessionModel, setRestoreSessionModel] = useState(false);
+
+	useEffect(() => {
+		const controller = new AbortController();
+
+		void runtime.listModels({ signal: controller.signal }).catch(() => {
+			// Warm-up is best-effort. The picker still displays the real error when opened.
+		});
+
+		return () => {
+			controller.abort();
+		};
+	}, [runtime]);
 
 	const selectSession = (selectedSessionId: SessionId): void => {
 		setRestoreSessionModel(selectedSessionId !== sessionId);

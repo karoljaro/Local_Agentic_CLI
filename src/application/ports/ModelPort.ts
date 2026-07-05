@@ -7,6 +7,10 @@ export type ModelChatInput = {
 	signal?: AbortSignal;
 };
 
+export type UnloadModelInput = {
+	signal?: AbortSignal;
+};
+
 export type ModelStreamChunk = {
 	contentDelta: string;
 	toolCalls?: ModelToolCall[];
@@ -14,4 +18,8 @@ export type ModelStreamChunk = {
 
 export interface ModelPort {
 	streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk>;
+}
+
+export interface ModelMemoryPort {
+	unload(input?: UnloadModelInput): Promise<void>;
 }

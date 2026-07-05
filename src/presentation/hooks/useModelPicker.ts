@@ -25,24 +25,27 @@ export const useModelPicker = ({ onSelectModel, runtime }: UseModelPickerInput) 
 
 	useEffect(() => {
 		let isCancelled = false;
+		const controller = new AbortController();
 
 		const loadModels = async (): Promise<void> => {
 			setStatus('loading');
 			setErrorMessage(undefined);
 
 			try {
-				const result = await runtime.listModels();
+				const result = await runtime.listModels({ signal: controller.signal });
 
 				if (!isCancelled) {
 					setModels(result.models);
 				}
 			} catch (caughtError) {
+				if (isCancelled || isAbortError(caughtError)) {
+					return;
+				}
+
 				const error = caughtError instanceof Error ? caughtError : new Error(String(caughtError));
 
-				if (!isCancelled) {
-					setModels([]);
-					setErrorMessage(error.message);
-				}
+				setModels([]);
+				setErrorMessage(error.message);
 			} finally {
 				if (!isCancelled) {
 					setStatus('idle');
@@ -54,6 +57,7 @@ export const useModelPicker = ({ onSelectModel, runtime }: UseModelPickerInput) 
 
 		return () => {
 			isCancelled = true;
+			controller.abort();
 		};
 	}, [runtime]);
 
@@ -64,3 +68,6 @@ export const useModelPicker = ({ onSelectModel, runtime }: UseModelPickerInput) 
 		status,
 	};
 };
+
+const isAbortError = (caughtError: unknown): boolean =>
+	caughtError instanceof Error && caughtError.name === 'AbortError';

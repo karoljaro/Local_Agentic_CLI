@@ -7,6 +7,7 @@ describe('readConfig', () => {
 		expect(readConfig({})).toEqual({
 			OLLAMA_BASE_URL: 'http://localhost:11434',
 			OLLAMA_MODEL: 'gemma4:12b-it-qat',
+			OLLAMA_KEEP_ALIVE: '0',
 			SYSTEM_PROMPT: 'You are a local coding agent.',
 		});
 	});
@@ -16,11 +17,13 @@ describe('readConfig', () => {
 			readConfig({
 				OLLAMA_BASE_URL: '  http://localhost:11435  ',
 				OLLAMA_MODEL: '  ',
+				OLLAMA_KEEP_ALIVE: '  2m  ',
 				SYSTEM_PROMPT: '  Custom prompt  ',
 			}),
 		).toEqual({
 			OLLAMA_BASE_URL: 'http://localhost:11435',
 			OLLAMA_MODEL: 'gemma4:12b-it-qat',
+			OLLAMA_KEEP_ALIVE: '2m',
 			SYSTEM_PROMPT: 'Custom prompt',
 		});
 	});

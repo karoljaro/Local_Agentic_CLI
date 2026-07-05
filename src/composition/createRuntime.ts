@@ -1,6 +1,10 @@
 import type { IdGeneratorPort } from '@/application/ports/IdGeneratorPort';
-import type { ListModelsResult, ModelCatalogPort } from '@/application/ports/ModelCatalogPort';
-import type { ModelPort } from '@/application/ports/ModelPort';
+import type {
+	ListModelsOptions,
+	ListModelsResult,
+	ModelCatalogPort,
+} from '@/application/ports/ModelCatalogPort';
+import type { ModelMemoryPort, ModelPort, UnloadModelInput } from '@/application/ports/ModelPort';
 import { ContextBuilder } from '@/application/services/ContextBuilder';
 import { RunAgentTurn, type ToolApprovalHandler } from '@/application/use-cases/RunAgentTurn';
 import { OllamaModelAdapter } from '@/infrastructure/model/OllamaModelAdapter';
@@ -14,6 +18,10 @@ import { ListSessionEvents } from '@/application/use-cases/ListSessionEvents';
 import { ListSessions } from '@/application/use-cases/ListSessions';
 import { OllamaModelCatalog } from '@/infrastructure/model/OllamaModelCatalog';
 
+export type RuntimeListModelsOptions = ListModelsOptions & {
+	forceRefresh?: boolean | undefined;
+};
+
 export type Runtime = {
 	runAgentTurn: RunAgentTurn;
 	loadSession: LoadSession;
@@ -22,7 +30,8 @@ export type Runtime = {
 	idGenerator: IdGeneratorPort;
 	workspacePath: string;
 	getModelName: () => string;
-	listModels: () => Promise<ListModelsResult>;
+	listModels: (options?: RuntimeListModelsOptions) => Promise<ListModelsResult>;
+	unloadCurrentModel: (input?: UnloadModelInput) => Promise<void>;
 	switchModel: (modelName: string) => string;
 	setToolApprovalHandler: (handler: ToolApprovalHandler) => () => void;
 };
@@ -31,12 +40,14 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 	const sessionStore = new JsonlSessionStore();
 
 	let currentModelName = normalizeModelName(config.OLLAMA_MODEL);
-	let currentModel = new OllamaModelAdapter(config.OLLAMA_BASE_URL, currentModelName);
+	let currentModel = createOllamaModel(config, currentModelName);
 
 	const model: ModelPort = {
 		streamChat: (input) => currentModel.streamChat(input),
 	};
 	const modelCatalog: ModelCatalogPort = new OllamaModelCatalog(config.OLLAMA_BASE_URL);
+	let modelListCache: ListModelsResult | undefined;
+	let modelListPromise: Promise<ListModelsResult> | undefined;
 
 	const idGenerator = new BunUuidV7IdGenerator();
 	const clock = new TemporalClock();
@@ -66,10 +77,35 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 		listSessions,
 		workspacePath: process.cwd(),
 		getModelName: () => currentModelName,
-		listModels: () => modelCatalog.listModels(),
+		listModels: async (options = {}) => {
+			if (options.forceRefresh !== true && modelListCache !== undefined) {
+				return modelListCache;
+			}
+
+			if (options.forceRefresh !== true && modelListPromise !== undefined) {
+				return modelListPromise;
+			}
+
+			const loadModels = modelCatalog
+				.listModels({ signal: options.signal })
+				.then((result) => {
+					modelListCache = result;
+					return result;
+				})
+				.finally(() => {
+					if (modelListPromise === loadModels) {
+						modelListPromise = undefined;
+					}
+				});
+
+			modelListPromise = loadModels;
+
+			return loadModels;
+		},
+		unloadCurrentModel: (input) => currentModel.unload(input),
 		switchModel: (modelName) => {
 			currentModelName = normalizeModelName(modelName);
-			currentModel = new OllamaModelAdapter(config.OLLAMA_BASE_URL, currentModelName);
+			currentModel = createOllamaModel(config, currentModelName);
 
 			return currentModelName;
 		},
@@ -103,3 +139,9 @@ const normalizeModelName = (modelName: string): string => {
 
 	return normalizedModelName;
 };
+
+const createOllamaModel = (
+	config: AppConfig,
+	modelName: string,
+): OllamaModelAdapter & ModelMemoryPort =>
+	new OllamaModelAdapter(config.OLLAMA_BASE_URL, modelName, config.OLLAMA_KEEP_ALIVE);

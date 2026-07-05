@@ -10,6 +10,10 @@ export type ListModelsResult = {
 	models: ListedModel[];
 };
 
+export type ListModelsOptions = {
+	signal?: AbortSignal | undefined;
+};
+
 export interface ModelCatalogPort {
-	listModels(): Promise<ListModelsResult>;
+	listModels(options?: ListModelsOptions): Promise<ListModelsResult>;
 }

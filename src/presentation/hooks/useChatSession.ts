@@ -99,15 +99,48 @@ export const useChatSession = ({
 		};
 	}, [abortTurn, nextUiEntryId, onModelNameChange, restoreSessionModel, runtime, sessionId]);
 
+	const releaseChatView = useCallback((): void => {
+		setStreamingContent('');
+		setTranscript([]);
+		setStatus('idle');
+	}, []);
+
+	const unloadCurrentModel = useCallback(async (): Promise<boolean> => {
+		setStatus('loading');
+
+		try {
+			await runtime.unloadCurrentModel();
+			return true;
+		} catch (caughtError) {
+			appendTranscriptEntry('command-error', 'error', toError(caughtError).message);
+			setStatus('idle');
+			return false;
+		}
+	}, [appendTranscriptEntry, runtime]);
+
 	const handleCommand = useCallback(
-		(command: ChatCommand): void => {
+		async (command: ChatCommand): Promise<void> => {
 			if (command.type === 'resume') {
+				releaseChatView();
 				onResume();
 				return;
 			}
 
 			if (command.type === 'open-models') {
+				const wasUnloaded = await unloadCurrentModel();
+
+				if (!wasUnloaded) {
+					return;
+				}
+
+				releaseChatView();
 				onOpenModels();
+				return;
+			}
+
+			const wasUnloaded = await unloadCurrentModel();
+
+			if (!wasUnloaded) {
 				return;
 			}
 
@@ -118,9 +151,19 @@ export const useChatSession = ({
 				appendTranscriptEntry('system', 'assistant', `Model switched to ${nextModelName}.`);
 			} catch (caughtError) {
 				appendTranscriptEntry('command-error', 'error', toError(caughtError).message);
+			} finally {
+				setStatus('idle');
 			}
 		},
-		[appendTranscriptEntry, onModelNameChange, onOpenModels, onResume, runtime],
+		[
+			appendTranscriptEntry,
+			onModelNameChange,
+			onOpenModels,
+			onResume,
+			releaseChatView,
+			runtime,
+			unloadCurrentModel,
+		],
 	);
 
 	const runPrompt = useCallback(
@@ -128,7 +171,7 @@ export const useChatSession = ({
 			const command = parseChatCommand(prompt);
 
 			if (command !== null) {
-				handleCommand(command);
+				await handleCommand(command);
 				return;
 			}
 

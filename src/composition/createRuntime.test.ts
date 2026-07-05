@@ -7,6 +7,7 @@ describe('createRuntime', () => {
 		const runtime = createRuntime({
 			OLLAMA_BASE_URL: 'http://localhost:11434',
 			OLLAMA_MODEL: 'initial-model',
+			OLLAMA_KEEP_ALIVE: '0',
 			SYSTEM_PROMPT: 'You are a local coding agent.',
 		});
 

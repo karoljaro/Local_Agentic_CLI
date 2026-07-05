@@ -123,6 +123,61 @@ describe('OllamaModelAdapter', () => {
 		);
 	});
 
+	test('passes keep_alive to chat requests when configured', async () => {
+		let requestBody: unknown;
+
+		await withMockedFetch(
+			async (_input, init) => {
+				requestBody = JSON.parse(String(init?.body));
+
+				return new Response('{"done":true}\n', { status: 200 });
+			},
+			async () => {
+				const adapter = new OllamaModelAdapter('http://localhost:11434', 'test-model', '0');
+
+				await collectAsyncIterable(adapter.streamChat({ messages: [] }));
+
+				expect(requestBody).toEqual({
+					model: 'test-model',
+					messages: [],
+					keep_alive: 0,
+					stream: true,
+				});
+			},
+		);
+	});
+
+	test('unloads the active model through chat keep_alive 0', async () => {
+		const abortController = new AbortController();
+		let requestUrl = '';
+		let requestSignal: AbortSignal | null | undefined;
+		let requestBody: unknown;
+
+		await withMockedFetch(
+			async (input, init) => {
+				requestUrl = String(input);
+				requestSignal = init?.signal;
+				requestBody = JSON.parse(String(init?.body));
+
+				return new Response('{"done":true,"done_reason":"unload"}', { status: 200 });
+			},
+			async () => {
+				const adapter = new OllamaModelAdapter('http://localhost:11434/', ' test-model ');
+
+				await adapter.unload({ signal: abortController.signal });
+
+				expect(requestUrl).toBe('http://localhost:11434/api/chat');
+				expect(requestSignal).toBe(abortController.signal);
+				expect(requestBody).toEqual({
+					model: 'test-model',
+					messages: [],
+					keep_alive: 0,
+					stream: false,
+				});
+			},
+		);
+	});
+
 	test('passes the abort signal to fetch', async () => {
 		const abortController = new AbortController();
 		let requestSignal: AbortSignal | null | undefined;

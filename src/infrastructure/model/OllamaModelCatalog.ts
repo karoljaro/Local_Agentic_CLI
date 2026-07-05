@@ -1,5 +1,6 @@
 import type {
 	ListedModel,
+	ListModelsOptions,
 	ListModelsResult,
 	ModelCatalogPort,
 } from '@/application/ports/ModelCatalogPort';
@@ -17,8 +18,10 @@ export class OllamaModelCatalog implements ModelCatalogPort {
 		this.baseUrl = normalizedBaseUrl;
 	}
 
-	async listModels(): Promise<ListModelsResult> {
-		const response = await fetch(`${this.baseUrl}/api/tags`);
+	async listModels(options: ListModelsOptions = {}): Promise<ListModelsResult> {
+		const response = await fetch(`${this.baseUrl}/api/tags`, {
+			...(options.signal === undefined ? {} : { signal: options.signal }),
+		});
 
 		if (!response.ok) {
 			throw new Error(

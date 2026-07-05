@@ -1,4 +1,10 @@
-import type { ModelChatInput, ModelPort, ModelStreamChunk } from '@/application/ports/ModelPort';
+import type {
+	ModelChatInput,
+	ModelMemoryPort,
+	ModelPort,
+	ModelStreamChunk,
+	UnloadModelInput,
+} from '@/application/ports/ModelPort';
 import {
 	toModelStreamChunk,
 	toOllamaMessage,
@@ -11,13 +17,21 @@ type ParsedOllamaStreamFrame = {
 	chunk?: ModelStreamChunk;
 };
 
-export class OllamaModelAdapter implements ModelPort {
+type OllamaKeepAlive = number | string;
+
+export class OllamaModelAdapter implements ModelPort, ModelMemoryPort {
 	private readonly baseUrl: string;
 	private readonly modelName: string;
+	private readonly keepAlive: OllamaKeepAlive | undefined;
 
-	constructor(baseUrl: string = 'http://localhost:11434', modelName: string = 'gemma4:12b-it-qat') {
+	constructor(
+		baseUrl: string = 'http://localhost:11434',
+		modelName: string = 'gemma4:12b-it-qat',
+		keepAlive?: string | undefined,
+	) {
 		const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, '');
 		const normalizedModelName = modelName.trim();
+		const normalizedKeepAlive = normalizeKeepAlive(keepAlive);
 
 		if (normalizedBaseUrl.length === 0) {
 			throw new Error('Ollama base URL cannot be empty.');
@@ -29,6 +43,7 @@ export class OllamaModelAdapter implements ModelPort {
 
 		this.baseUrl = normalizedBaseUrl;
 		this.modelName = normalizedModelName;
+		this.keepAlive = normalizedKeepAlive;
 	}
 
 	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
@@ -41,6 +56,7 @@ export class OllamaModelAdapter implements ModelPort {
 			body: JSON.stringify({
 				model: this.modelName,
 				messages: input.messages.map(toOllamaMessage),
+				...(this.keepAlive === undefined ? {} : { keep_alive: this.keepAlive }),
 				...(input.tools === undefined || input.tools.length === 0
 					? {}
 					: { tools: input.tools.map(toOllamaTool) }),
@@ -116,7 +132,45 @@ export class OllamaModelAdapter implements ModelPort {
 			reader.releaseLock();
 		}
 	}
+
+	async unload(input: UnloadModelInput = {}): Promise<void> {
+		const response = await fetch(`${this.baseUrl}/api/chat`, {
+			method: 'POST',
+			...(input.signal === undefined ? {} : { signal: input.signal }),
+			headers: {
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				model: this.modelName,
+				messages: [],
+				keep_alive: 0,
+				stream: false,
+			}),
+		});
+
+		if (!response.ok) {
+			throw new Error(
+				`Ollama model unload failed with status ${response.status}: ${await readBoundedResponseText(response)}`,
+			);
+		}
+
+		await response.text();
+	}
 }
+
+const normalizeKeepAlive = (keepAlive: string | undefined): OllamaKeepAlive | undefined => {
+	const normalizedKeepAlive = keepAlive?.trim();
+
+	if (normalizedKeepAlive === undefined || normalizedKeepAlive.length === 0) {
+		return undefined;
+	}
+
+	if (/^-?\d+$/.test(normalizedKeepAlive)) {
+		return Number(normalizedKeepAlive);
+	}
+
+	return normalizedKeepAlive;
+};
 
 const readBoundedResponseText = async (response: Response): Promise<string> => {
 	try {

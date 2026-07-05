@@ -11,6 +11,7 @@ const envString = (defaultValue: string) =>
 const ConfigSchema = z.object({
 	OLLAMA_BASE_URL: envString('http://localhost:11434').pipe(z.url()),
 	OLLAMA_MODEL: envString('gemma4:12b-it-qat'),
+	OLLAMA_KEEP_ALIVE: envString('0'),
 	SYSTEM_PROMPT: envString('You are a local coding agent.'),
 });
 
