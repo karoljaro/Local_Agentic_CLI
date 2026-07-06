@@ -65,6 +65,7 @@ export function App({ initialMode = 'new' }: AppProps) {
 		return (
 			<SessionPickerScreen
 				currentSessionId={sessionId}
+				onCancel={sessionId === undefined ? undefined : () => setScreen('chat')}
 				onSelectSession={selectSession}
 				runtime={runtime}
 			/>
@@ -75,6 +76,7 @@ export function App({ initialMode = 'new' }: AppProps) {
 		return (
 			<ModelPickerScreen
 				currentModelName={modelName}
+				onCancel={() => setScreen('chat')}
 				onSelectModel={(selectedModelName) => {
 					setModelName(runtime.switchModel(selectedModelName));
 					setRestoreSessionModel(false);
@@ -101,16 +103,18 @@ export function App({ initialMode = 'new' }: AppProps) {
 
 type SessionPickerScreenProps = {
 	currentSessionId?: SessionId | undefined;
+	onCancel?: (() => void) | undefined;
 	onSelectSession: (sessionId: SessionId) => void;
 	runtime: Runtime;
 };
 
 const SessionPickerScreen = ({
 	currentSessionId,
+	onCancel,
 	onSelectSession,
 	runtime,
 }: SessionPickerScreenProps) => {
-	const picker = useSessionPicker({ onSelectSession, runtime });
+	const picker = useSessionPicker({ onCancel, onSelectSession, runtime });
 
 	return (
 		<AppFrame
@@ -129,16 +133,18 @@ const SessionPickerScreen = ({
 
 type ModelPickerScreenProps = {
 	currentModelName: string;
+	onCancel: () => void;
 	onSelectModel: (modelName: string) => void;
 	runtime: Runtime;
 };
 
 const ModelPickerScreen = ({
 	currentModelName,
+	onCancel,
 	onSelectModel,
 	runtime,
 }: ModelPickerScreenProps) => {
-	const picker = useModelPicker({ onSelectModel, runtime });
+	const picker = useModelPicker({ onCancel, onSelectModel, runtime });
 
 	return (
 		<AppFrame

@@ -6,18 +6,20 @@ import type { UiStatus } from '@/presentation/chat/types';
 import { useSelectableList } from './useSelectableList';
 
 type UseModelPickerInput = {
+	onCancel: () => void;
 	onSelectModel: (modelName: string) => void;
 	runtime: Runtime;
 };
 
-export const useModelPicker = ({ onSelectModel, runtime }: UseModelPickerInput) => {
+export const useModelPicker = ({ onCancel, onSelectModel, runtime }: UseModelPickerInput) => {
 	const [models, setModels] = useState<ListedModel[]>([]);
 	const [status, setStatus] = useState<UiStatus>('loading');
 	const [errorMessage, setErrorMessage] = useState<string | undefined>();
 
 	const list = useSelectableList({
-		isActive: status === 'idle' && models.length > 0,
+		isActive: true,
 		items: models,
+		onCancel,
 		onSelect: (model) => {
 			onSelectModel(model.name);
 		},

@@ -4,12 +4,14 @@ import { useInput } from 'ink';
 type UseSelectableListInput<TItem> = {
 	isActive: boolean;
 	items: TItem[];
+	onCancel?: (() => void) | undefined;
 	onSelect: (item: TItem) => void;
 };
 
 export const useSelectableList = <TItem>({
 	isActive,
 	items,
+	onCancel,
 	onSelect,
 }: UseSelectableListInput<TItem>) => {
 	const [selectedIndex, setSelectedIndex] = useState(0);
@@ -20,6 +22,11 @@ export const useSelectableList = <TItem>({
 
 	useInput(
 		(value, key) => {
+			if (key.escape) {
+				onCancel?.();
+				return;
+			}
+
 			if (items.length === 0) {
 				return;
 			}

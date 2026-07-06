@@ -7,11 +7,12 @@ import type { SessionPickerOption, UiStatus } from '@/presentation/chat/types';
 import { useSelectableList } from './useSelectableList';
 
 type UseSessionPickerInput = {
+	onCancel?: (() => void) | undefined;
 	onSelectSession: (sessionId: SessionId) => void;
 	runtime: Runtime;
 };
 
-export const useSessionPicker = ({ onSelectSession, runtime }: UseSessionPickerInput) => {
+export const useSessionPicker = ({ onCancel, onSelectSession, runtime }: UseSessionPickerInput) => {
 	const [sessions, setSessions] = useState<StoredSession[]>([]);
 	const [status, setStatus] = useState<UiStatus>('loading');
 	const [errorMessage, setErrorMessage] = useState<string | undefined>();
@@ -27,8 +28,9 @@ export const useSessionPicker = ({ onSelectSession, runtime }: UseSessionPickerI
 	}, [sessions]);
 
 	const list = useSelectableList({
-		isActive: status === 'idle',
+		isActive: true,
 		items: options,
+		onCancel,
 		onSelect: (selectedOption) => {
 			if (selectedOption.type === 'new') {
 				onSelectSession(runtime.idGenerator.nextSessionId());
