@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { Runtime } from '@/composition/createRuntime';
 import type { SessionId } from '@/domain/Ids';
-import { parseChatCommand, type ChatCommand } from '@/presentation/chat/chatCommand';
+import { parseChatCommand } from '@/presentation/chat/chatCommand';
+import { handleChatCommand } from '@/presentation/chat/handleChatCommand';
 import { getSessionModelName, sessionEventsToTranscript } from '@/presentation/chat/sessionEvents';
 import type { TranscriptEntry, UiStatus } from '@/presentation/chat/types';
 import { useAbortableRequest } from './useAbortableRequest';
@@ -127,60 +128,22 @@ export const useChatSession = ({
 		}
 	}, [appendTranscriptEntry, runtime, startRequest]);
 
-	const handleCommand = useCallback(
-		async (command: ChatCommand): Promise<void> => {
-			if (command.type === 'resume') {
-				releaseChatView();
-				onResume();
-				return;
-			}
-
-			if (command.type === 'open-models') {
-				const wasUnloaded = await unloadCurrentModel();
-
-				if (!wasUnloaded) {
-					return;
-				}
-
-				releaseChatView();
-				onOpenModels();
-				return;
-			}
-
-			const wasUnloaded = await unloadCurrentModel();
-
-			if (!wasUnloaded) {
-				return;
-			}
-
-			try {
-				const nextModelName = runtime.switchModel(command.modelName);
-
-				onModelNameChange(nextModelName);
-				appendTranscriptEntry('system', 'assistant', `Model switched to ${nextModelName}.`);
-			} catch (caughtError) {
-				appendTranscriptEntry('command-error', 'error', toError(caughtError).message);
-			} finally {
-				setStatus('idle');
-			}
-		},
-		[
-			appendTranscriptEntry,
-			onModelNameChange,
-			onOpenModels,
-			onResume,
-			releaseChatView,
-			runtime,
-			unloadCurrentModel,
-		],
-	);
-
 	const runPrompt = useCallback(
 		async (prompt: string): Promise<void> => {
 			const command = parseChatCommand(prompt);
 
 			if (command !== null) {
-				await handleCommand(command);
+				await handleChatCommand({
+					appendTranscriptEntry,
+					command,
+					onModelNameChange,
+					onOpenModels,
+					onResume,
+					releaseChatView,
+					setStatus,
+					switchModel: runtime.switchModel,
+					unloadCurrentModel,
+				});
 				return;
 			}
 
@@ -220,7 +183,18 @@ export const useChatSession = ({
 				setStatus('idle');
 			}
 		},
-		[appendTranscriptEntry, handleCommand, modelName, runtime, sessionId, startRequest],
+		[
+			appendTranscriptEntry,
+			modelName,
+			onModelNameChange,
+			onOpenModels,
+			onResume,
+			releaseChatView,
+			runtime,
+			sessionId,
+			startRequest,
+			unloadCurrentModel,
+		],
 	);
 
 	return {
