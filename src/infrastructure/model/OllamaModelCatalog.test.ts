@@ -47,6 +47,27 @@ describe('OllamaModelCatalog', () => {
 		);
 	});
 
+	test('passes abort signal to the tags request', async () => {
+		const controller = new AbortController();
+		let receivedSignal: AbortSignal | null | undefined;
+
+		await withMockedFetch(
+			async (_input, init) => {
+				receivedSignal = init?.signal;
+
+				return new Response(JSON.stringify({ models: [{ name: 'llama3.1:8b' }] }));
+			},
+			async () => {
+				const catalog = new OllamaModelCatalog();
+
+				await expect(catalog.listModels({ signal: controller.signal })).resolves.toEqual({
+					models: [{ name: 'llama3.1:8b' }],
+				});
+				expect(receivedSignal).toBe(controller.signal);
+			},
+		);
+	});
+
 	test('throws a bounded error for non-ok responses', async () => {
 		await withMockedFetch(
 			async () => new Response('not running', { status: 500 }),

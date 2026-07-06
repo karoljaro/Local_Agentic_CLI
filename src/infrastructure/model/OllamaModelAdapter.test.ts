@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { asMessageId, asToolCallId } from '@/domain/Ids';
 import { collectAsyncIterable } from '@/test-support/collectAsyncIterable';
+import { createDeferred } from '@/test-support/createDeferred';
 import { withMockedFetch } from '@/test-support/withMockedFetch';
 
 import { OllamaModelAdapter } from './OllamaModelAdapter';
@@ -436,7 +437,7 @@ describe('OllamaModelAdapter', () => {
 						);
 					},
 					pull() {
-						readStarted.resolve();
+						readStarted.resolve(undefined);
 					},
 				});
 
@@ -535,17 +536,3 @@ describe('OllamaModelAdapter', () => {
 		);
 	});
 });
-
-type Deferred = {
-	promise: Promise<void>;
-	resolve: () => void;
-};
-
-const createDeferred = (): Deferred => {
-	let resolve!: () => void;
-	const promise = new Promise<void>((promiseResolve) => {
-		resolve = promiseResolve;
-	});
-
-	return { promise, resolve };
-};
