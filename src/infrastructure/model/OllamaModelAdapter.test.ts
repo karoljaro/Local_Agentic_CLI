@@ -384,6 +384,83 @@ describe('OllamaModelAdapter', () => {
 		);
 	});
 
+	test('cancels the response stream when the consumer stops early', async () => {
+		let wasCancelled = false;
+
+		await withMockedFetch(
+			async () => {
+				return new Response(
+					new ReadableStream<Uint8Array>({
+						start(controller) {
+							controller.enqueue(
+								new TextEncoder().encode('{"message":{"content":"partial"},"done":false}\n'),
+							);
+						},
+						cancel() {
+							wasCancelled = true;
+						},
+					}),
+					{ status: 200 },
+				);
+			},
+			async () => {
+				const adapter = new OllamaModelAdapter();
+				const iterator = adapter.streamChat({ messages: [] })[Symbol.asyncIterator]();
+
+				await expect(iterator.next()).resolves.toEqual({
+					done: false,
+					value: { contentDelta: 'partial' },
+				});
+				await iterator.return?.();
+
+				expect(wasCancelled).toBe(true);
+			},
+		);
+	});
+
+	test('releases the response stream reader when aborted during an active read', async () => {
+		const abortController = new AbortController();
+		const readStarted = createDeferred();
+		let responseBody: ReadableStream<Uint8Array> | undefined;
+
+		await withMockedFetch(
+			async (_input, init) => {
+				const stream = new ReadableStream<Uint8Array>({
+					start(controller) {
+						init?.signal?.addEventListener(
+							'abort',
+							() => {
+								controller.error(new DOMException('The operation was aborted.', 'AbortError'));
+							},
+							{ once: true },
+						);
+					},
+					pull() {
+						readStarted.resolve();
+					},
+				});
+
+				const response = new Response(stream, { status: 200 });
+				responseBody = response.body ?? undefined;
+
+				return response;
+			},
+			async () => {
+				const adapter = new OllamaModelAdapter();
+				const iterator = adapter
+					.streamChat({ messages: [], signal: abortController.signal })
+					[Symbol.asyncIterator]();
+				const nextChunk = iterator.next();
+
+				await readStarted.promise;
+				abortController.abort();
+
+				await expect(nextChunk).rejects.toThrow('aborted');
+				expect(responseBody?.locked).toBe(false);
+			},
+		);
+	});
+
 	test('throws when Ollama streams an error event', async () => {
 		await withMockedFetch(
 			async () => new Response('{"error":"model failed"}\n', { status: 200 }),
@@ -458,3 +535,17 @@ describe('OllamaModelAdapter', () => {
 		);
 	});
 });
+
+type Deferred = {
+	promise: Promise<void>;
+	resolve: () => void;
+};
+
+const createDeferred = (): Deferred => {
+	let resolve!: () => void;
+	const promise = new Promise<void>((promiseResolve) => {
+		resolve = promiseResolve;
+	});
+
+	return { promise, resolve };
+};
