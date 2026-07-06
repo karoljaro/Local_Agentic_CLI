@@ -49,7 +49,6 @@ type ToolExecutionBatchResult = {
 };
 
 type StreamedModelResponse = {
-	content: string;
 	contentDeltas: string[];
 	toolCalls: ModelToolCall[];
 };
@@ -106,7 +105,7 @@ export class RunAgentTurn {
 	): AsyncIterable<AgentTurnChunk> {
 		const result = yield* this.readModelResponse(sessionId, withSignal({ messages }, signal), true);
 
-		await this.appendAssistantCompleted(sessionId, result.content);
+		await this.appendAssistantCompleted(sessionId, toContent(result));
 	}
 
 	private async *runWithTools(
@@ -142,7 +141,7 @@ export class RunAgentTurn {
 					yield { contentDelta };
 				}
 
-				await this.appendAssistantCompleted(sessionId, result.content);
+				await this.appendAssistantCompleted(sessionId, toContent(result));
 				return;
 			}
 
@@ -176,7 +175,7 @@ export class RunAgentTurn {
 				...currentMessages,
 				{
 					role: 'assistant',
-					content: result.content,
+					content: toContent(result),
 					toolCalls,
 				},
 				...toolMessages,
@@ -194,13 +193,11 @@ export class RunAgentTurn {
 		input: ModelChatInput,
 		streamContent: boolean,
 	): AsyncGenerator<AgentTurnChunk, StreamedModelResponse> {
-		let content = '';
 		const contentDeltas: string[] = [];
 		const toolCalls: ModelToolCall[] = [];
 
 		try {
 			for await (const chunk of this.dependencies.model.streamChat(input)) {
-				content += chunk.contentDelta;
 				toolCalls.push(...(chunk.toolCalls ?? []));
 
 				if (chunk.contentDelta.length > 0) {
@@ -218,7 +215,7 @@ export class RunAgentTurn {
 			throw error;
 		}
 
-		return { content, contentDeltas, toolCalls };
+		return { contentDeltas, toolCalls };
 	}
 
 	private async executeToolCalls(
@@ -442,6 +439,8 @@ export class RunAgentTurn {
 		}
 	}
 }
+
+const toContent = (response: StreamedModelResponse): string => response.contentDeltas.join('');
 
 const stringifyToolOutput = (output: unknown): string => {
 	if (typeof output === 'string') {
