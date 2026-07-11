@@ -12,7 +12,7 @@ import type { SessionId, ToolCallId } from '@/domain/Ids';
 import type { ModelMessage } from '@/domain/ModelMessage';
 import type { ModelToolCall, ToolDefinition } from '@/domain/Tool';
 import { reduceAgentState } from '../services/SessionReducer';
-import type { ContextBuilder } from '../services/ContextBuilder';
+import { ContextBudgetExceededError, type ContextBuilder } from '../services/ContextBuilder';
 import type { ModelChatInput, ModelPort } from '../ports/ModelPort';
 import type { SessionStorePort } from '../ports/SessionStorePort';
 import type { ClockPort } from '../ports/ClockPort';
@@ -84,6 +84,7 @@ export class RunAgentTurn {
 			type: 'prompt.submitted',
 			timestamp: this.dependencies.clock.now(),
 		};
+		this.dependencies.contextBuilder.assertPromptFits(prompt, promptEvent.messageId);
 
 		await this.dependencies.sessionStore.appendSessionEvent(promptEvent);
 
@@ -132,6 +133,7 @@ export class RunAgentTurn {
 		const toolCache = new Map<string, ToolExecutionResult>();
 
 		for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
+			currentMessages = await this.fitModelMessages(sessionId, currentMessages);
 			const result = yield* this.readModelResponse(
 				sessionId,
 				withSignal({ messages: currentMessages, tools }, signal),
@@ -201,6 +203,21 @@ export class RunAgentTurn {
 
 		await this.tryAppendAgentError(sessionId, error, 'TOOL_ITERATION_LIMIT_REACHED');
 		throw error;
+	}
+
+	private async fitModelMessages(
+		sessionId: SessionId,
+		messages: ModelMessage[],
+	): Promise<ModelMessage[]> {
+		try {
+			return this.dependencies.contextBuilder.fit(messages);
+		} catch (caughtError) {
+			if (caughtError instanceof ContextBudgetExceededError) {
+				await this.tryAppendAgentError(sessionId, caughtError, 'CONTEXT_BUDGET_EXCEEDED');
+			}
+
+			throw caughtError;
+		}
 	}
 
 	private async *readModelResponse(

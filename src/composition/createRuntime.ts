@@ -42,6 +42,7 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 
 	const contextBuilder = new ContextBuilder({
 		systemPrompt: config.SYSTEM_PROMPT,
+		maxContextCharacters: config.MAX_CONTEXT_CHARACTERS,
 	});
 
 	const loadSession = new LoadSession({

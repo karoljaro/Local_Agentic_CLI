@@ -9,6 +9,7 @@ describe('readConfig', () => {
 			OLLAMA_MODEL: 'gemma4:12b-it-qat',
 			OLLAMA_KEEP_ALIVE: '0',
 			SYSTEM_PROMPT: 'You are a local coding agent.',
+			MAX_CONTEXT_CHARACTERS: 120_000,
 		});
 	});
 
@@ -19,12 +20,14 @@ describe('readConfig', () => {
 				OLLAMA_MODEL: '  ',
 				OLLAMA_KEEP_ALIVE: '  2m  ',
 				SYSTEM_PROMPT: '  Custom prompt  ',
+				MAX_CONTEXT_CHARACTERS: ' 64000 ',
 			}),
 		).toEqual({
 			OLLAMA_BASE_URL: 'http://localhost:11435',
 			OLLAMA_MODEL: 'gemma4:12b-it-qat',
 			OLLAMA_KEEP_ALIVE: '2m',
 			SYSTEM_PROMPT: 'Custom prompt',
+			MAX_CONTEXT_CHARACTERS: 64_000,
 		});
 	});
 
@@ -34,5 +37,6 @@ describe('readConfig', () => {
 				OLLAMA_BASE_URL: 'not-a-url',
 			}),
 		).toThrow('Invalid configuration');
+		expect(() => readConfig({ MAX_CONTEXT_CHARACTERS: '0' })).toThrow('Invalid configuration');
 	});
 });

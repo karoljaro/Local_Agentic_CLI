@@ -231,12 +231,14 @@ type RunAgentTurnHarnessOptions = {
 	model: ScriptedModel;
 	toolExecutor?: RecordingToolExecutor;
 	approveToolCall?: RunAgentTurnDependencies['approveToolCall'];
+	maxContextCharacters?: number;
 };
 
 const createRunAgentTurnHarness = ({
 	model,
 	toolExecutor,
 	approveToolCall,
+	maxContextCharacters,
 }: RunAgentTurnHarnessOptions) => {
 	const sessionStore = new InMemorySessionStore();
 	const sessionId = asSessionId('session-1');
@@ -245,6 +247,7 @@ const createRunAgentTurnHarness = ({
 		model,
 		contextBuilder: new ContextBuilder({
 			systemPrompt: 'You are a local coding agent.',
+			...(maxContextCharacters === undefined ? {} : { maxContextCharacters }),
 		}),
 		clock: new FixedClock(),
 		idGenerator: new SequenceIdGenerator(),
@@ -367,6 +370,20 @@ describe('RunAgentTurn', () => {
 			collectAsyncIterable(useCase.run({ sessionId: asSessionId('session-1'), prompt: ' ' })),
 		).rejects.toThrow('Prompt cannot be empty.');
 		expect(sessionStore.events).toEqual([]);
+	});
+
+	test('rejects a prompt that exceeds the context budget before storing it', async () => {
+		const model = new ScriptedModel([textResponse('unused')]);
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
+			model,
+			maxContextCharacters: 160,
+		});
+
+		await expect(
+			collectAsyncIterable(useCase.run({ sessionId, prompt: 'x'.repeat(300) })),
+		).rejects.toThrow('Current turn exceeds the model context budget');
+		expect(sessionStore.events).toEqual([]);
+		expect(model.receivedInputs).toEqual([]);
 	});
 
 	test('stores agent error when model streaming fails', async () => {
@@ -1279,6 +1296,27 @@ describe('RunAgentTurn', () => {
 				content: 'I could not read the file.',
 			},
 		]);
+	});
+
+	test('stores an agent error when tool results exceed the current-turn context budget', async () => {
+		const toolExecutor = new RecordingToolExecutor([readToolDefinition], (request) => ({
+			toolName: request.toolName,
+			output: { path: 'large.txt', content: 'x'.repeat(500) },
+		}));
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
+			model: new ScriptedModel([toolCallResponse([readFileToolCall('large.txt')])]),
+			toolExecutor,
+			maxContextCharacters: 400,
+		});
+
+		await expect(
+			collectAsyncIterable(useCase.run({ sessionId, prompt: 'Read large file' })),
+		).rejects.toThrow('Current turn exceeds the model context budget');
+		expect(toolExecutor.receivedRequests).toHaveLength(1);
+		expect(sessionStore.events.at(-1)).toMatchObject({
+			type: 'agent.error',
+			error: { code: 'CONTEXT_BUDGET_EXCEEDED' },
+		});
 	});
 
 	test('stops tool execution after the iteration limit', async () => {

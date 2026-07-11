@@ -45,13 +45,17 @@ export class CreateFileProvider {
 
 	async execute(toolInput: unknown): Promise<ToolExecutionResult> {
 		const input = parseCreateFileInput(toolInput);
+		const file = await this.createWorkspaceFile.execute({
+			...input,
+			maxFileBytes: this.options.maxFileBytes,
+		});
 
 		return {
 			toolName: CREATE_FILE_TOOL_NAME,
-			output: await this.createWorkspaceFile.execute({
-				...input,
-				maxFileBytes: this.options.maxFileBytes,
-			}),
+			output: {
+				path: file.path,
+				created: true,
+			},
 		};
 	}
 }

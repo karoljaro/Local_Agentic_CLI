@@ -69,4 +69,5 @@ const testConfig: AppConfig = {
 	OLLAMA_MODEL: 'initial-model',
 	OLLAMA_KEEP_ALIVE: '0',
 	SYSTEM_PROMPT: 'You are a local coding agent.',
+	MAX_CONTEXT_CHARACTERS: 120_000,
 };

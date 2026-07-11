@@ -16,11 +16,15 @@ import { RipgrepSearch } from '@/infrastructure/tools/ripgrep/RipgrepSearch';
 
 const DEFAULT_MAX_FILE_BYTES = 200_000;
 const DEFAULT_MAX_LIST_FILES = 500;
+const DEFAULT_MAX_READ_LINES = 400;
+const DEFAULT_MAX_READ_CHARACTERS = 20_000;
 
 type LocalToolExecutorOptions = {
 	workspaceRoot?: string;
 	maxFileBytes?: number;
 	maxListFiles?: number;
+	maxReadLines?: number;
+	maxReadCharacters?: number;
 	maxSearchMatches?: number;
 	maxMatchTextLength?: number;
 	searchTimeoutMs?: number;
@@ -51,7 +55,11 @@ export const createLocalToolExecutor = (
 		listFilesProvider: new ListFilesProvider(new ListWorkspaceFiles(workspaceFiles), {
 			maxEntries: options.maxListFiles ?? DEFAULT_MAX_LIST_FILES,
 		}),
-		readFileProvider: new ReadFileProvider(new ReadWorkspaceFile(workspaceFiles), { maxFileBytes }),
+		readFileProvider: new ReadFileProvider(new ReadWorkspaceFile(workspaceFiles), {
+			maxFileBytes,
+			maxLines: options.maxReadLines ?? DEFAULT_MAX_READ_LINES,
+			maxCharacters: options.maxReadCharacters ?? DEFAULT_MAX_READ_CHARACTERS,
+		}),
 		searchFileProvider: new SearchFileProvider(
 			new SearchWorkspaceFiles(new RipgrepSearch(searchOptions)),
 		),

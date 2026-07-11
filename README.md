@@ -81,7 +81,17 @@ Searches the current workspace with ripgrep and returns paths, line numbers, and
 
 ### `read_file`
 
-Reads a UTF-8 file from the current workspace. It requires a relative path and rejects paths outside the workspace.
+Reads a bounded range from a UTF-8 file in the current workspace:
+
+```ts
+{
+  path: string;
+  startLine?: number;
+  endLine?: number;
+}
+```
+
+The default output is limited to 400 lines and 20,000 characters. Results include `startLine`, `endLine`, `totalLines`, and `truncated`, allowing the model to continue from the next range. Paths outside the workspace are rejected.
 
 ### `create_file`
 
@@ -197,9 +207,12 @@ Configuration is read from environment variables. A `.env` file can be used.
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=gemma4:12b-it-qat
 SYSTEM_PROMPT=You are a local coding agent.
+MAX_CONTEXT_CHARACTERS=120000
 ```
 
 Defaults are defined in `src/composition/config.ts`.
+
+`MAX_CONTEXT_CHARACTERS` limits serialized model messages. The current turn is always kept intact; older complete turns are removed from oldest to newest when the limit is reached.
 
 The default model is still configured in code for now. It should move to user settings once settings exist.
 

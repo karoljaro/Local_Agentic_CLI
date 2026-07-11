@@ -26,7 +26,7 @@ Important pieces:
 
 - ports such as `ModelPort`, `SessionStorePort`, `ToolExecutorPort`, `WorkspaceFilePort`, and `WorkspaceSearchPort`;
 - `RunAgentTurn`, which owns the agent loop;
-- `ContextBuilder`, which builds model context from rebuilt session state;
+- `ContextBuilder`, which keeps the current turn and the newest complete historical turns within a configured character budget;
 - `SessionReducer`, which rebuilds chat/model state from durable events;
 - file-operation use-cases for listing, reading, searching, creating, and editing workspace files.
 
@@ -48,6 +48,7 @@ Read-only tools run automatically. Mutating tools currently require approval:
 - mutating: `create_file`, `edit_file`.
 
 Tool results are atomic: a tool call is validated, executed, and only then appended to model context as a complete result.
+`read_file` bounds each result by line count and character count, returning range metadata for continuation.
 
 ### Composition
 

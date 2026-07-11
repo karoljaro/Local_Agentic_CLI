@@ -35,7 +35,8 @@ describe('LocalToolExecutor', () => {
 			},
 			{
 				name: 'read_file',
-				description: 'Read a UTF-8 text file from the current workspace. Use relative paths.',
+				description:
+					'Read a bounded line range from a UTF-8 text file in the current workspace. Use startLine and endLine to continue reading truncated files.',
 				parameters: {
 					type: 'object',
 					required: ['path'],
@@ -44,6 +45,16 @@ describe('LocalToolExecutor', () => {
 						path: {
 							type: 'string',
 							description: 'Relative path to a file in the current workspace.',
+						},
+						startLine: {
+							type: 'integer',
+							minimum: 1,
+							description: 'Optional one-based first line. Defaults to 1.',
+						},
+						endLine: {
+							type: 'integer',
+							minimum: 1,
+							description: 'Optional one-based last line, inclusive.',
 						},
 					},
 				},
@@ -158,6 +169,10 @@ describe('LocalToolExecutor', () => {
 				output: {
 					path: 'src/file.txt',
 					content: 'hello',
+					startLine: 1,
+					endLine: 1,
+					totalLines: 1,
+					truncated: false,
 				},
 			});
 		} finally {
@@ -184,12 +199,107 @@ describe('LocalToolExecutor', () => {
 				toolName: 'create_file',
 				output: {
 					path: 'src/new-file.ts',
-					content: 'export const value = 1;\n',
+					created: true,
 				},
 			});
 			await expect(readFile(join(directory, 'src', 'new-file.ts'), 'utf8')).resolves.toBe(
 				'export const value = 1;\n',
 			);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('reads a bounded line range and reports continuation metadata', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await writeFile(join(directory, 'file.txt'), 'one\ntwo\nthree\nfour', 'utf8');
+			const executor = createLocalToolExecutor({
+				workspaceRoot: directory,
+				maxReadLines: 2,
+				maxReadCharacters: 100,
+			});
+
+			const result = await executor.execute({
+				toolName: 'read_file',
+				toolInput: { path: 'file.txt', startLine: 2, endLine: 4 },
+			});
+
+			expect(result.output).toEqual({
+				path: 'file.txt',
+				content: 'two\nthree',
+				startLine: 2,
+				endLine: 3,
+				totalLines: 4,
+				truncated: true,
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('returns stable range metadata for an empty file', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await writeFile(join(directory, 'empty.txt'), '', 'utf8');
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
+
+			const result = await executor.execute({
+				toolName: 'read_file',
+				toolInput: { path: 'empty.txt' },
+			});
+
+			expect(result.output).toEqual({
+				path: 'empty.txt',
+				content: '',
+				startLine: 1,
+				endLine: 0,
+				totalLines: 0,
+				truncated: false,
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('limits read output characters and validates line ranges', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await writeFile(join(directory, 'file.txt'), 'abcdefghij\nsecond', 'utf8');
+			const executor = createLocalToolExecutor({
+				workspaceRoot: directory,
+				maxReadLines: 10,
+				maxReadCharacters: 5,
+			});
+
+			await expect(
+				executor.execute({
+					toolName: 'read_file',
+					toolInput: { path: 'file.txt', startLine: 3 },
+				}),
+			).rejects.toThrow('startLine exceeds the file length');
+			await expect(
+				executor.execute({
+					toolName: 'read_file',
+					toolInput: { path: 'file.txt', startLine: 2, endLine: 1 },
+				}),
+			).rejects.toThrow('endLine must be greater than or equal to startLine');
+
+			const result = await executor.execute({
+				toolName: 'read_file',
+				toolInput: { path: 'file.txt' },
+			});
+
+			expect(result.output).toMatchObject({
+				content: 'abcde',
+				startLine: 1,
+				endLine: 1,
+				totalLines: 2,
+				truncated: true,
+			});
 		} finally {
 			await cleanup();
 		}
