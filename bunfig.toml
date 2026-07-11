@@ -3,7 +3,9 @@
 minimumReleaseAge = 604800 # 7 days in seconds
 minimumReleaseAgeExcludes = [
   "@types/bun",
-  "typescript"
+  "typescript",
+  "@typescript/typescript-linux-x64",
+  "@typescript/typescript-win32-x64"
 ]
 
 # Detect phantom dependencies
