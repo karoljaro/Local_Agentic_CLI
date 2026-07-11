@@ -13,9 +13,3 @@ linker = "isolated"
 
 # faster reinstalls
 globalStore = true
-
-# eslint/prettier easier to find plugins
-publicHoistPattern = [
-  "*eslint*",
-  "*prettier*"
-]
