@@ -21,6 +21,7 @@ import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
 import type { ModelStreamChunk } from '../ports/ModelPort';
 import { ContextBuilder } from '../services/ContextBuilder';
+import { reduceAgentState } from '../services/SessionReducer';
 import {
 	RunAgentTurn,
 	type RunAgentTurnDependencies,
@@ -496,6 +497,7 @@ describe('RunAgentTurn', () => {
 						content: 'Read README',
 					},
 					{
+						id: asMessageId('message-5'),
 						role: 'assistant',
 						content: '',
 						toolCalls: [
@@ -541,6 +543,21 @@ describe('RunAgentTurn', () => {
 			},
 			{
 				id: asEventId('event-4'),
+				messageId: asMessageId('message-5'),
+				sessionId,
+				type: 'assistant.tool_calls.completed',
+				timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
+				content: '',
+				toolCalls: [
+					{
+						id: asToolCallId('tool-call-3'),
+						name: 'read_file',
+						arguments: { path: 'README.md' },
+					},
+				],
+			},
+			{
+				id: asEventId('event-6'),
 				sessionId,
 				type: 'tool.call.requested',
 				timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
@@ -550,7 +567,7 @@ describe('RunAgentTurn', () => {
 				approvalRequired: false,
 			},
 			{
-				id: asEventId('event-5'),
+				id: asEventId('event-7'),
 				sessionId,
 				type: 'tool.call.started',
 				timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
@@ -558,7 +575,7 @@ describe('RunAgentTurn', () => {
 				toolName: 'read_file',
 			},
 			{
-				id: asEventId('event-6'),
+				id: asEventId('event-8'),
 				sessionId,
 				type: 'tool.call.completed',
 				timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
@@ -570,8 +587,8 @@ describe('RunAgentTurn', () => {
 				},
 			},
 			{
-				id: asEventId('event-7'),
-				messageId: asMessageId('message-8'),
+				id: asEventId('event-9'),
+				messageId: asMessageId('message-10'),
 				sessionId,
 				type: 'assistant.message.completed',
 				timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
@@ -671,6 +688,16 @@ describe('RunAgentTurn', () => {
 			type: 'assistant.message.completed',
 			content: 'The file contains hello.',
 		});
+		expect(sessionStore.events[1]).toMatchObject({
+			type: 'assistant.tool_calls.completed',
+			content: 'I will inspect the file.\n',
+			toolCalls: [
+				{
+					name: 'read_file',
+					arguments: { path: 'README.md' },
+				},
+			],
+		});
 	});
 
 	test('requires approval before executing a mutating tool call', async () => {
@@ -716,12 +743,13 @@ describe('RunAgentTurn', () => {
 		]);
 		expect(sessionStore.events.map((event) => event.type)).toEqual([
 			'prompt.submitted',
+			'assistant.tool_calls.completed',
 			'tool.call.requested',
 			'tool.call.started',
 			'tool.call.completed',
 			'assistant.message.completed',
 		]);
-		expect(sessionStore.events[1]).toMatchObject({
+		expect(sessionStore.events[2]).toMatchObject({
 			type: 'tool.call.requested',
 			toolName: 'edit_file',
 			approvalRequired: true,
@@ -744,16 +772,17 @@ describe('RunAgentTurn', () => {
 		expect(model.receivedInputs).toHaveLength(1);
 		expect(sessionStore.events.map((event) => event.type)).toEqual([
 			'prompt.submitted',
+			'assistant.tool_calls.completed',
 			'tool.call.requested',
 			'tool.call.failed',
 			'assistant.message.completed',
 		]);
-		expect(sessionStore.events[1]).toMatchObject({
+		expect(sessionStore.events[2]).toMatchObject({
 			type: 'tool.call.requested',
 			toolName: 'edit_file',
 			approvalRequired: true,
 		});
-		expect(sessionStore.events[2]).toMatchObject({
+		expect(sessionStore.events[3]).toMatchObject({
 			type: 'tool.call.failed',
 			toolName: 'edit_file',
 			error: {
@@ -761,10 +790,53 @@ describe('RunAgentTurn', () => {
 				code: 'TOOL_APPROVAL_DENIED',
 			},
 		});
-		expect(sessionStore.events[3]).toMatchObject({
+		expect(sessionStore.events[4]).toMatchObject({
 			type: 'assistant.message.completed',
 			content: 'Tool call was not approved: edit_file',
 		});
+	});
+
+	test('closes the remaining tool calls in a batch after approval is denied', async () => {
+		const model = new ScriptedModel([
+			toolCallResponse([editFileToolCall(), readFileToolCall('src/file.ts')]),
+		]);
+		const toolExecutor = createReadEditToolExecutor();
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
+			model,
+			toolExecutor,
+			approveToolCall: async () => false,
+		});
+
+		await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Edit and read file' }));
+
+		expect(toolExecutor.receivedRequests).toEqual([]);
+		expect(sessionStore.events.map((event) => event.type)).toEqual([
+			'prompt.submitted',
+			'assistant.tool_calls.completed',
+			'tool.call.requested',
+			'tool.call.failed',
+			'tool.call.requested',
+			'tool.call.failed',
+			'assistant.message.completed',
+		]);
+		expect(sessionStore.events[3]).toMatchObject({
+			type: 'tool.call.failed',
+			error: { code: 'TOOL_APPROVAL_DENIED' },
+		});
+		expect(sessionStore.events[5]).toMatchObject({
+			type: 'tool.call.failed',
+			error: { code: 'TOOL_BATCH_CANCELLED' },
+		});
+
+		const rebuiltState = reduceAgentState(sessionId, sessionStore.events);
+
+		expect(rebuiltState.messages.map((message) => message.role)).toEqual([
+			'user',
+			'assistant',
+			'tool',
+			'tool',
+			'assistant',
+		]);
 	});
 
 	test('allows the model to chain search and read tool calls before answering', async () => {
@@ -801,6 +873,7 @@ describe('RunAgentTurn', () => {
 		expect(model.receivedInputs.every((input) => input.tools !== undefined)).toBe(true);
 		expect(model.receivedInputs[1]?.messages.slice(-2)).toEqual([
 			{
+				id: asMessageId('message-5'),
 				role: 'assistant',
 				content: '',
 				toolCalls: [
@@ -821,11 +894,12 @@ describe('RunAgentTurn', () => {
 		]);
 		expect(model.receivedInputs[2]?.messages.slice(-2)).toEqual([
 			{
+				id: asMessageId('message-11'),
 				role: 'assistant',
 				content: '',
 				toolCalls: [
 					{
-						id: asToolCallId('tool-call-7'),
+						id: asToolCallId('tool-call-9'),
 						name: 'read_file',
 						arguments: { path: 'src/users.py' },
 					},
@@ -833,16 +907,18 @@ describe('RunAgentTurn', () => {
 			},
 			{
 				role: 'tool',
-				toolCallId: asToolCallId('tool-call-7'),
+				toolCallId: asToolCallId('tool-call-9'),
 				toolName: 'read_file',
 				content: '{"path":"src/users.py","content":"if user.email.lower() == email.lower():"}',
 			},
 		]);
 		expect(sessionStore.events.map((event) => event.type)).toEqual([
 			'prompt.submitted',
+			'assistant.tool_calls.completed',
 			'tool.call.requested',
 			'tool.call.started',
 			'tool.call.completed',
+			'assistant.tool_calls.completed',
 			'tool.call.requested',
 			'tool.call.started',
 			'tool.call.completed',
@@ -878,6 +954,7 @@ describe('RunAgentTurn', () => {
 		]);
 		expect(model.receivedInputs[1]?.messages.slice(-3)).toEqual([
 			{
+				id: asMessageId('message-6'),
 				role: 'assistant',
 				content: '',
 				toolCalls: [
@@ -887,7 +964,7 @@ describe('RunAgentTurn', () => {
 						arguments: { query: 'UserRepository' },
 					},
 					{
-						id: asToolCallId('tool-call-7'),
+						id: asToolCallId('tool-call-4'),
 						name: 'read_file',
 						arguments: { path: 'src/users.py' },
 					},
@@ -902,13 +979,14 @@ describe('RunAgentTurn', () => {
 			},
 			{
 				role: 'tool',
-				toolCallId: asToolCallId('tool-call-7'),
+				toolCallId: asToolCallId('tool-call-4'),
 				toolName: 'read_file',
 				content: '{"path":"src/users.py","content":"if user.email.lower() == email.lower():"}',
 			},
 		]);
 		expect(sessionStore.events.map((event) => event.type)).toEqual([
 			'prompt.submitted',
+			'assistant.tool_calls.completed',
 			'tool.call.requested',
 			'tool.call.started',
 			'tool.call.completed',
@@ -917,6 +995,12 @@ describe('RunAgentTurn', () => {
 			'tool.call.completed',
 			'assistant.message.completed',
 		]);
+
+		const rebuiltState = reduceAgentState(sessionId, sessionStore.events);
+
+		expect(rebuiltState.messages.slice(0, -1)).toEqual(
+			model.receivedInputs[1]?.messages.slice(1) ?? [],
+		);
 	});
 
 	test('sends a failed second tool result back to the model', async () => {
@@ -947,12 +1031,13 @@ describe('RunAgentTurn', () => {
 		]);
 		expect(model.receivedInputs[1]?.messages.at(-1)).toEqual({
 			role: 'tool',
-			toolCallId: asToolCallId('tool-call-7'),
+			toolCallId: asToolCallId('tool-call-4'),
 			toolName: 'read_file',
 			content: '{"error":{"message":"file missing"}}',
 		});
 		expect(sessionStore.events.map((event) => event.type)).toEqual([
 			'prompt.submitted',
+			'assistant.tool_calls.completed',
 			'tool.call.requested',
 			'tool.call.started',
 			'tool.call.completed',
@@ -961,6 +1046,12 @@ describe('RunAgentTurn', () => {
 			'tool.call.failed',
 			'assistant.message.completed',
 		]);
+
+		const rebuiltState = reduceAgentState(sessionId, sessionStore.events);
+
+		expect(rebuiltState.messages.slice(0, -1)).toEqual(
+			model.receivedInputs[1]?.messages.slice(1) ?? [],
+		);
 	});
 
 	test('requests approval before executing the second tool in a batch', async () => {
@@ -987,7 +1078,7 @@ describe('RunAgentTurn', () => {
 		expect(approvalRequests).toEqual([
 			{
 				sessionId,
-				toolCallId: asToolCallId('tool-call-7'),
+				toolCallId: asToolCallId('tool-call-4'),
 				toolName: 'edit_file',
 				toolInput: {
 					path: 'src/file.ts',
@@ -1010,13 +1101,14 @@ describe('RunAgentTurn', () => {
 				},
 			},
 		]);
-		expect(sessionStore.events[4]).toMatchObject({
+		expect(sessionStore.events[5]).toMatchObject({
 			type: 'tool.call.requested',
 			toolName: 'edit_file',
 			approvalRequired: true,
 		});
 		expect(sessionStore.events.map((event) => event.type)).toEqual([
 			'prompt.submitted',
+			'assistant.tool_calls.completed',
 			'tool.call.requested',
 			'tool.call.started',
 			'tool.call.completed',
@@ -1132,6 +1224,21 @@ describe('RunAgentTurn', () => {
 			},
 			{
 				id: asEventId('event-4'),
+				messageId: asMessageId('message-5'),
+				sessionId,
+				type: 'assistant.tool_calls.completed',
+				timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
+				content: '',
+				toolCalls: [
+					{
+						id: asToolCallId('tool-call-3'),
+						name: 'read_file',
+						arguments: { path: 'missing.txt' },
+					},
+				],
+			},
+			{
+				id: asEventId('event-6'),
 				sessionId,
 				type: 'tool.call.requested',
 				timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
@@ -1141,7 +1248,7 @@ describe('RunAgentTurn', () => {
 				approvalRequired: false,
 			},
 			{
-				id: asEventId('event-5'),
+				id: asEventId('event-7'),
 				sessionId,
 				type: 'tool.call.started',
 				timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
@@ -1149,7 +1256,7 @@ describe('RunAgentTurn', () => {
 				toolName: 'read_file',
 			},
 			{
-				id: asEventId('event-6'),
+				id: asEventId('event-8'),
 				sessionId,
 				type: 'tool.call.failed',
 				timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
@@ -1164,8 +1271,8 @@ describe('RunAgentTurn', () => {
 				},
 			},
 			{
-				id: asEventId('event-7'),
-				messageId: asMessageId('message-8'),
+				id: asEventId('event-9'),
+				messageId: asMessageId('message-10'),
 				sessionId,
 				type: 'assistant.message.completed',
 				timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
@@ -1188,8 +1295,7 @@ describe('RunAgentTurn', () => {
 		).rejects.toThrow('Tool iteration limit reached.');
 
 		expect(toolExecutor.receivedRequests).toHaveLength(1);
-		expect(sessionStore.events.at(-1)).toEqual({
-			id: asEventId('event-51'),
+		expect(sessionStore.events.at(-1)).toMatchObject({
 			sessionId,
 			type: 'agent.error',
 			timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),

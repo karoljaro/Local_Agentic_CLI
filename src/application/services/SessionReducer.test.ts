@@ -4,6 +4,7 @@ import { asEventId, asMessageId, asSessionId, asToolCallId } from '@/domain/Ids'
 import {
 	agentErrorOccurredEvent,
 	assistantMessageCompletedEvent,
+	assistantToolCallsCompletedEvent,
 	promptSubmittedEvent,
 	toolCallCompletedEvent,
 	toolCallFailedEvent,
@@ -168,6 +169,96 @@ describe('reduceAgentState', () => {
 				sessionId,
 				toolCallId,
 				toolName: 'read_file',
+			}),
+		]);
+
+		expect(state.messages).toEqual([]);
+	});
+
+	test('rebuilds a complete tool-call batch as one assistant message with preserved content', () => {
+		const sessionId = asSessionId('session-1');
+		const firstToolCallId = asToolCallId('tool-call-1');
+		const secondToolCallId = asToolCallId('tool-call-2');
+
+		const state = reduceAgentState(sessionId, [
+			assistantToolCallsCompletedEvent({
+				sessionId,
+				content: 'I will inspect both files.',
+				toolCalls: [
+					{
+						id: firstToolCallId,
+						name: 'read_file',
+						arguments: { path: 'README.md' },
+					},
+					{
+						id: secondToolCallId,
+						name: 'read_file',
+						arguments: { path: 'package.json' },
+					},
+				],
+			}),
+			toolCallCompletedEvent({
+				sessionId,
+				toolCallId: firstToolCallId,
+				output: { path: 'README.md', content: 'readme' },
+			}),
+			toolCallCompletedEvent({
+				sessionId,
+				toolCallId: secondToolCallId,
+				output: { path: 'package.json', content: '{}' },
+			}),
+		]);
+
+		expect(state.messages).toEqual([
+			{
+				id: asMessageId('message-assistant-tool-calls-1'),
+				role: 'assistant',
+				content: 'I will inspect both files.',
+				toolCalls: [
+					{
+						id: firstToolCallId,
+						name: 'read_file',
+						arguments: { path: 'README.md' },
+					},
+					{
+						id: secondToolCallId,
+						name: 'read_file',
+						arguments: { path: 'package.json' },
+					},
+				],
+			},
+			{
+				role: 'tool',
+				toolCallId: firstToolCallId,
+				toolName: 'read_file',
+				content: JSON.stringify({ path: 'README.md', content: 'readme' }),
+			},
+			{
+				role: 'tool',
+				toolCallId: secondToolCallId,
+				toolName: 'read_file',
+				content: JSON.stringify({ path: 'package.json', content: '{}' }),
+			},
+		]);
+	});
+
+	test('omits an incomplete persisted tool-call batch from model messages', () => {
+		const sessionId = asSessionId('session-1');
+		const firstToolCallId = asToolCallId('tool-call-1');
+		const secondToolCallId = asToolCallId('tool-call-2');
+
+		const state = reduceAgentState(sessionId, [
+			assistantToolCallsCompletedEvent({
+				sessionId,
+				toolCalls: [
+					{ id: firstToolCallId, name: 'read_file', arguments: { path: 'README.md' } },
+					{ id: secondToolCallId, name: 'read_file', arguments: { path: 'package.json' } },
+				],
+			}),
+			toolCallCompletedEvent({
+				sessionId,
+				toolCallId: firstToolCallId,
+				output: { path: 'README.md', content: 'readme' },
 			}),
 		]);
 

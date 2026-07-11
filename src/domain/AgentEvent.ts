@@ -1,8 +1,10 @@
 import type { EventId, ISODateTime, MessageId, SessionId, ToolCallId } from './Ids';
+import type { ModelToolCall } from './Tool';
 
 export type AgentEvent =
 	| PromptSubmitted
 	| AssistantMessageCompleted
+	| AssistantToolCallsCompleted
 	| ToolCallRequested
 	| ToolCallStarted
 	| ToolCallCompleted
@@ -25,6 +27,12 @@ export type PromptSubmitted = AgentEventBase<'prompt.submitted'> & {
 export type AssistantMessageCompleted = AgentEventBase<'assistant.message.completed'> & {
 	messageId: MessageId;
 	content: string;
+};
+
+export type AssistantToolCallsCompleted = AgentEventBase<'assistant.tool_calls.completed'> & {
+	messageId: MessageId;
+	content: string;
+	toolCalls: Array<ModelToolCall & { id: ToolCallId }>;
 };
 
 export type ToolCallRequested = AgentEventBase<'tool.call.requested'> & {

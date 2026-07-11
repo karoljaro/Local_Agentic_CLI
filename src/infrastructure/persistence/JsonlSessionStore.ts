@@ -140,6 +140,13 @@ const AgentEventBaseSchema = z.object({
 
 const MessageIdSchema = NonEmptyString.transform(asMessageId);
 const ToolCallIdSchema = NonEmptyString.transform(asToolCallId);
+const PersistedToolCallSchema = z
+	.object({
+		id: ToolCallIdSchema,
+		name: NonEmptyString,
+		arguments: z.unknown(),
+	})
+	.loose();
 
 const AgentEventSchema = z.discriminatedUnion('type', [
 	AgentEventBaseSchema.extend({
@@ -152,6 +159,12 @@ const AgentEventSchema = z.discriminatedUnion('type', [
 		type: z.literal('assistant.message.completed'),
 		messageId: MessageIdSchema,
 		content: z.string(),
+	}).loose(),
+	AgentEventBaseSchema.extend({
+		type: z.literal('assistant.tool_calls.completed'),
+		messageId: MessageIdSchema,
+		content: z.string(),
+		toolCalls: z.array(PersistedToolCallSchema).min(1),
 	}).loose(),
 	AgentEventBaseSchema.extend({
 		type: z.literal('tool.call.requested'),

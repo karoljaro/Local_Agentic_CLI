@@ -128,6 +128,7 @@ Persisted events include:
 
 - `prompt.submitted`
 - `assistant.message.completed`
+- `assistant.tool_calls.completed`
 - `tool.call.requested`
 - `tool.call.started`
 - `tool.call.completed`

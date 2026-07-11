@@ -1,6 +1,7 @@
 import type {
 	AgentErrorOccurred,
 	AssistantMessageCompleted,
+	AssistantToolCallsCompleted,
 	PromptSubmitted,
 	ToolCallCompleted,
 	ToolCallFailed,
@@ -34,6 +35,25 @@ export const assistantMessageCompletedEvent = (
 	timestamp: testEventTimestamp,
 	messageId: asMessageId('message-assistant-1'),
 	content: 'Hello',
+	...overrides,
+});
+
+export const assistantToolCallsCompletedEvent = (
+	overrides: EventOverrides<AssistantToolCallsCompleted> = {},
+): AssistantToolCallsCompleted => ({
+	id: asEventId('event-assistant-tool-calls-completed'),
+	sessionId: asSessionId('session-1'),
+	type: 'assistant.tool_calls.completed',
+	timestamp: testEventTimestamp,
+	messageId: asMessageId('message-assistant-tool-calls-1'),
+	content: '',
+	toolCalls: [
+		{
+			id: asToolCallId('tool-call-1'),
+			name: 'read_file',
+			arguments: { path: 'README.md' },
+		},
+	],
 	...overrides,
 });
 

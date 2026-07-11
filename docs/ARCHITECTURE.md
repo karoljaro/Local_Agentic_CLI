@@ -88,6 +88,7 @@ The current durable events are:
 
 - `prompt.submitted`;
 - `assistant.message.completed`;
+- `assistant.tool_calls.completed`;
 - `tool.call.requested`;
 - `tool.call.started`;
 - `tool.call.completed`;
@@ -95,6 +96,11 @@ The current durable events are:
 - `agent.error`.
 
 Streaming deltas are runtime-only and are not persisted as durable events.
+
+Tool-calling model responses are persisted as one `assistant.tool_calls.completed` event before
+tool execution starts. The event keeps the assistant content and the complete tool-call batch, so
+rebuilding a finished session produces the same model context as the live agent loop. Incomplete
+batches are excluded from rebuilt model messages until every call has a completed or failed event.
 
 ## Current Boundaries
 

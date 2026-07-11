@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 
 import type { AgentEvent } from '@/domain/AgentEvent';
-import { asEventId, asISODateTime, asMessageId, asSessionId } from '@/domain/Ids';
+import { asEventId, asISODateTime, asMessageId, asSessionId, asToolCallId } from '@/domain/Ids';
 import { createTempDirectory } from '@/test-support/createTempDirectory';
 
 import { JsonlSessionStore } from './JsonlSessionStore';
@@ -114,6 +114,34 @@ describe('JsonlSessionStore', () => {
 			const events = await store.readSessionEvents(sessionId);
 
 			expect(events).toEqual([firstEvent, secondEvent]);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('appends and reads an assistant tool-call batch', async () => {
+		const { store, cleanup } = await createTempStore();
+		const sessionId = asSessionId('session-1');
+		const event: AgentEvent = {
+			id: asEventId('event-1'),
+			sessionId,
+			type: 'assistant.tool_calls.completed',
+			timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
+			messageId: asMessageId('message-1'),
+			content: 'I will inspect both files.',
+			toolCalls: [
+				{
+					id: asToolCallId('tool-call-1'),
+					name: 'read_file',
+					arguments: { path: 'README.md' },
+				},
+			],
+		};
+
+		try {
+			await store.appendSessionEvent(event);
+
+			expect(await store.readSessionEvents(sessionId)).toEqual([event]);
 		} finally {
 			await cleanup();
 		}

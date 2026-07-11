@@ -1,6 +1,7 @@
 import type {
 	AgentErrorOccurred,
 	AssistantMessageCompleted,
+	AssistantToolCallsCompleted,
 	PromptSubmitted,
 	ToolCallCompleted,
 	ToolCallFailed,
@@ -43,10 +44,11 @@ export type ToolApprovalRequest = {
 export type ToolApprovalHandler = (request: ToolApprovalRequest) => Promise<boolean>;
 
 type ToolExecutionBatchResult = {
-	toolCalls: ModelToolCall[];
 	toolMessages: ModelMessage[];
 	terminalMessage?: string;
 };
+
+type PersistedModelToolCall = ModelToolCall & { id: ToolCallId };
 
 type StreamedModelResponse = {
 	contentDeltas: string[];
@@ -154,9 +156,21 @@ export class RunAgentTurn {
 				throw error;
 			}
 
-			const { toolCalls, toolMessages, terminalMessage } = await this.executeToolCalls(
+			const persistedToolCalls = result.toolCalls.map((toolCall) => ({
+				id: this.dependencies.idGenerator.nextToolCallId(),
+				name: toolCall.name,
+				arguments: toolCall.arguments,
+			}));
+
+			const persistedAssistantMessage = await this.appendAssistantToolCallsCompleted(
 				sessionId,
-				result.toolCalls,
+				toContent(result),
+				persistedToolCalls,
+			);
+
+			const { toolMessages, terminalMessage } = await this.executeToolCalls(
+				sessionId,
+				persistedToolCalls,
 				toolExecutor,
 				tools,
 				toolCache,
@@ -174,9 +188,10 @@ export class RunAgentTurn {
 			currentMessages = [
 				...currentMessages,
 				{
+					id: persistedAssistantMessage.messageId,
 					role: 'assistant',
 					content: toContent(result),
-					toolCalls,
+					toolCalls: persistedToolCalls,
 				},
 				...toolMessages,
 			];
@@ -220,35 +235,18 @@ export class RunAgentTurn {
 
 	private async executeToolCalls(
 		sessionId: SessionId,
-		toolCalls: ModelToolCall[],
+		toolCalls: PersistedModelToolCall[],
 		toolExecutor: ToolExecutorPort,
 		tools: ToolDefinition[],
 		toolCache: Map<string, ToolExecutionResult>,
 	): Promise<ToolExecutionBatchResult> {
-		const toolCallsWithIds: ModelToolCall[] = [];
 		const toolMessages: ModelMessage[] = [];
 
-		for (const toolCall of toolCalls) {
-			const toolCallId = this.dependencies.idGenerator.nextToolCallId();
+		for (const [toolCallIndex, toolCall] of toolCalls.entries()) {
+			const toolCallId = toolCall.id;
 			const toolName = toolCall.name;
 
-			toolCallsWithIds.push({
-				id: toolCallId,
-				name: toolName,
-				arguments: toolCall.arguments,
-			});
-
-			const requestedEvent: ToolCallRequested = {
-				id: this.dependencies.idGenerator.nextEventId(),
-				sessionId,
-				type: 'tool.call.requested',
-				timestamp: this.dependencies.clock.now(),
-				toolCallId,
-				toolName,
-				toolInput: toolCall.arguments,
-				approvalRequired: isApprovalRequired(toolName, tools),
-			};
-			await this.dependencies.sessionStore.appendSessionEvent(requestedEvent);
+			const requestedEvent = await this.appendToolCallRequested(sessionId, toolCall, tools);
 
 			if (requestedEvent.approvalRequired) {
 				const approved = await this.requestToolApproval({
@@ -268,9 +266,20 @@ export class RunAgentTurn {
 						message: errorMessage,
 						code: 'TOOL_APPROVAL_DENIED',
 					});
+					for (const cancelledToolCall of toolCalls.slice(toolCallIndex + 1)) {
+						await this.appendToolCallRequested(sessionId, cancelledToolCall, tools);
+						const cancelledMessage = `Tool call was cancelled after approval denial: ${cancelledToolCall.name}`;
+
+						await this.appendToolCallFailed({
+							sessionId,
+							toolCallId: cancelledToolCall.id,
+							toolName: cancelledToolCall.name,
+							message: cancelledMessage,
+							code: 'TOOL_BATCH_CANCELLED',
+						});
+					}
 
 					return {
-						toolCalls: toolCallsWithIds,
 						toolMessages,
 						terminalMessage: errorMessage,
 					};
@@ -353,9 +362,29 @@ export class RunAgentTurn {
 		}
 
 		return {
-			toolCalls: toolCallsWithIds,
 			toolMessages,
 		};
+	}
+
+	private async appendToolCallRequested(
+		sessionId: SessionId,
+		toolCall: PersistedModelToolCall,
+		tools: ToolDefinition[],
+	): Promise<ToolCallRequested> {
+		const requestedEvent: ToolCallRequested = {
+			id: this.dependencies.idGenerator.nextEventId(),
+			sessionId,
+			type: 'tool.call.requested',
+			timestamp: this.dependencies.clock.now(),
+			toolCallId: toolCall.id,
+			toolName: toolCall.name,
+			toolInput: toolCall.arguments,
+			approvalRequired: isApprovalRequired(toolCall.name, tools),
+		};
+
+		await this.dependencies.sessionStore.appendSessionEvent(requestedEvent);
+
+		return requestedEvent;
 	}
 
 	private async requestToolApproval(request: ToolApprovalRequest): Promise<boolean> {
@@ -406,6 +435,26 @@ export class RunAgentTurn {
 		};
 
 		await this.dependencies.sessionStore.appendSessionEvent(completedEvent);
+	}
+
+	private async appendAssistantToolCallsCompleted(
+		sessionId: SessionId,
+		content: string,
+		toolCalls: PersistedModelToolCall[],
+	): Promise<AssistantToolCallsCompleted> {
+		const completedEvent: AssistantToolCallsCompleted = {
+			id: this.dependencies.idGenerator.nextEventId(),
+			messageId: this.dependencies.idGenerator.nextMessageId(),
+			sessionId,
+			type: 'assistant.tool_calls.completed',
+			timestamp: this.dependencies.clock.now(),
+			content,
+			toolCalls,
+		};
+
+		await this.dependencies.sessionStore.appendSessionEvent(completedEvent);
+
+		return completedEvent;
 	}
 
 	private async appendAgentError(sessionId: SessionId, error: Error, code: string): Promise<void> {
