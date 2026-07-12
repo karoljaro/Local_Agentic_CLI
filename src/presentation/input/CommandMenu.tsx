@@ -15,22 +15,25 @@ export const CommandMenu = ({ menu }: { menu: CommandMenuState }) => {
 			aria-label="Commands"
 			aria-role="menu"
 			borderBottom={false}
-			borderColor="gray"
+			borderColor="cyan"
 			borderLeft
-			borderLeftDimColor
 			borderRight={false}
 			borderStyle="single"
 			borderTop={false}
 			flexDirection="column"
 			paddingLeft={1}
 		>
-			{menu.items.length === 0 ? <Text color="gray">· No matching commands</Text> : null}
+			{menu.items.length === 0 ? (
+				<Text color="white" dimColor>
+					· No matching commands
+				</Text>
+			) : null}
 			{menu.items.map((command, index) => {
 				const selected = index === menu.selectedIndex;
 				return (
-					<SelectionRow key={command.name} selected={selected}>
-						<Text bold>{` ${command.usage} `}</Text>
-						<Text {...(selected ? { dimColor: true } : { color: 'gray' })}>
+					<SelectionRow key={command.name} selected={selected} variant="accent">
+						<Text {...(selected ? {} : { color: 'white' })} bold>{` ${command.usage} `}</Text>
+						<Text {...(selected ? { dimColor: true } : { color: 'white', dimColor: true })}>
 							{isNarrow ? `\n    ${command.description} ` : `  ${command.description} `}
 						</Text>
 					</SelectionRow>
@@ -44,6 +47,7 @@ export const CommandMenu = ({ menu }: { menu: CommandMenuState }) => {
 						{ key: 'Tab', label: 'complete' },
 						{ key: 'Esc', label: 'close' },
 					]}
+					onSurface
 				/>
 			</Box>
 		</Box>

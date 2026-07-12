@@ -33,8 +33,16 @@ export type KeyHint = {
 	label: string;
 };
 
-export const KeyHints = ({ hints }: { hints: KeyHint[] }) => (
-	<Text color="gray" wrap="wrap">
+export const KeyHints = ({
+	dim = false,
+	hints,
+	onSurface = false,
+}: {
+	dim?: boolean;
+	hints: KeyHint[];
+	onSurface?: boolean;
+}) => (
+	<Text color={onSurface ? 'white' : 'gray'} dimColor={dim || onSurface} wrap="wrap">
 		{hints.map((hint, index) => (
 			<Fragment key={`${hint.key}:${hint.label}`}>
 				{index === 0 ? '' : '  ·  '}
@@ -47,15 +55,22 @@ export const KeyHints = ({ hints }: { hints: KeyHint[] }) => (
 type SelectionRowProps = {
 	children: ReactNode;
 	selected: boolean;
+	variant?: 'accent' | 'inverse';
 };
 
-export const SelectionRow = ({ children, selected }: SelectionRowProps) => (
+export const SelectionRow = ({ children, selected, variant = 'inverse' }: SelectionRowProps) => (
 	<Box aria-role="option" aria-state={{ selected }}>
 		<Text bold color={selected ? 'cyan' : 'gray'}>
 			{selected ? '›' : ' '}{' '}
 		</Text>
-		<Text bold={selected} inverse={selected}>
-			{children}
-		</Text>
+		{selected && variant === 'accent' ? (
+			<Text backgroundColor="cyan" bold color="black">
+				{children}
+			</Text>
+		) : (
+			<Text bold={selected} inverse={selected}>
+				{children}
+			</Text>
+		)}
 	</Box>
 );

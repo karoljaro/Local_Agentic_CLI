@@ -31,12 +31,19 @@ export const Composer = ({
 	workspacePath,
 }: ComposerProps) => (
 	<Box flexDirection="column" marginTop={1}>
-		<InputSurface ariaLabel="Message" focused={isFocused}>
-			<InputText cursorIndex={cursorIndex} focused={isFocused} value={value} />
-		</InputSurface>
-		<CommandMenu menu={commandMenu} />
+		<Box
+			backgroundColor={isFocused ? '#30363d' : '#24272b'}
+			flexDirection="column"
+			paddingX={1}
+			width="100%"
+		>
+			<InputSurface ariaLabel="Message" focused={isFocused}>
+				<InputText cursorIndex={cursorIndex} focused={isFocused} value={value} />
+			</InputSurface>
+			<CommandMenu menu={commandMenu} />
+		</Box>
 		<Box paddingLeft={2}>
-			<KeyHints hints={getComposerHints(canSubmit, turnStatus)} />
+			<KeyHints dim hints={getComposerHints(canSubmit, turnStatus)} />
 		</Box>
 		<Box paddingLeft={2}>
 			<Text color="gray" dimColor wrap="truncate-end">
@@ -89,7 +96,7 @@ const InputText = ({
 	}
 
 	return (
-		<Text wrap="wrap">
+		<Text color="white" wrap="wrap">
 			{value.slice(0, cursorIndex)}
 			<Text inverse>{value[cursorIndex] ?? ' '}</Text>
 			{cursorIndex >= value.length ? '' : value.slice(cursorIndex + 1)}

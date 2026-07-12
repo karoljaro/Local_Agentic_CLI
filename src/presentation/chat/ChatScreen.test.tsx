@@ -83,7 +83,7 @@ describe('ChatScreen visual flow', () => {
 		);
 		const toolIndex = output.indexOf('waiting for approval');
 		const approvalIndex = output.indexOf('APPROVAL');
-		const composerIndex = output.indexOf('Ask about this workspace');
+		const composerIndex = output.indexOf('model current-model');
 
 		expect(toolIndex).toBeGreaterThanOrEqual(0);
 		expect(approvalIndex).toBeGreaterThan(toolIndex);

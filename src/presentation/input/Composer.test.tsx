@@ -22,8 +22,8 @@ describe('Composer visual hierarchy', () => {
 	test('keeps the input, dropdown, and metadata inside a narrow terminal', () => {
 		const output = Bun.stripANSI(renderComposer(28));
 		expect(Math.max(...output.split('\n').map((line) => line.length))).toBeLessThanOrEqual(28);
-		expect(output).toContain('Choose a');
-		expect(output).toContain('local model');
+		expect(output).toContain('Choose');
+		expect(output).toContain('a local model');
 		expect(output).toContain('model current-model');
 	});
 });

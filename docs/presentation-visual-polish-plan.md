@@ -83,8 +83,8 @@ controls and the approval label, not full-width panels.
 - The selected command combines a `›` marker, bold name, and inverse surface. Descriptions remain lower
   priority and move below the command below 48 columns. Empty state and dropdown-specific key hints live
   inside the dropdown.
-- Named colours/inverse rendering avoid assumptions about dark terminal backgrounds. No full-width RGB
-  surface was introduced.
+- Named colours/inverse rendering avoid assumptions about dark terminal backgrounds. A later focused
+  composer refinement adds one deliberately bounded RGB work surface; see the follow-up section below.
 
 Verification after stage 2:
 
@@ -192,3 +192,32 @@ Terminal-dependent limitations:
 
 All five visual-polish stages and acceptance criteria are complete. Architecture and behaviour remain
 intact.
+
+## Focused composer refinement — 2026-07-13
+
+The follow-up request intentionally changes only the composer, its hints/metadata, and slash dropdown:
+
+- Input and command autocomplete now share one full-width work surface inside the composer. Focused input
+  uses `#30363d`; paused/unfocused input uses the quieter `#24272b`.
+- The input keeps its cyan focus edge and marker. Non-empty focused input text is explicitly white for
+  predictable contrast on the controlled surface.
+- Dropdown inherits the same surface and continues the cyan left edge, making it visually attached to the
+  input instead of a neighbouring terminal block.
+- Active command uses cyan background + black text + `›` marker + bold name. The optional accent variant
+  was added to `SelectionRow`; model/resume retain their existing inverse variant unchanged.
+- Dropdown help uses dimmed white on the surface. Composer action hints and labelled model/cwd/session
+  metadata sit outside the surface in dim gray, preserving three distinct priorities.
+- The surface uses real Ink width/background layout rather than padding with manual spaces, so resize and
+  dropdown close redraw cleanly.
+
+Follow-up verification:
+
+- targeted composer, chat-flow, App interaction, and selection-screen regressions: pass;
+- narrow composer/dropdown at 28 columns: pass;
+- `bun run format:check`: pass, 128 files;
+- `bun run typecheck`: pass;
+- `bun test`: **191 pass, 0 fail**, 394 assertions;
+- forced Biome lint over the four touched composer files: pass;
+- `bun run build` and `bun run smoke:build`: pass.
+
+No selection-screen layout, controller, reducer, engine, stream, navigation, or command behaviour changed.
