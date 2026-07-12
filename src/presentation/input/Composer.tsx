@@ -1,11 +1,15 @@
 import { Box, Text } from 'ink';
 
 import type { SessionId } from '@/domain/Ids';
+import { InputSurface, KeyHints, type KeyHint } from '../components/Interactive';
 import { compactSessionId, formatWorkspacePath } from '../formatters/workspace';
+import type { CommandMenuState } from '../hooks/useComposer';
 import type { TurnStatus } from '../types';
+import { CommandMenu } from './CommandMenu';
 
 type ComposerProps = {
 	canSubmit: boolean;
+	commandMenu: CommandMenuState;
 	cursorIndex: number;
 	isFocused: boolean;
 	modelName: string;
@@ -17,6 +21,7 @@ type ComposerProps = {
 
 export const Composer = ({
 	canSubmit,
+	commandMenu,
 	cursorIndex,
 	isFocused,
 	modelName,
@@ -26,26 +31,38 @@ export const Composer = ({
 	workspacePath,
 }: ComposerProps) => (
 	<Box flexDirection="column" marginTop={1}>
-		<Box>
-			<Text bold color={isFocused ? 'cyan' : 'gray'}>
-				›{' '}
-			</Text>
+		<InputSurface ariaLabel="Message" focused={isFocused}>
 			<InputText cursorIndex={cursorIndex} focused={isFocused} value={value} />
+		</InputSurface>
+		<CommandMenu menu={commandMenu} />
+		<Box paddingLeft={2}>
+			<KeyHints hints={getComposerHints(canSubmit, turnStatus)} />
 		</Box>
-		<Box>
-			<Text color="gray">
-				{canSubmit
-					? 'Enter send · / commands'
-					: turnStatus === 'idle'
-						? 'Input paused'
-						: 'Keep typing · Esc cancels response'}
+		<Box paddingLeft={2}>
+			<Text color="gray" dimColor wrap="truncate-end">
+				<Text bold>model</Text> {modelName} · <Text bold>cwd</Text>{' '}
+				{formatWorkspacePath(workspacePath)} · <Text bold>session</Text>{' '}
+				{compactSessionId(String(sessionId))}
 			</Text>
 		</Box>
-		<Text color="gray" wrap="truncate-end">
-			{modelName} · {formatWorkspacePath(workspacePath)} · {compactSessionId(String(sessionId))}
-		</Text>
 	</Box>
 );
+
+const getComposerHints = (canSubmit: boolean, turnStatus: TurnStatus): KeyHint[] => {
+	if (canSubmit) {
+		return [
+			{ key: 'Enter', label: 'send' },
+			{ key: '/', label: 'commands' },
+		];
+	}
+
+	return turnStatus === 'idle'
+		? [{ key: 'Input', label: 'paused' }]
+		: [
+				{ key: 'Type', label: 'keep drafting' },
+				{ key: 'Esc', label: 'cancel response' },
+			];
+};
 
 const InputText = ({
 	cursorIndex,
@@ -64,7 +81,9 @@ const InputText = ({
 		return (
 			<Text>
 				<Text inverse> </Text>
-				<Text color="gray">Ask about this workspace…</Text>
+				<Text color="gray" italic>
+					Ask about this workspace…
+				</Text>
 			</Text>
 		);
 	}

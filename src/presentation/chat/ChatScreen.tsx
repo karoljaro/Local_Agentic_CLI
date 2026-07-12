@@ -6,7 +6,6 @@ import type { StreamBuffer } from '../state/StreamBuffer';
 import type { ChatState, PendingApproval } from '../types';
 import { ApprovalView } from '../approval/ApprovalView';
 import { Composer } from '../input/Composer';
-import { CommandMenu } from '../input/CommandMenu';
 import { LiveTurn } from './LiveTurn';
 import { Transcript } from './Transcript';
 
@@ -46,9 +45,9 @@ export const ChatScreen = ({
 				request={pendingApproval}
 			/>
 		)}
-		<CommandMenu menu={commandMenu} />
 		<Composer
 			canSubmit={chat.loadStatus === 'ready' && chat.turnStatus === 'idle'}
+			commandMenu={commandMenu}
 			cursorIndex={composer.cursorIndex}
 			isFocused={isComposerFocused}
 			modelName={modelName}
