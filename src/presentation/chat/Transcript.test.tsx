@@ -30,4 +30,29 @@ describe('Transcript', () => {
 		expect(output).toContain('◆ Assistant');
 		expect(output).toContain('✓ Tool · read_file');
 	});
+
+	test('wraps long user and assistant text at small terminal widths', () => {
+		const output = Bun.stripANSI(
+			renderToString(
+				<Transcript
+					history={[
+						{
+							id: 'user',
+							kind: 'user',
+							content: 'A long user message that must wrap without breaking the terminal layout.',
+						},
+						{
+							id: 'assistant',
+							kind: 'assistant',
+							content: 'A long assistant response with `inline code` and more words.',
+						},
+					]}
+					sessionId={asSessionId('session-1')}
+				/>,
+				{ columns: 28 },
+			),
+		);
+
+		expect(Math.max(...output.split('\n').map((line) => line.length))).toBeLessThanOrEqual(28);
+	});
 });

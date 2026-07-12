@@ -293,4 +293,33 @@ Verification after stages 4–6:
 
 ### Stage 7 — Markdown and visual finish
 
+Status: complete.
+
+- The lightweight renderer uses the existing `marked` dependency but owns a new, smaller Ink mapping.
+- Supported blocks: paragraphs, headings, ordered/unordered/task lists, block quotes, horizontal rules,
+  and fenced code. Supported inline forms: bold, emphasis, strike, inline code, links, images-as-labels,
+  escapes, and line breaks.
+- Raw HTML is suppressed. Code has no frame or horizontal padding, normalises tabs/CR, remains copyable,
+  and wraps within the terminal.
+- Message bodies use only a two-column marker indent and one vertical line between entries; there are no
+  per-message frames or large banners.
+- Narrow-width render tests at 24/28 columns verify both prose and code stay within the terminal. Flex
+  layout and Ink window-size state provide resize behaviour without cached widths.
+- The old table-heavy renderer was rejected; tables were outside the required syntax surface and would
+  add disproportionate layout code. The archived renderer's value import was changed to a relative
+  archived path solely so its historical test remains runnable after the active alias moved.
+
+Reuse decision: no source file was copied wholesale. The new Markdown component retains only the sound
+ideas identified in stage 1 (Marked tokenisation, suppressing HTML, normalising terminal code lines) in a
+new and smaller structure. Input editing and approval preview semantics were likewise reimplemented in
+the new hooks/formatters rather than imported from `ui_old/`.
+
+Verification after stage 7:
+
+- focused narrow Markdown/transcript tests: 5 pass, 0 fail;
+- `bun run typecheck`: pass;
+- Biome format: pass.
+
+### Stage 8 — optimisation and final verification
+
 Status: in progress.
