@@ -7,8 +7,10 @@ import type {
 import type { SessionId, ToolCallId } from '@/domain/Ids';
 import type { ModelMessage } from '@/domain/ModelMessage';
 import type { ModelToolCall, ToolDefinition } from '@/domain/Tool';
+import type { AgentTurnMetricsPort } from '../ports/AgentMetricsPort';
 import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
+import type { MonotonicClockPort } from '../ports/MonotonicClockPort';
 import type { SessionStorePort } from '../ports/SessionStorePort';
 import type { ToolExecutorPort } from '../ports/ToolExecutorPort';
 
@@ -34,6 +36,8 @@ export type ToolRunnerDependencies = {
 	idGenerator: IdGeneratorPort;
 	toolExecutor: ToolExecutorPort;
 	approveToolCall?: ToolApprovalHandler;
+	turnMetrics?: AgentTurnMetricsPort;
+	monotonicClock?: MonotonicClockPort;
 };
 
 type ToolResultReference = {
@@ -121,9 +125,19 @@ export class ToolRunner {
 			}
 
 			await this.appendToolCallStarted(sessionId, toolCallId, toolName);
+			const executionStartedAt = this.readMonotonicClock();
+			let executionMetricRecorded = false;
 
 			try {
-				const output = await this.executeToolCall(toolCall);
+				const { output, reused } = await this.executeToolCall(toolCall);
+				this.recordToolExecution({
+					toolName,
+					durationMs: this.elapsedMilliseconds(executionStartedAt),
+					outputCharacters: stringifyToolOutput(output).length,
+					failed: false,
+					reused,
+				});
+				executionMetricRecorded = true;
 				await this.appendToolCallCompleted(sessionId, toolCallId, toolName, output);
 				toolMessages.push({
 					role: 'tool',
@@ -133,6 +147,17 @@ export class ToolRunner {
 				});
 			} catch (caughtError) {
 				const error = toError(caughtError);
+				const errorOutput = { error: { message: error.message } };
+
+				if (!executionMetricRecorded) {
+					this.recordToolExecution({
+						toolName,
+						durationMs: this.elapsedMilliseconds(executionStartedAt),
+						outputCharacters: stringifyToolOutput(errorOutput).length,
+						failed: true,
+						reused: false,
+					});
+				}
 
 				await this.appendToolCallFailed({
 					sessionId,
@@ -146,7 +171,7 @@ export class ToolRunner {
 					role: 'tool',
 					toolCallId,
 					toolName,
-					content: stringifyToolOutput({ error: { message: error.message } }),
+					content: stringifyToolOutput(errorOutput),
 				});
 			}
 		}
@@ -154,7 +179,9 @@ export class ToolRunner {
 		return { toolMessages };
 	}
 
-	private async executeToolCall(toolCall: PersistedModelToolCall): Promise<unknown> {
+	private async executeToolCall(
+		toolCall: PersistedModelToolCall,
+	): Promise<{ output: unknown; reused: boolean }> {
 		const toolDefinition = getToolDefinition(toolCall.name, this.tools);
 		const cacheKey =
 			toolDefinition.deduplicate === true
@@ -163,6 +190,7 @@ export class ToolRunner {
 		const previousResult =
 			cacheKey === undefined ? undefined : this.toolResultReferences.get(cacheKey);
 		let output: unknown;
+		const reused = previousResult !== undefined;
 
 		if (previousResult === undefined) {
 			const result = await this.dependencies.toolExecutor.execute({
@@ -182,7 +210,33 @@ export class ToolRunner {
 			this.toolResultReferences.clear();
 		}
 
-		return output;
+		return { output, reused };
+	}
+
+	private recordToolExecution(metric: Parameters<AgentTurnMetricsPort['recordToolExecution']>[0]) {
+		try {
+			this.dependencies.turnMetrics?.recordToolExecution(metric);
+		} catch {
+			// Diagnostics must not change tool behavior.
+		}
+	}
+
+	private elapsedMilliseconds(startedAt: number | undefined): number {
+		if (startedAt === undefined || this.dependencies.monotonicClock === undefined) {
+			return 0;
+		}
+
+		const completedAt = this.readMonotonicClock();
+
+		return completedAt === undefined ? 0 : Math.max(0, completedAt - startedAt);
+	}
+
+	private readMonotonicClock(): number | undefined {
+		try {
+			return this.dependencies.monotonicClock?.nowMilliseconds();
+		} catch {
+			return undefined;
+		}
 	}
 
 	private async appendToolCallRequested(

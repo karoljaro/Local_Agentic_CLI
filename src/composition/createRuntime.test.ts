@@ -13,6 +13,7 @@ describe('createRuntime', () => {
 		});
 
 		expect(runtime.getModelName()).toBe('initial-model');
+		expect(runtime.getAgentMetrics()).toEqual({ completedTurns: [] });
 		expect(runtime.workspacePath).toBe(process.cwd());
 		expect(runtime.switchModel('  next-model  ')).toBe('next-model');
 		expect(runtime.getModelName()).toBe('next-model');

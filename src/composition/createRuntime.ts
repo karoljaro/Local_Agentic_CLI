@@ -2,6 +2,10 @@ import type { IdGeneratorPort } from '@/application/ports/IdGeneratorPort';
 import type { ListModelsResult } from '@/application/ports/ModelCatalogPort';
 import type { UnloadModelInput } from '@/application/ports/ModelPort';
 import { ContextBuilder } from '@/application/services/ContextBuilder';
+import {
+	InMemoryAgentMetrics,
+	type AgentMetricsSnapshot,
+} from '@/application/services/InMemoryAgentMetrics';
 import { SessionStateCache } from '@/application/services/SessionStateCache';
 import { ListSessionEvents } from '@/application/use-cases/ListSessionEvents';
 import { ListSessions } from '@/application/use-cases/ListSessions';
@@ -14,9 +18,12 @@ import {
 import { createLocalToolExecutor } from '@/composition/factories/createLocalToolExecutor';
 import { JsonlSessionStore } from '@/infrastructure/persistence/JsonlSessionStore';
 import { BunUuidV7IdGenerator } from '@/infrastructure/runtime/BunUuidV7IdGenerator';
+import { PerformanceMonotonicClock } from '@/infrastructure/runtime/PerformanceMonotonicClock';
 import { TemporalClock } from '@/infrastructure/runtime/TemporalClock';
+import type { SessionId } from '@/domain/Ids';
 
 export type { RuntimeListModelsOptions } from '@/composition/model/OllamaModelRuntime';
+export type { AgentMetricsSnapshot } from '@/application/services/InMemoryAgentMetrics';
 
 export type Runtime = {
 	runAgentTurn: RunAgentTurn;
@@ -25,6 +32,7 @@ export type Runtime = {
 	idGenerator: IdGeneratorPort;
 	workspacePath: string;
 	getModelName: () => string;
+	getAgentMetrics: (sessionId?: SessionId) => AgentMetricsSnapshot;
 	listModels: (options?: RuntimeListModelsOptions) => Promise<ListModelsResult>;
 	unloadCurrentModel: (input?: UnloadModelInput) => Promise<void>;
 	switchModel: (modelName: string) => string;
@@ -36,6 +44,8 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 	const modelRuntime = new OllamaModelRuntime(config);
 	const idGenerator = new BunUuidV7IdGenerator();
 	const clock = new TemporalClock();
+	const monotonicClock = new PerformanceMonotonicClock();
+	const agentMetrics = new InMemoryAgentMetrics();
 	const toolExecutor = createLocalToolExecutor();
 	let currentToolApprovalHandler: ToolApprovalHandler = async () => false;
 
@@ -58,6 +68,7 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 		listSessions,
 		workspacePath: process.cwd(),
 		getModelName: () => modelRuntime.getModelName(),
+		getAgentMetrics: (sessionId) => agentMetrics.snapshot(sessionId),
 		listModels: (options) => modelRuntime.listModels(options),
 		unloadCurrentModel: (input) => modelRuntime.unload(input),
 		switchModel: (modelName) => modelRuntime.switchModel(modelName),
@@ -76,6 +87,8 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 			contextBuilder,
 			clock,
 			idGenerator,
+			agentMetrics,
+			monotonicClock,
 			toolExecutor,
 			approveToolCall: (request) => currentToolApprovalHandler(request),
 		}),

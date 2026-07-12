@@ -28,6 +28,7 @@ Important pieces:
 - `AgentLoop`, exported through the existing `RunAgentTurn` use-case name, for model rounds, context, streaming, and stop conditions;
 - `ToolRunner` for tool preparation, approval, execution, per-turn deduplication, and tool lifecycle events;
 - `ContextBuilder`, which keeps the current turn and the newest complete historical turns within a configured character budget;
+- `InMemoryAgentMetrics`, which retains bounded resource summaries for the latest completed turns;
 - `SessionReducer`, which rebuilds chat/model state from durable events;
 - `EditWorkspaceFile`, which owns exact-match replacement and optimistic concurrency policy.
 
@@ -67,6 +68,12 @@ Repeated `list_files` and `search_file` calls within one turn reuse the earlier 
 - runtime methods used by the UI.
 
 This layer is the right place for dependency wiring. The project does not need a DI container for the current scope.
+
+`runtime.getAgentMetrics(sessionId?)` exposes diagnostics for the latest 100 completed turns. Each
+summary includes model round count, total/max serialized model-input characters, and total/max tool
+output characters and execution time, globally and per tool. Request size is measured before Ollama
+mapping and excludes `AbortSignal`; tool time excludes approval wait. Metrics are process-local,
+are not appended to session JSONL, and diagnostic failures are isolated from agent behavior.
 
 ### Presentation
 

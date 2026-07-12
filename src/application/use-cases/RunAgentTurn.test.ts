@@ -20,7 +20,9 @@ import { collectAsyncIterable } from '@/test-support/collectAsyncIterable';
 import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
 import type { ModelStreamChunk } from '../ports/ModelPort';
+import type { MonotonicClockPort } from '../ports/MonotonicClockPort';
 import { ContextBuilder } from '../services/ContextBuilder';
+import { InMemoryAgentMetrics } from '../services/InMemoryAgentMetrics';
 import { reduceAgentState } from '../services/SessionReducer';
 import {
 	RunAgentTurn,
@@ -246,6 +248,20 @@ class FixedClock implements ClockPort {
 	}
 }
 
+class SequenceMonotonicClock implements MonotonicClockPort {
+	constructor(private readonly values: number[]) {}
+
+	nowMilliseconds(): number {
+		const value = this.values.shift();
+
+		if (value === undefined) {
+			throw new Error('No monotonic clock value configured.');
+		}
+
+		return value;
+	}
+}
+
 class SequenceIdGenerator implements IdGeneratorPort {
 	private nextNumber = 1;
 
@@ -271,6 +287,8 @@ type RunAgentTurnHarnessOptions = {
 	toolExecutor?: RecordingToolExecutor;
 	approveToolCall?: RunAgentTurnDependencies['approveToolCall'];
 	maxContextCharacters?: number;
+	agentMetrics?: RunAgentTurnDependencies['agentMetrics'];
+	monotonicClock?: RunAgentTurnDependencies['monotonicClock'];
 };
 
 const createRunAgentTurnHarness = ({
@@ -278,6 +296,8 @@ const createRunAgentTurnHarness = ({
 	toolExecutor,
 	approveToolCall,
 	maxContextCharacters,
+	agentMetrics,
+	monotonicClock,
 }: RunAgentTurnHarnessOptions) => {
 	const sessionStore = new InMemorySessionStore();
 	const sessionId = asSessionId('session-1');
@@ -292,6 +312,8 @@ const createRunAgentTurnHarness = ({
 		idGenerator: new SequenceIdGenerator(),
 		...(toolExecutor === undefined ? {} : { toolExecutor }),
 		...(approveToolCall === undefined ? {} : { approveToolCall }),
+		...(agentMetrics === undefined ? {} : { agentMetrics }),
+		...(monotonicClock === undefined ? {} : { monotonicClock }),
 	};
 
 	return {
@@ -370,6 +392,70 @@ describe('RunAgentTurn', () => {
 			expect.objectContaining({ role: 'assistant', content: 'First response.' }),
 			expect.objectContaining({ role: 'user', content: 'Second prompt' }),
 		]);
+	});
+
+	test('records model rounds, request sizes, and tool resource metrics', async () => {
+		const agentMetrics = new InMemoryAgentMetrics();
+		const model = new ScriptedModel([
+			toolCallResponse([readFileToolCall('README.md')]),
+			textResponse('Done.'),
+		]);
+		const { sessionId, useCase } = createRunAgentTurnHarness({
+			model,
+			toolExecutor: createReadToolExecutor(),
+			agentMetrics,
+			monotonicClock: new SequenceMonotonicClock([10, 15]),
+		});
+
+		await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Read the file' }));
+
+		const turn = agentMetrics.snapshot(sessionId).completedTurns[0];
+		expect(turn).toMatchObject({
+			sessionId,
+			modelRounds: 2,
+			tools: {
+				executions: 1,
+				failed: 0,
+				reused: 0,
+				durationMs: { total: 5, max: 5 },
+			},
+		});
+		expect(turn?.modelRequestCharacters.total).toBeGreaterThan(0);
+		expect(turn?.modelRequestCharacters.max).toBeGreaterThan(0);
+		expect(turn?.tools.outputCharacters.total).toBeGreaterThan(0);
+	});
+
+	test('does not change turn behavior when diagnostics fail', async () => {
+		const model = new ScriptedModel([
+			toolCallResponse([readFileToolCall('README.md')]),
+			textResponse('Done.'),
+		]);
+		const { sessionId, useCase } = createRunAgentTurnHarness({
+			model,
+			toolExecutor: createReadToolExecutor(),
+			agentMetrics: {
+				startTurn: () => ({
+					recordModelRequest: () => {
+						throw new Error('metrics failed');
+					},
+					recordToolExecution: () => {
+						throw new Error('metrics failed');
+					},
+					complete: () => {
+						throw new Error('metrics failed');
+					},
+				}),
+			},
+			monotonicClock: {
+				nowMilliseconds: () => {
+					throw new Error('clock failed');
+				},
+			},
+		});
+
+		await expect(
+			collectAsyncIterable(useCase.run({ sessionId, prompt: 'Read the file' })),
+		).resolves.toEqual([{ contentDelta: 'Done.' }]);
 	});
 
 	test('passes an abort signal to the model request', async () => {

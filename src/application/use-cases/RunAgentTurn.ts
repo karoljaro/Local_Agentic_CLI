@@ -8,8 +8,10 @@ import type { SessionId } from '@/domain/Ids';
 import type { ModelMessage } from '@/domain/ModelMessage';
 import type { ModelToolCall } from '@/domain/Tool';
 import type { ClockPort } from '../ports/ClockPort';
+import type { AgentMetricsPort, AgentTurnMetricsPort } from '../ports/AgentMetricsPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
 import type { ModelChatInput, ModelPort } from '../ports/ModelPort';
+import type { MonotonicClockPort } from '../ports/MonotonicClockPort';
 import type { SessionStorePort } from '../ports/SessionStorePort';
 import type { ToolExecutorPort } from '../ports/ToolExecutorPort';
 import { ContextBudgetExceededError, type ContextBuilder } from '../services/ContextBuilder';
@@ -48,6 +50,8 @@ export type RunAgentTurnDependencies = {
 	idGenerator: IdGeneratorPort;
 	toolExecutor?: ToolExecutorPort;
 	approveToolCall?: ToolApprovalHandler;
+	agentMetrics?: AgentMetricsPort;
+	monotonicClock?: MonotonicClockPort;
 };
 
 export class AgentLoop {
@@ -61,11 +65,24 @@ export class AgentLoop {
 	}
 
 	async *run(input: RunAgentTurnInput): AsyncIterable<AgentTurnChunk> {
-		const { sessionId, prompt, modelName, signal } = input;
-
-		if (prompt.trim().length === 0) {
+		if (input.prompt.trim().length === 0) {
 			throw new Error('Prompt cannot be empty.');
 		}
+
+		const turnMetrics = startTurnMetrics(this.dependencies.agentMetrics, input.sessionId);
+
+		try {
+			yield* this.runTurn(input, turnMetrics);
+		} finally {
+			completeTurnMetrics(turnMetrics);
+		}
+	}
+
+	private async *runTurn(
+		input: RunAgentTurnInput,
+		turnMetrics: AgentTurnMetricsPort | undefined,
+	): AsyncIterable<AgentTurnChunk> {
+		const { sessionId, prompt, modelName, signal } = input;
 
 		const promptEvent: PromptSubmitted = {
 			id: this.dependencies.idGenerator.nextEventId(),
@@ -84,19 +101,31 @@ export class AgentLoop {
 		const { messages } = this.dependencies.contextBuilder.build(state);
 
 		if (this.dependencies.toolExecutor === undefined) {
-			yield* this.runStreamingModelTurn(sessionId, messages, signal);
+			yield* this.runStreamingModelTurn(sessionId, messages, signal, turnMetrics);
 			return;
 		}
 
-		yield* this.runWithTools(sessionId, messages, signal, this.dependencies.toolExecutor);
+		yield* this.runWithTools(
+			sessionId,
+			messages,
+			signal,
+			this.dependencies.toolExecutor,
+			turnMetrics,
+		);
 	}
 
 	private async *runStreamingModelTurn(
 		sessionId: SessionId,
 		messages: ModelMessage[],
 		signal: AbortSignal | undefined,
+		turnMetrics: AgentTurnMetricsPort | undefined,
 	): AsyncIterable<AgentTurnChunk> {
-		const result = yield* this.readModelResponse(sessionId, withSignal({ messages }, signal), true);
+		const result = yield* this.readModelResponse(
+			sessionId,
+			withSignal({ messages }, signal),
+			true,
+			turnMetrics,
+		);
 
 		await this.appendAssistantCompleted(sessionId, toContent(result));
 	}
@@ -106,6 +135,7 @@ export class AgentLoop {
 		messages: ModelMessage[],
 		signal: AbortSignal | undefined,
 		toolExecutor: ToolExecutorPort,
+		turnMetrics: AgentTurnMetricsPort | undefined,
 	): AsyncIterable<AgentTurnChunk> {
 		const toolRunner = new ToolRunner({
 			sessionStore: this.sessionStore,
@@ -115,11 +145,15 @@ export class AgentLoop {
 			...(this.dependencies.approveToolCall === undefined
 				? {}
 				: { approveToolCall: this.dependencies.approveToolCall }),
+			...(turnMetrics === undefined ? {} : { turnMetrics }),
+			...(this.dependencies.monotonicClock === undefined
+				? {}
+				: { monotonicClock: this.dependencies.monotonicClock }),
 		});
 		const tools = toolRunner.listTools();
 
 		if (tools.length === 0) {
-			yield* this.runStreamingModelTurn(sessionId, messages, signal);
+			yield* this.runStreamingModelTurn(sessionId, messages, signal, turnMetrics);
 			return;
 		}
 
@@ -131,6 +165,7 @@ export class AgentLoop {
 				sessionId,
 				withSignal({ messages: currentMessages, tools }, signal),
 				false,
+				turnMetrics,
 			);
 
 			if (result.toolCalls.length === 0) {
@@ -209,9 +244,11 @@ export class AgentLoop {
 		sessionId: SessionId,
 		input: ModelChatInput,
 		streamContent: boolean,
+		turnMetrics: AgentTurnMetricsPort | undefined,
 	): AsyncGenerator<AgentTurnChunk, StreamedModelResponse> {
 		const contentDeltas: string[] = [];
 		const toolCalls: ModelToolCall[] = [];
+		recordModelRequestMetric(turnMetrics, measureModelRequestCharacters(input));
 
 		try {
 			for await (const chunk of this.dependencies.model.streamChat(input)) {
@@ -309,3 +346,44 @@ const withSignal = (
 
 const toError = (caughtError: unknown): Error =>
 	caughtError instanceof Error ? caughtError : new Error(String(caughtError));
+
+const startTurnMetrics = (
+	agentMetrics: AgentMetricsPort | undefined,
+	sessionId: SessionId,
+): AgentTurnMetricsPort | undefined => {
+	try {
+		return agentMetrics?.startTurn(sessionId);
+	} catch {
+		return undefined;
+	}
+};
+
+const completeTurnMetrics = (turnMetrics: AgentTurnMetricsPort | undefined): void => {
+	try {
+		turnMetrics?.complete();
+	} catch {
+		// Diagnostics must not change turn behavior.
+	}
+};
+
+const recordModelRequestMetric = (
+	turnMetrics: AgentTurnMetricsPort | undefined,
+	requestCharacters: number,
+): void => {
+	try {
+		turnMetrics?.recordModelRequest(requestCharacters);
+	} catch {
+		// Diagnostics must not change turn behavior.
+	}
+};
+
+const measureModelRequestCharacters = (input: ModelChatInput): number => {
+	try {
+		return JSON.stringify({
+			messages: input.messages,
+			...(input.tools === undefined ? {} : { tools: input.tools }),
+		}).length;
+	} catch {
+		return 0;
+	}
+};

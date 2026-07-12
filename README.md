@@ -28,6 +28,7 @@ Implemented:
 - multi-step tool loop with an iteration limit
 - per-turn deduplication for repeated `list_files` and `search_file` calls
 - one Zod-backed registry for tool schemas, validation, execution, approval, and cache policy
+- bounded in-memory diagnostics for model rounds, request sizes, and tool time/output sizes
 - workspace tools:
   - `list_files`
   - `search_file`
