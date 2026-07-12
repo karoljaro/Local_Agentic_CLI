@@ -12,5 +12,6 @@ export type ToolExecutionResult = {
 
 export interface ToolExecutorPort {
 	listTools(): ToolDefinition[];
+	prepare(request: ToolExecutionRequest): ToolExecutionRequest;
 	execute(request: ToolExecutionRequest): Promise<ToolExecutionResult>;
 }

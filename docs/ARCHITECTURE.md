@@ -40,7 +40,7 @@ Application code should depend on ports and domain types, not concrete adapters.
 - `JsonlSessionStore` for `.agent/sessions/<session-id>/events.jsonl`;
 - `NodeWorkspaceFileSystem` for workspace file access;
 - `RipgrepSearch` for content search;
-- `LocalToolExecutor` and tool providers for model-visible workspace tools.
+- `LocalToolRegistry` and local tool definitions for model-visible workspace tools.
 
 Read-only tools run automatically. Mutating tools currently require approval:
 
@@ -48,6 +48,7 @@ Read-only tools run automatically. Mutating tools currently require approval:
 - mutating: `create_file`, `edit_file`.
 
 Tool results are atomic: a tool call is validated, executed, and only then appended to model context as a complete result.
+Each local tool owns one Zod input schema, its execution function, and approval/cache metadata. The registry generates the JSON Schema sent to Ollama from that same input schema and prepares every complete tool-call batch before execution starts.
 `read_file` bounds each result by line count and character count, returning range metadata for continuation.
 `search_file` parses ripgrep NDJSON incrementally and stops the process after detecting that the bounded result is truncated.
 Repeated `list_files` and `search_file` calls within one turn reuse the earlier result through a short persisted tool-call reference. `read_file` is always executed again, and successful workspace mutations clear the references.
@@ -60,7 +61,7 @@ Repeated `list_files` and `search_file` calls within one turn reuse the earlier 
 - clock and id generator;
 - Ollama model adapter;
 - JSONL session store;
-- local tool executor factory;
+- local tool registry factory;
 - runtime methods used by the UI.
 
 This layer is the right place for dependency wiring. The project does not need a DI container for the current scope.
@@ -118,9 +119,11 @@ Keep these boundaries stable while adding features:
 New tools should usually be added by:
 
 1. adding or reusing an application use-case;
-2. adding an infrastructure provider for model input parsing and tool output;
-3. registering the provider in `LocalToolExecutor`;
-4. adding focused tests.
+2. defining one local tool with its Zod input schema, metadata, and execution function;
+3. registering it in the local tool factory;
+4. adding focused schema and execution tests.
+
+Input schemas do not replace filesystem safety. Workspace adapters still enforce path containment, symlink handling, file-size limits, and write concurrency rules.
 
 ## Intentional Non-Goals For MVP
 

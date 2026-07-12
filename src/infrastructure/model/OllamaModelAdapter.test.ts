@@ -240,6 +240,9 @@ describe('OllamaModelAdapter', () => {
 				const tool = {
 					name: 'read_file',
 					description: 'Read a file',
+					requiresApproval: true,
+					deduplicate: true,
+					invalidatesWorkspaceCache: true,
 					parameters: {
 						type: 'object',
 						required: ['path'],

@@ -10,16 +10,23 @@ type RecordingToolExecutorHandler = (
 	requests: readonly ToolExecutionRequest[],
 ) => Promise<ToolExecutionResult> | ToolExecutionResult;
 
+type RecordingToolExecutorPrepare = (request: ToolExecutionRequest) => ToolExecutionRequest;
+
 export class RecordingToolExecutor implements ToolExecutorPort {
 	readonly receivedRequests: ToolExecutionRequest[] = [];
 
 	constructor(
 		private readonly tools: ToolDefinition[],
 		private readonly handler: RecordingToolExecutorHandler,
+		private readonly prepareRequest: RecordingToolExecutorPrepare = (request) => request,
 	) {}
 
 	listTools(): ToolDefinition[] {
 		return this.tools;
+	}
+
+	prepare(request: ToolExecutionRequest): ToolExecutionRequest {
+		return this.prepareRequest(request);
 	}
 
 	async execute(request: ToolExecutionRequest): Promise<ToolExecutionResult> {

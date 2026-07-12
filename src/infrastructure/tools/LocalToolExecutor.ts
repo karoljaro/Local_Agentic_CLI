@@ -4,47 +4,81 @@ import type {
 	ToolExecutorPort,
 } from '@/application/ports/ToolExecutorPort';
 import type { ToolDefinition } from '@/domain/Tool';
-import { CREATE_FILE_TOOL_NAME, type CreateFileProvider } from './providers/CreateFileProvider';
-import { EDIT_FILE_TOOL_NAME, type EditFileProvider } from './providers/EditFileProvider';
-import { LIST_FILES_TOOL_NAME, type ListFilesProvider } from './providers/ListFilesProvider';
-import { READ_FILE_TOOL_NAME, type ReadFileProvider } from './providers/ReadFileProvider';
-import { SEARCH_FILE_TOOL_NAME, type SearchFileProvider } from './providers/SearchFileProvider';
+import { z } from 'zod';
+import type { LocalTool } from './LocalTool';
 
-type LocalToolExecutorDependencies = {
-	listFilesProvider: ListFilesProvider;
-	readFileProvider: ReadFileProvider;
-	searchFileProvider: SearchFileProvider;
-	createFileProvider: CreateFileProvider;
-	editFileProvider: EditFileProvider;
-};
+export class LocalToolRegistry implements ToolExecutorPort {
+	private readonly toolsByName: ReadonlyMap<string, LocalTool>;
 
-export class LocalToolExecutor implements ToolExecutorPort {
-	constructor(private readonly dependencies: LocalToolExecutorDependencies) {}
+	constructor(private readonly tools: readonly LocalTool[]) {
+		const toolsByName = new Map<string, LocalTool>();
+
+		for (const tool of tools) {
+			if (toolsByName.has(tool.name)) {
+				throw new Error(`Duplicate local tool: ${tool.name}`);
+			}
+
+			toolsByName.set(tool.name, tool);
+		}
+
+		this.toolsByName = toolsByName;
+	}
 
 	listTools(): ToolDefinition[] {
-		return [
-			this.dependencies.listFilesProvider.getToolDefinition(),
-			this.dependencies.readFileProvider.getToolDefinition(),
-			this.dependencies.searchFileProvider.getToolDefinition(),
-			this.dependencies.createFileProvider.getToolDefinition(),
-			this.dependencies.editFileProvider.getToolDefinition(),
-		];
+		return this.tools.map((tool) => toToolDefinition(tool));
+	}
+
+	prepare(request: ToolExecutionRequest): ToolExecutionRequest {
+		const tool = this.getTool(request.toolName);
+
+		try {
+			return {
+				toolName: tool.name,
+				toolInput: tool.parse(request.toolInput),
+			};
+		} catch (caughtError) {
+			if (caughtError instanceof z.ZodError) {
+				throw new Error(`Invalid arguments for tool ${tool.name}: ${z.prettifyError(caughtError)}`);
+			}
+
+			throw caughtError;
+		}
 	}
 
 	async execute(request: ToolExecutionRequest): Promise<ToolExecutionResult> {
-		switch (request.toolName) {
-			case LIST_FILES_TOOL_NAME:
-				return this.dependencies.listFilesProvider.execute(request.toolInput);
-			case READ_FILE_TOOL_NAME:
-				return this.dependencies.readFileProvider.execute(request.toolInput);
-			case SEARCH_FILE_TOOL_NAME:
-				return this.dependencies.searchFileProvider.execute(request.toolInput);
-			case CREATE_FILE_TOOL_NAME:
-				return this.dependencies.createFileProvider.execute(request.toolInput);
-			case EDIT_FILE_TOOL_NAME:
-				return this.dependencies.editFileProvider.execute(request.toolInput);
-			default:
-				throw new Error(`Unknown tool: ${request.toolName}`);
+		const prepared = this.prepare(request);
+		const tool = this.getTool(prepared.toolName);
+
+		return {
+			toolName: tool.name,
+			output: await tool.execute(prepared.toolInput),
+		};
+	}
+
+	private getTool(toolName: string): LocalTool {
+		const tool = this.toolsByName.get(toolName);
+
+		if (tool === undefined) {
+			throw new Error(`Unknown tool requested by model: ${toolName}`);
 		}
+
+		return tool;
 	}
 }
+
+const toToolDefinition = (tool: LocalTool): ToolDefinition => {
+	const { $schema: _, ...parameters } = z.toJSONSchema(tool.inputSchema);
+
+	if (parameters['type'] === 'object' && parameters['required'] === undefined) {
+		parameters['required'] = [];
+	}
+
+	return {
+		name: tool.name,
+		description: tool.description,
+		parameters,
+		...(tool.requiresApproval === true ? { requiresApproval: true } : {}),
+		...(tool.deduplicate === true ? { deduplicate: true } : {}),
+		...(tool.invalidatesWorkspaceCache === true ? { invalidatesWorkspaceCache: true } : {}),
+	};
+};

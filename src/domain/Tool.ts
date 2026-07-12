@@ -5,6 +5,8 @@ export type ToolDefinition = {
 	description: string;
 	parameters: Record<string, unknown>;
 	requiresApproval?: boolean;
+	deduplicate?: boolean;
+	invalidatesWorkspaceCache?: boolean;
 };
 
 export type ModelToolCall = {

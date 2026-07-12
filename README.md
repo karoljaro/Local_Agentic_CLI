@@ -27,6 +27,7 @@ Implemented:
 - tool calling through Ollama
 - multi-step tool loop with an iteration limit
 - per-turn deduplication for repeated `list_files` and `search_file` calls
+- one Zod-backed registry for tool schemas, validation, execution, approval, and cache policy
 - workspace tools:
   - `list_files`
   - `search_file`

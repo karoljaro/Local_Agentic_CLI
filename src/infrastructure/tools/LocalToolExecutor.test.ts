@@ -11,13 +11,14 @@ const createTempWorkspace = async (): Promise<{
 	cleanup: () => Promise<void>;
 }> => createTempDirectory('local-tool-executor-');
 
-describe('LocalToolExecutor', () => {
+describe('LocalToolRegistry', () => {
 	test('lists local tool definitions', () => {
 		const executor = createLocalToolExecutor();
 
 		expect(executor.listTools()).toEqual([
 			{
 				name: 'list_files',
+				deduplicate: true,
 				description:
 					'Recursively list file paths in the workspace or under an optional relative path. Use this to discover project structure or locate files by name or extension. Do not use it to search file contents; use search_file instead.',
 				parameters: {
@@ -27,6 +28,7 @@ describe('LocalToolExecutor', () => {
 					properties: {
 						path: {
 							type: 'string',
+							minLength: 1,
 							description:
 								'Optional relative file or directory path. Defaults to the workspace root.',
 						},
@@ -44,16 +46,19 @@ describe('LocalToolExecutor', () => {
 					properties: {
 						path: {
 							type: 'string',
+							minLength: 1,
 							description: 'Relative path to a file in the current workspace.',
 						},
 						startLine: {
 							type: 'integer',
 							minimum: 1,
+							maximum: Number.MAX_SAFE_INTEGER,
 							description: 'Optional one-based first line. Defaults to 1.',
 						},
 						endLine: {
 							type: 'integer',
 							minimum: 1,
+							maximum: Number.MAX_SAFE_INTEGER,
 							description: 'Optional one-based last line, inclusive.',
 						},
 					},
@@ -61,6 +66,7 @@ describe('LocalToolExecutor', () => {
 			},
 			{
 				name: 'search_file',
+				deduplicate: true,
 				description:
 					'Search workspace files for exact text. Use | for alternatives. Returns a bounded list of paths, line numbers, and excerpts; truncated indicates more matches exist.',
 				parameters: {
@@ -70,6 +76,7 @@ describe('LocalToolExecutor', () => {
 					properties: {
 						query: {
 							type: 'string',
+							minLength: 1,
 							description: 'Exact text or | separated alternatives.',
 						},
 					},
@@ -80,6 +87,7 @@ describe('LocalToolExecutor', () => {
 				description:
 					'Create a new UTF-8 file in an existing workspace directory. Fails if the file already exists.',
 				requiresApproval: true,
+				invalidatesWorkspaceCache: true,
 				parameters: {
 					type: 'object',
 					required: ['path', 'content'],
@@ -87,6 +95,7 @@ describe('LocalToolExecutor', () => {
 					properties: {
 						path: {
 							type: 'string',
+							minLength: 1,
 							description: 'The path for the new file, relative to the workspace root.',
 						},
 						content: {
@@ -101,6 +110,7 @@ describe('LocalToolExecutor', () => {
 				description:
 					'Replace exact text in a UTF-8 file in the current workspace. Use this after reading the target file.',
 				requiresApproval: true,
+				invalidatesWorkspaceCache: true,
 				parameters: {
 					type: 'object',
 					required: ['path', 'oldText', 'newText'],
@@ -108,6 +118,7 @@ describe('LocalToolExecutor', () => {
 					properties: {
 						path: {
 							type: 'string',
+							minLength: 1,
 							description: 'The path to the file to edit, relative to the workspace root.',
 						},
 						newText: {
@@ -116,6 +127,7 @@ describe('LocalToolExecutor', () => {
 						},
 						oldText: {
 							type: 'string',
+							minLength: 1,
 							description:
 								'The exact text to replace. The edit will only be applied if this text appears exactly once.',
 						},
@@ -123,6 +135,32 @@ describe('LocalToolExecutor', () => {
 				},
 			},
 		]);
+	});
+
+	test('uses the registered schema to normalize and reject tool input', () => {
+		const executor = createLocalToolExecutor();
+
+		expect(
+			executor.prepare({
+				toolName: 'search_file',
+				toolInput: { query: '  needle  ' },
+			}),
+		).toEqual({
+			toolName: 'search_file',
+			toolInput: { query: 'needle' },
+		});
+		expect(() =>
+			executor.prepare({
+				toolName: 'search_file',
+				toolInput: { query: 'needle', unexpected: true },
+			}),
+		).toThrow('Invalid arguments for tool search_file');
+		expect(() =>
+			executor.prepare({
+				toolName: 'missing_tool',
+				toolInput: {},
+			}),
+		).toThrow('Unknown tool requested by model: missing_tool');
 	});
 
 	test('lists workspace file paths', async () => {

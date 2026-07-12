@@ -1,53 +1,21 @@
-import type { ToolExecutionResult } from '@/application/ports/ToolExecutorPort';
 import type { SearchWorkspaceFiles } from '@/application/use-cases/file-operations/SearchWorkspaceFiles';
-import type { ToolDefinition } from '@/domain/Tool';
+import { z } from 'zod';
+import { defineLocalTool, type LocalTool } from '../LocalTool';
 
 export const SEARCH_FILE_TOOL_NAME = 'search_file';
 
-const TOOL_DEFINITION = {
-	name: SEARCH_FILE_TOOL_NAME,
-	description:
-		'Search workspace files for exact text. Use | for alternatives. Returns a bounded list of paths, line numbers, and excerpts; truncated indicates more matches exist.',
-	parameters: {
-		type: 'object',
-		required: ['query'],
-		additionalProperties: false,
-		properties: {
-			query: {
-				type: 'string',
-				description: 'Exact text or | separated alternatives.',
-			},
-		},
-	},
-} satisfies ToolDefinition;
-
-export class SearchFileProvider {
-	constructor(private readonly searchWorkspaceFiles: SearchWorkspaceFiles) {}
-
-	getToolDefinition(): ToolDefinition {
-		return TOOL_DEFINITION;
-	}
-
-	async execute(toolInput: unknown): Promise<ToolExecutionResult> {
-		const query = parseQuery(toolInput);
-
-		return {
-			toolName: SEARCH_FILE_TOOL_NAME,
-			output: await this.searchWorkspaceFiles.execute({ query }),
-		};
-	}
-}
-
-const parseQuery = (input: unknown): string => {
-	if (
-		typeof input !== 'object' ||
-		input === null ||
-		!('query' in input) ||
-		typeof input.query !== 'string' ||
-		input.query.trim() === ''
-	) {
-		throw new Error('search_file requires a non-empty string query.');
-	}
-
-	return input.query.trim();
-};
+export const searchFileTool = (searchWorkspaceFiles: SearchWorkspaceFiles): LocalTool =>
+	defineLocalTool({
+		name: SEARCH_FILE_TOOL_NAME,
+		description:
+			'Search workspace files for exact text. Use | for alternatives. Returns a bounded list of paths, line numbers, and excerpts; truncated indicates more matches exist.',
+		deduplicate: true,
+		inputSchema: z.strictObject({
+			query: z
+				.string()
+				.trim()
+				.min(1, 'search_file requires a non-empty string query.')
+				.describe('Exact text or | separated alternatives.'),
+		}),
+		execute: async ({ query }) => searchWorkspaceFiles.execute({ query }),
+	});

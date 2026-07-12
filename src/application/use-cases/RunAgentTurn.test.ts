@@ -74,6 +74,7 @@ const looseReadToolDefinition: ToolDefinition = {
 const searchToolDefinition: ToolDefinition = {
 	name: 'search_file',
 	description: 'Search files',
+	deduplicate: true,
 	parameters: {
 		type: 'object',
 		required: ['query'],
@@ -89,6 +90,7 @@ const editToolDefinition: ToolDefinition = {
 	name: 'edit_file',
 	description: 'Edit a file',
 	requiresApproval: true,
+	invalidatesWorkspaceCache: true,
 	parameters: {
 		type: 'object',
 		required: ['path', 'oldText', 'newText'],
@@ -110,6 +112,7 @@ const looseEditToolDefinition: ToolDefinition = {
 	name: 'edit_file',
 	description: 'Edit a file',
 	requiresApproval: true,
+	invalidatesWorkspaceCache: true,
 	parameters: {},
 };
 
@@ -133,30 +136,46 @@ const createEditToolExecutor = (): RecordingToolExecutor =>
 	}));
 
 const createSearchReadToolExecutor = (): RecordingToolExecutor =>
-	new RecordingToolExecutor([searchToolDefinition, readToolDefinition], (request) => {
-		if (request.toolName === 'search_file') {
+	new RecordingToolExecutor(
+		[searchToolDefinition, readToolDefinition],
+		(request) => {
+			if (request.toolName === 'search_file') {
+				return {
+					toolName: request.toolName,
+					output: {
+						matches: [
+							{
+								path: 'src/users.py',
+								line: 10,
+								text: 'def find_by_email(self, email: str) -> User | None:',
+							},
+						],
+					},
+				};
+			}
+
 			return {
 				toolName: request.toolName,
 				output: {
-					matches: [
-						{
-							path: 'src/users.py',
-							line: 10,
-							text: 'def find_by_email(self, email: str) -> User | None:',
-						},
-					],
+					path: 'src/users.py',
+					content: 'if user.email.lower() == email.lower():',
 				},
 			};
-		}
+		},
+		(request) => {
+			if (
+				request.toolName === 'search_file' &&
+				(typeof request.toolInput !== 'object' ||
+					request.toolInput === null ||
+					!('query' in request.toolInput) ||
+					typeof request.toolInput.query !== 'string')
+			) {
+				throw new Error('Invalid arguments for tool search_file: "query" must be string.');
+			}
 
-		return {
-			toolName: request.toolName,
-			output: {
-				path: 'src/users.py',
-				content: 'if user.email.lower() == email.lower():',
-			},
-		};
-	});
+			return request;
+		},
+	);
 
 const createSecondReadFailingToolExecutor = (): RecordingToolExecutor =>
 	new RecordingToolExecutor([readToolDefinition], (request, requests) => {
@@ -1202,6 +1221,26 @@ describe('RunAgentTurn', () => {
 				code: 'MODEL_TOOL_CALL_INVALID',
 			},
 		});
+	});
+
+	test('validates a complete tool batch before persisting or executing its first call', async () => {
+		const toolExecutor = createSearchReadToolExecutor();
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
+			model: new ScriptedModel([
+				toolCallResponse([readFileToolCall('README.md'), searchFileToolCall(42)]),
+			]),
+			toolExecutor,
+		});
+
+		await expect(
+			collectAsyncIterable(useCase.run({ sessionId, prompt: 'Read and search' })),
+		).rejects.toThrow('Invalid arguments for tool search_file');
+
+		expect(toolExecutor.receivedRequests).toEqual([]);
+		expect(sessionStore.events.map((event) => event.type)).toEqual([
+			'prompt.submitted',
+			'agent.error',
+		]);
 	});
 
 	test('executes repeated read_file calls instead of serving stale cached content', async () => {

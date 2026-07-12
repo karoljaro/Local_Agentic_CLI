@@ -20,8 +20,6 @@ import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
 import type { ToolExecutorPort } from '../ports/ToolExecutorPort';
 
 const MAX_TOOL_ITERATIONS = 12;
-const DEDUPLICATED_TOOLS = new Set(['list_files', 'search_file']);
-const CACHE_INVALIDATING_TOOLS = new Set(['create_file', 'edit_file']);
 
 type RunAgentTurnInput = {
 	sessionId: SessionId;
@@ -153,8 +151,21 @@ export class RunAgentTurn {
 				return;
 			}
 
+			let preparedToolCalls: ModelToolCall[];
+
 			try {
-				validateToolCalls(result.toolCalls, tools);
+				preparedToolCalls = result.toolCalls.map((toolCall) => {
+					const prepared = toolExecutor.prepare({
+						toolName: toolCall.name,
+						toolInput: toolCall.arguments,
+					});
+
+					return {
+						...toolCall,
+						name: prepared.toolName,
+						arguments: prepared.toolInput,
+					};
+				});
 			} catch (caughtError) {
 				const error = toError(caughtError);
 
@@ -162,7 +173,7 @@ export class RunAgentTurn {
 				throw error;
 			}
 
-			const persistedToolCalls = result.toolCalls.map((toolCall) => ({
+			const persistedToolCalls = preparedToolCalls.map((toolCall) => ({
 				id: this.dependencies.idGenerator.nextToolCallId(),
 				name: toolCall.name,
 				arguments: toolCall.arguments,
@@ -318,9 +329,11 @@ export class RunAgentTurn {
 			await this.dependencies.sessionStore.appendSessionEvent(startedEvent);
 
 			try {
-				const cacheKey = DEDUPLICATED_TOOLS.has(toolName)
-					? JSON.stringify([toolName, toolCall.arguments])
-					: undefined;
+				const toolDefinition = getToolDefinition(toolName, tools);
+				const cacheKey =
+					toolDefinition.deduplicate === true
+						? JSON.stringify([toolName, toolCall.arguments])
+						: undefined;
 				const previousResult =
 					cacheKey === undefined ? undefined : toolResultReferences.get(cacheKey);
 				let output: unknown;
@@ -339,7 +352,7 @@ export class RunAgentTurn {
 					output = createCachedToolOutput(previousResult.sourceToolCallId);
 				}
 
-				if (CACHE_INVALIDATING_TOOLS.has(toolName)) {
+				if (toolDefinition.invalidatesWorkspaceCache === true) {
 					toolResultReferences.clear();
 				}
 
@@ -544,84 +557,15 @@ const toError = (caughtError: unknown): Error =>
 	caughtError instanceof Error ? caughtError : new Error(String(caughtError));
 
 const isApprovalRequired = (toolName: string, tools: ToolDefinition[]): boolean => {
-	return tools.some((tool) => tool.name === toolName && tool.requiresApproval === true);
+	return getToolDefinition(toolName, tools).requiresApproval === true;
 };
 
-const validateToolCalls = (toolCalls: ModelToolCall[], tools: ToolDefinition[]): void => {
-	for (const toolCall of toolCalls) {
-		const tool = tools.find((candidate) => candidate.name === toolCall.name);
+const getToolDefinition = (toolName: string, tools: ToolDefinition[]): ToolDefinition => {
+	const tool = tools.find((candidate) => candidate.name === toolName);
 
-		if (tool === undefined) {
-			throw new Error(`Unknown tool requested by model: ${toolCall.name}`);
-		}
-
-		validateToolArguments(toolCall, tool);
+	if (tool === undefined) {
+		throw new Error(`Unknown tool requested by model: ${toolName}`);
 	}
+
+	return tool;
 };
-
-const validateToolArguments = (toolCall: ModelToolCall, tool: ToolDefinition): void => {
-	if (!isRecord(toolCall.arguments)) {
-		throw new Error(`Invalid arguments for tool ${toolCall.name}: expected an object.`);
-	}
-
-	const required = tool.parameters['required'];
-
-	if (Array.isArray(required)) {
-		for (const propertyName of required) {
-			if (typeof propertyName === 'string' && !Object.hasOwn(toolCall.arguments, propertyName)) {
-				throw new Error(`Invalid arguments for tool ${toolCall.name}: missing "${propertyName}".`);
-			}
-		}
-	}
-
-	const properties = tool.parameters['properties'];
-
-	if (!isRecord(properties)) {
-		return;
-	}
-
-	for (const [propertyName, propertyValue] of Object.entries(toolCall.arguments)) {
-		const propertySchema = properties[propertyName];
-
-		if (propertySchema === undefined) {
-			if (tool.parameters['additionalProperties'] === false) {
-				throw new Error(
-					`Invalid arguments for tool ${toolCall.name}: unexpected "${propertyName}".`,
-				);
-			}
-
-			continue;
-		}
-
-		if (isRecord(propertySchema) && !matchesSchemaType(propertyValue, propertySchema['type'])) {
-			throw new Error(
-				`Invalid arguments for tool ${toolCall.name}: "${propertyName}" must be ${describeSchemaType(propertySchema['type'])}.`,
-			);
-		}
-	}
-};
-
-const matchesSchemaType = (value: unknown, schemaType: unknown): boolean => {
-	switch (schemaType) {
-		case 'array':
-			return Array.isArray(value);
-		case 'boolean':
-			return typeof value === 'boolean';
-		case 'integer':
-			return typeof value === 'number' && Number.isInteger(value);
-		case 'number':
-			return typeof value === 'number' && Number.isFinite(value);
-		case 'object':
-			return isRecord(value);
-		case 'string':
-			return typeof value === 'string';
-		default:
-			return true;
-	}
-};
-
-const describeSchemaType = (schemaType: unknown): string =>
-	typeof schemaType === 'string' ? schemaType : 'a valid value';
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === 'object' && value !== null && !Array.isArray(value);

@@ -6,12 +6,12 @@ import { ListWorkspaceFiles } from '@/application/use-cases/file-operations/List
 import { ReadWorkspaceFile } from '@/application/use-cases/file-operations/ReadWorkspaceFile';
 import { SearchWorkspaceFiles } from '@/application/use-cases/file-operations/SearchWorkspaceFiles';
 import { NodeWorkspaceFileSystem } from '@/infrastructure/file-system/NodeWorkspaceFileSystem';
-import { LocalToolExecutor } from '@/infrastructure/tools/LocalToolExecutor';
-import { CreateFileProvider } from '@/infrastructure/tools/providers/CreateFileProvider';
-import { EditFileProvider } from '@/infrastructure/tools/providers/EditFileProvider';
-import { ListFilesProvider } from '@/infrastructure/tools/providers/ListFilesProvider';
-import { ReadFileProvider } from '@/infrastructure/tools/providers/ReadFileProvider';
-import { SearchFileProvider } from '@/infrastructure/tools/providers/SearchFileProvider';
+import { LocalToolRegistry } from '@/infrastructure/tools/LocalToolExecutor';
+import { createFileTool } from '@/infrastructure/tools/providers/CreateFileProvider';
+import { editFileTool } from '@/infrastructure/tools/providers/EditFileProvider';
+import { listFilesTool } from '@/infrastructure/tools/providers/ListFilesProvider';
+import { readFileTool } from '@/infrastructure/tools/providers/ReadFileProvider';
+import { searchFileTool } from '@/infrastructure/tools/providers/SearchFileProvider';
 import { RipgrepSearch } from '@/infrastructure/tools/ripgrep/RipgrepSearch';
 
 const DEFAULT_MAX_FILE_BYTES = 200_000;
@@ -32,7 +32,7 @@ type LocalToolExecutorOptions = {
 
 export const createLocalToolExecutor = (
 	options: LocalToolExecutorOptions = {},
-): LocalToolExecutor => {
+): LocalToolRegistry => {
 	const workspaceRoot = resolve(options.workspaceRoot ?? process.cwd());
 	const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
 	const workspaceFiles = new NodeWorkspaceFileSystem(workspaceRoot);
@@ -51,21 +51,19 @@ export const createLocalToolExecutor = (
 		throw new Error('Search limits must be positive numbers.');
 	}
 
-	return new LocalToolExecutor({
-		listFilesProvider: new ListFilesProvider(new ListWorkspaceFiles(workspaceFiles), {
+	return new LocalToolRegistry([
+		listFilesTool(new ListWorkspaceFiles(workspaceFiles), {
 			maxEntries: options.maxListFiles ?? DEFAULT_MAX_LIST_FILES,
 		}),
-		readFileProvider: new ReadFileProvider(new ReadWorkspaceFile(workspaceFiles), {
+		readFileTool(new ReadWorkspaceFile(workspaceFiles), {
 			maxFileBytes,
 			maxLines: options.maxReadLines ?? DEFAULT_MAX_READ_LINES,
 			maxCharacters: options.maxReadCharacters ?? DEFAULT_MAX_READ_CHARACTERS,
 		}),
-		searchFileProvider: new SearchFileProvider(
-			new SearchWorkspaceFiles(new RipgrepSearch(searchOptions)),
-		),
-		createFileProvider: new CreateFileProvider(new CreateWorkspaceFile(workspaceFiles), {
+		searchFileTool(new SearchWorkspaceFiles(new RipgrepSearch(searchOptions))),
+		createFileTool(new CreateWorkspaceFile(workspaceFiles), {
 			maxFileBytes,
 		}),
-		editFileProvider: new EditFileProvider(new EditWorkspaceFile(workspaceFiles), { maxFileBytes }),
-	});
+		editFileTool(new EditWorkspaceFile(workspaceFiles), { maxFileBytes }),
+	]);
 };
