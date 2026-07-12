@@ -65,6 +65,14 @@ export const useChatSession = ({
 				return;
 			}
 
+			if (activeTurnRef.current && event.type === 'assistant.tool_calls.completed') {
+				stream.flush();
+				stream.reset();
+				dispatch({ type: 'engine.event', event });
+				dispatch({ type: 'turn.started' });
+				return;
+			}
+
 			if (activeTurnRef.current && event.type === 'agent.error') {
 				activeAgentErrorRef.current = event;
 				return;
@@ -72,7 +80,7 @@ export const useChatSession = ({
 
 			dispatch({ type: 'engine.event', event });
 		});
-	}, [controller]);
+	}, [controller, stream]);
 
 	useEffect(() => {
 		let cancelled = false;

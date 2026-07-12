@@ -1,5 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInput, usePaste, type Key } from 'ink';
+import {
+	getCommandSuggestions,
+	isCommandMenuInput,
+	type CommandDefinition,
+} from '../commands/commands';
 
 export type ComposerState = {
 	value: string;
@@ -16,7 +21,12 @@ const EMPTY_COMPOSER: ComposerState = { value: '', cursorIndex: 0 };
 
 export const useComposer = ({ isActive, canSubmit, onSubmit }: UseComposerOptions) => {
 	const [state, setState] = useState<ComposerState>(EMPTY_COMPOSER);
+	const [selectedCommandIndex, setSelectedCommandIndex] = useState(0);
+	const [isCommandMenuDismissed, setCommandMenuDismissed] = useState(false);
 	const submissionLockedRef = useRef(false);
+	const commandSuggestions = useMemo(() => getCommandSuggestions(state.value), [state.value]);
+	const isCommandMenuVisible =
+		isActive && !isCommandMenuDismissed && isCommandMenuInput(state.value);
 
 	useEffect(() => {
 		if (canSubmit) {
@@ -24,21 +34,61 @@ export const useComposer = ({ isActive, canSubmit, onSubmit }: UseComposerOption
 		}
 	}, [canSubmit]);
 
-	const clear = useCallback(() => setState(EMPTY_COMPOSER), []);
+	useEffect(() => {
+		setSelectedCommandIndex((current) =>
+			Math.min(current, Math.max(0, commandSuggestions.length - 1)),
+		);
+	}, [commandSuggestions.length]);
+
+	const clear = useCallback(() => {
+		setState(EMPTY_COMPOSER);
+		setCommandMenuDismissed(false);
+		setSelectedCommandIndex(0);
+	}, []);
 	const setValue = useCallback((value: string) => {
 		setState({ value, cursorIndex: value.length });
+		setCommandMenuDismissed(false);
+		setSelectedCommandIndex(0);
 	}, []);
 	const insert = useCallback((text: string) => {
 		if (text.length > 0) {
 			setState((current) => insertAtCursor(current, text));
+			setCommandMenuDismissed(false);
+			setSelectedCommandIndex(0);
 		}
 	}, []);
 
 	usePaste((text) => insert(normalizePaste(text)), { isActive });
 	useInput(
 		(value, key) => {
+			if (isCommandMenuVisible && key.escape) {
+				setCommandMenuDismissed(true);
+				return;
+			}
+			if (isCommandMenuVisible && key.upArrow) {
+				setSelectedCommandIndex((current) => Math.max(0, current - 1));
+				return;
+			}
+			if (isCommandMenuVisible && key.downArrow) {
+				if (commandSuggestions.length === 0) {
+					return;
+				}
+				setSelectedCommandIndex((current) => Math.min(commandSuggestions.length - 1, current + 1));
+				return;
+			}
+			if (isCommandMenuVisible && key.tab) {
+				const selected = commandSuggestions[selectedCommandIndex];
+				if (selected !== undefined) {
+					setValue(selected.name);
+					setCommandMenuDismissed(true);
+				}
+				return;
+			}
 			if (key.return) {
-				const submitted = state.value.trim();
+				const selectedCommand = isCommandMenuVisible
+					? commandSuggestions[selectedCommandIndex]
+					: undefined;
+				const submitted = selectedCommand?.name ?? state.value.trim();
 				if (submitted.length === 0 || !canSubmit || submissionLockedRef.current) {
 					return;
 				}
@@ -46,6 +96,8 @@ export const useComposer = ({ isActive, canSubmit, onSubmit }: UseComposerOption
 				submissionLockedRef.current = true;
 				if (onSubmit(submitted)) {
 					clear();
+				} else {
+					setCommandMenuDismissed(true);
 				}
 				return;
 			}
@@ -80,10 +132,12 @@ export const useComposer = ({ isActive, canSubmit, onSubmit }: UseComposerOption
 			}
 			if (key.backspace) {
 				setState(deleteBeforeCursor);
+				setCommandMenuDismissed(false);
 				return;
 			}
 			if (key.delete) {
 				setState(deleteAtCursor);
+				setCommandMenuDismissed(false);
 				return;
 			}
 			if (!isControlKey(key)) {
@@ -93,7 +147,22 @@ export const useComposer = ({ isActive, canSubmit, onSubmit }: UseComposerOption
 		{ isActive },
 	);
 
-	return { ...state, clear, setValue };
+	return {
+		...state,
+		clear,
+		setValue,
+		commandMenu: {
+			isVisible: isCommandMenuVisible,
+			items: commandSuggestions,
+			selectedIndex: selectedCommandIndex,
+		},
+	};
+};
+
+export type CommandMenuState = {
+	isVisible: boolean;
+	items: CommandDefinition[];
+	selectedIndex: number;
 };
 
 export const insertAtCursor = (state: ComposerState, text: string): ComposerState => ({

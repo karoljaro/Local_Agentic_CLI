@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { asEventId, asSessionId } from '@/domain/Ids';
+import { asEventId, asSessionId, asToolCallId } from '@/domain/Ids';
 import {
 	agentErrorOccurredEvent,
 	assistantMessageCompletedEvent,
@@ -9,6 +9,7 @@ import {
 	toolCallCompletedEvent,
 	toolCallRequestedEvent,
 	toolCallStartedEvent,
+	toolCallFailedEvent,
 } from '@/test-support/AgentEventFixtures';
 import { chatReducer, createChatState, reduceSessionEvents } from './presentationReducer';
 
@@ -61,5 +62,25 @@ describe('presentationReducer', () => {
 		});
 
 		expect(other.history).toHaveLength(1);
+	});
+
+	test('tracks multiple tool calls independently through success and failure', () => {
+		const sessionId = asSessionId('session-1');
+		const firstId = toolCallRequestedEvent({ sessionId }).toolCallId;
+		const secondId = asToolCallId('tool-call-2');
+		const state = reduceSessionEvents(sessionId, [
+			toolCallRequestedEvent({ sessionId, toolCallId: firstId }),
+			toolCallRequestedEvent({ sessionId, toolCallId: secondId, toolName: 'edit_file' }),
+			toolCallCompletedEvent({ sessionId, toolCallId: firstId }),
+			toolCallFailedEvent({
+				sessionId,
+				toolCallId: secondId,
+				toolName: 'edit_file',
+				error: { message: 'denied', code: 'TOOL_APPROVAL_DENIED' },
+			}),
+		]);
+
+		expect(state.activeTools).toEqual([]);
+		expect(state.history.map((entry) => entry.status)).toEqual(['success', 'failure']);
 	});
 });

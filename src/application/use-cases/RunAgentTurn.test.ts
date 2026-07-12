@@ -822,7 +822,7 @@ describe('RunAgentTurn', () => {
 		});
 	});
 
-	test('keeps tool-round text in model context without publishing it as final text', async () => {
+	test('streams tool-round text live and keeps it in model context', async () => {
 		const model = new ScriptedModel([
 			toolCallResponse([readFileToolCall('README.md')], 'I will inspect the file.\n'),
 			textResponse('The file contains hello.'),
@@ -834,7 +834,10 @@ describe('RunAgentTurn', () => {
 
 		const chunks = await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Read README' }));
 
-		expect(chunks).toEqual([{ contentDelta: 'The file contains hello.' }]);
+		expect(chunks).toEqual([
+			{ contentDelta: 'I will inspect the file.\n' },
+			{ contentDelta: 'The file contains hello.' },
+		]);
 		expect(model.receivedInputs[1]?.messages.at(-2)).toMatchObject({
 			role: 'assistant',
 			content: 'I will inspect the file.\n',

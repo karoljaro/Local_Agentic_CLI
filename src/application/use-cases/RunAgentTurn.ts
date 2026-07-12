@@ -164,15 +164,11 @@ export class AgentLoop {
 			const result = yield* this.readModelResponse(
 				sessionId,
 				withSignal({ messages: currentMessages, tools }, signal),
-				false,
+				true,
 				turnMetrics,
 			);
 
 			if (result.toolCalls.length === 0) {
-				for (const contentDelta of result.contentDeltas) {
-					yield { contentDelta };
-				}
-
 				await this.appendAssistantCompleted(sessionId, toContent(result));
 				return;
 			}

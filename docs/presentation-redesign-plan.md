@@ -236,4 +236,61 @@ Verification after stage 3:
 
 ### Stage 4 — command system
 
+Status: complete.
+
+- `COMMANDS` is the sole source for names, usage, descriptions, argument support, and action ids.
+- The parser separates metadata from effects and handles `/model`, `/model <name>`, `/resume`, invalid
+  arguments, and unknown slash commands.
+- The command menu opens for slash input, filters metadata, handles empty results, Up/Down, Tab, Enter,
+  and Escape, and disappears with the composer rather than becoming durable history.
+- A submission lock prevents repeated Enter events. Opening a screen preserves the slash draft; commit
+  clears it, while cancellation restores chat with the draft intact and the menu dismissed.
+
+### Stage 5 — model and resume screens
+
+Status: complete.
+
+- Both screens use the same generic `SelectionScreen` for keyboard ownership, filtering, bounded viewport,
+  loading/submitting/error states, confirmation, and cancellation.
+- Model selection marks the current model and shows available size/quantisation metadata. The old model is
+  unloaded only on commit (not when merely opening the screen), then runtime switches the model.
+- Resume includes New chat and session rows enriched with last durable timestamp and latest prompt preview;
+  corrupt/unreadable individual histories degrade to an id-only row instead of failing the whole list.
+- Resume options sort newest first. Selecting a saved session restores all transcript/tool events and the
+  most recent explicit model. Initial `codesh resume` cannot cancel into a fabricated chat; in-chat resume
+  can always return without changing session/history/draft.
+- Chat state and composer live in the presentation hook above the screen components, so screen swaps do not
+  destroy them.
+
+### Stage 6 — approval and tools
+
+Status: complete.
+
+- Approval defaults to Reject, supports arrow selection + Enter, direct y/n, Esc reject, and optional
+  details with `d`.
+- The default view shows action, primary path/query/resource, decisions, and help only. It does not render
+  old/new file content, full JSON, or diffs.
+- The approval handler owns one pending resolver, rejects a superseded/unmounted request, unregisters from
+  runtime, disables composer/turn shortcuts, and restores focus after resolution.
+- Tool requested/running state is dynamic and concise; completed/failed state becomes stable history.
+  Multiple calls are tracked by `toolCallId`, including independent terminal success/failure.
+
+Additional engine streaming correction discovered during these stages:
+
+- Tool-enabled model rounds previously buffered all content until the round ended, including the final
+  answer. `RunAgentTurn` now yields deltas from every round immediately. A durable
+  `assistant.tool_calls.completed` event is the presentation boundary that promotes intermediate text,
+  clears the active buffer, and starts waiting for the next round. This preserves model context and event
+  semantics while satisfying real-time rendering; the application test explicitly covers it.
+
+Verification after stages 4–6:
+
+- `bun run typecheck`: pass.
+- Presentation plus complete `RunAgentTurn` suite: 48 pass, 0 fail.
+- Includes render tests for model/resume/approval, parser/menu filtering, resume metadata, a multi-tool
+  success/failure sequence, and 31 application agent-turn scenarios.
+- Biome format: pass.
+
+### Stage 7 — Markdown and visual finish
+
 Status: in progress.
