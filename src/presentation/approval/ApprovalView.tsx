@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 
-import { describeToolRequest, formatToolDetails } from '../formatters/tool';
+import { KeyHints } from '../components/Interactive';
+import { formatToolDetails, formatToolName, getPrimaryToolTarget } from '../formatters/tool';
 import type { PendingApproval } from '../types';
 
 type ApprovalViewProps = {
@@ -12,6 +13,7 @@ type ApprovalViewProps = {
 export const ApprovalView = ({ onResolve, request }: ApprovalViewProps) => {
 	const [selected, setSelected] = useState<'approve' | 'reject'>('reject');
 	const [showDetails, setShowDetails] = useState(false);
+	const target = getPrimaryToolTarget(request.toolInput);
 
 	useInput((value, key) => {
 		const normalized = value.toLowerCase();
@@ -37,21 +39,71 @@ export const ApprovalView = ({ onResolve, request }: ApprovalViewProps) => {
 	});
 
 	return (
-		<Box flexDirection="column" marginY={1}>
-			<Text bold color="yellow">
-				? Approval required
-			</Text>
-			<Text wrap="wrap">{describeToolRequest(request.toolName, request.toolInput)}</Text>
-			<Box marginTop={1}>
-				<Decision active={selected === 'approve'} label="Approve" shortcut="y" />
-				<Text> </Text>
-				<Decision active={selected === 'reject'} label="Reject" shortcut="n" />
+		<Box
+			aria-label="Approval required"
+			borderBottom={false}
+			borderColor="yellow"
+			borderLeft
+			borderRight={false}
+			borderStyle="double"
+			borderTop={false}
+			flexDirection="column"
+			marginY={1}
+			paddingLeft={1}
+		>
+			<Box>
+				<Text backgroundColor="yellow" bold color="black">
+					{' ? APPROVAL '}
+				</Text>
 			</Box>
-			<Text color="gray">←/→ choose · Enter confirm · d details · Esc reject</Text>
+			<Text color="gray">decision required</Text>
+			<Box flexDirection="column" marginTop={1}>
+				<Text color="gray">Requested action</Text>
+				<Text bold wrap="wrap">
+					{formatToolName(request.toolName)}
+				</Text>
+				{target === undefined ? null : (
+					<Text color="gray" wrap="wrap">
+						{target}
+					</Text>
+				)}
+			</Box>
+			<Box flexDirection="row" flexWrap="wrap" marginTop={1}>
+				<Box flexShrink={0} marginRight={1}>
+					<Decision active={selected === 'approve'} label="Approve" shortcut="y" tone="green" />
+				</Box>
+				<Box flexShrink={0}>
+					<Decision active={selected === 'reject'} label="Reject" shortcut="n" tone="red" />
+				</Box>
+			</Box>
+			<Box marginTop={1}>
+				<KeyHints
+					hints={[
+						{ key: '←→', label: 'choose' },
+						{ key: 'Enter', label: 'confirm' },
+						{ key: 'd', label: 'details' },
+						{ key: 'Esc', label: 'reject' },
+					]}
+				/>
+			</Box>
 			{showDetails ? (
-				<Box flexDirection="column" marginTop={1}>
+				<Box
+					borderBottom={false}
+					borderColor="gray"
+					borderLeft
+					borderLeftDimColor
+					borderRight={false}
+					borderStyle="single"
+					borderTop={false}
+					flexDirection="column"
+					marginTop={1}
+					paddingLeft={1}
+				>
+					<Text bold color="gray">
+						Details
+					</Text>
 					{formatToolDetails(request.toolInput).map((line) => (
-						<Text color="gray" key={line} wrap="wrap">
+						<Text color="gray" dimColor key={line} wrap="wrap">
 							{line}
 						</Text>
 					))}
@@ -65,12 +117,20 @@ const Decision = ({
 	active,
 	label,
 	shortcut,
+	tone,
 }: {
 	active: boolean;
 	label: string;
 	shortcut: string;
-}) => (
-	<Text bold={active} color={active ? 'cyan' : 'gray'} inverse={active}>
-		{` ${shortcut} ${label} `}
-	</Text>
-);
+	tone: 'green' | 'red';
+}) => {
+	if (active) {
+		return (
+			<Text backgroundColor={tone} bold color={tone === 'green' ? 'black' : 'white'}>
+				{` ● [${shortcut}] ${label} `}
+			</Text>
+		);
+	}
+
+	return <Text color="gray">{` ○ [${shortcut}] ${label} `}</Text>;
+};

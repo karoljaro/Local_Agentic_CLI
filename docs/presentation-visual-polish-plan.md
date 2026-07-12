@@ -119,4 +119,26 @@ Verification after stage 3:
 
 ### Stage 4 — approval
 
+Status: complete.
+
+- Approval now has a compact double yellow attention edge and a small yellow/black `APPROVAL` label; the
+  background is limited to the label instead of filling a theme-dependent full-width panel.
+- Operation name and primary path/query/resource are separate from the low-priority `decision required`
+  text.
+- Decisions pair an empty/filled marker, shortcut, label, bold text, and semantic selected background:
+  green Approve or red Reject. Reject remains the safe default.
+- Decision boxes use wrapping with `flexShrink={0}`, so at 28 columns whole controls move to separate lines
+  rather than breaking labels.
+- Key hints use the shared visual language. Optional details have their own muted left edge and remain
+  concise; file content, old/new text, large JSON, and diffs remain hidden by default.
+
+Verification after stage 4:
+
+- concise/default-safe approval render test at 28 columns: pass;
+- no large old/new content in default output: pass;
+- maximum rendered line width 28 columns: pass;
+- `bun run typecheck`: pass.
+
+### Stage 5 — consistency and final verification
+
 Status: in progress.

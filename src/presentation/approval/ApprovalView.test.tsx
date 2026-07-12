@@ -21,13 +21,17 @@ describe('ApprovalView', () => {
 						},
 					}}
 				/>,
+				{ columns: 28 },
 			),
 		);
 
-		expect(output).toContain('Edit file · src/App.tsx');
-		expect(output).toContain('Approve');
-		expect(output).toContain('Reject');
+		expect(output).toContain('? APPROVAL');
+		expect(output).toContain('Edit file');
+		expect(output).toContain('src/App.tsx');
+		expect(output).toContain('○ [y] Approve');
+		expect(output).toContain('● [n] Reject');
 		expect(output).not.toContain('a'.repeat(50));
 		expect(output).not.toContain('b'.repeat(50));
+		expect(Math.max(...output.split('\n').map((line) => line.length))).toBeLessThanOrEqual(28);
 	});
 });
