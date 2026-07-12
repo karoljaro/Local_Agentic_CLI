@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Box, Text, useStdin } from 'ink';
 
 import { createRuntime } from '@/composition/createRuntime';
@@ -6,7 +6,9 @@ import {
 	RuntimePresentationController,
 	type PresentationController,
 } from '@/presentation/adapters/PresentationController';
-import type { AppScreen, StartupMode } from '@/presentation/types';
+import type { StartupMode } from '@/presentation/types';
+import { usePresentation } from '@/presentation/hooks/usePresentation';
+import { ChatScreen } from '@/presentation/chat/ChatScreen';
 
 export type AppProps = {
 	controller?: PresentationController;
@@ -19,21 +21,32 @@ export function App({ controller: injectedController, initialMode = 'new' }: App
 		[injectedController],
 	);
 	const { isRawModeSupported } = useStdin();
-	const [screen] = useState<AppScreen>(() => (initialMode === 'resume' ? 'resume' : 'chat'));
-	const [sessionId] = useState(() =>
-		initialMode === 'resume' ? undefined : controller.createSessionId(),
-	);
+	const presentation = usePresentation(controller, initialMode);
 
 	if (!isRawModeSupported) {
 		return <Text color="yellow">codesh requires an interactive terminal.</Text>;
 	}
 
+	if (presentation.screen !== 'chat') {
+		return (
+			<Box flexDirection="column" paddingX={1}>
+				<Text bold>codesh</Text>
+				<Text color="gray">Preparing {presentation.screen} screen…</Text>
+			</Box>
+		);
+	}
+
 	return (
-		<Box flexDirection="column">
-			<Text bold>codesh</Text>
-			<Text color="gray">
-				Preparing {screen === 'chat' ? `session ${String(sessionId)}` : 'session picker'}…
-			</Text>
-		</Box>
+		<ChatScreen
+			chat={presentation.chat.state}
+			composer={presentation.composer}
+			isComposerFocused={presentation.pendingApproval === null}
+			modelName={presentation.modelName}
+			onResolveApproval={presentation.resolveApproval}
+			pendingApproval={presentation.pendingApproval}
+			sessionId={presentation.sessionId}
+			stream={presentation.chat.stream}
+			workspacePath={controller.workspacePath}
+		/>
 	);
 }

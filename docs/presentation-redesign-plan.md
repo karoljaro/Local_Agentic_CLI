@@ -199,4 +199,41 @@ Verification after stage 2:
 
 ### Stage 3 — main chat
 
+Status: complete.
+
+Implemented:
+
+- `Transcript` always starts with one stable session header and renders completed entries through Ink
+  `Static`; user, assistant, system, tool, error, and cancellation rows have textual markers in addition
+  to colour;
+- active stream text lives only in `StreamBuffer` and is read with `useSyncExternalStore` by `LiveTurn`,
+  so token batches do not update or copy the completed history array;
+- 32 ms batching flushes every delta on completion/error and timers are cleared on start, reset, and
+  disposal;
+- the waiting animation mounts only during `waiting`, unmounts on the first non-empty delta, and owns a
+  cleanup function for its interval;
+- `useChatSession` reconciles the final durable assistant event with buffered text, suppressing the live
+  observer copy until exactly one completed row is promoted;
+- errors before/after the first token, abort, partial assistant output, empty final responses, and
+  intermediate assistant text around tool rounds are handled explicitly;
+- requested/running tools remain dynamic; terminal success/failure becomes concise static history;
+- the composer supports cursor editing, paste normalisation, Ctrl+A/E/U, empty-submit and duplicate-submit
+  guards. It remains editable during a turn but cannot submit an overlapping turn;
+- the footer shows active model, workspace, and compact session id;
+- the first Markdown implementation covers required paragraphs, headings, lists, inline formatting, and
+  fenced code while suppressing raw HTML.
+
+Focus at this stage is exclusive between composer, turn-cancel handling, and the approval view. The
+approval view was introduced early so a mutating tool cannot deadlock while later command/screens work is
+in progress; its final stage-6 verification remains pending.
+
+Verification after stage 3:
+
+- `bun run typecheck`: pass.
+- presentation tests (stream, reducer/tool sequences, composer editing, Markdown, transcript, startup):
+  10 pass, 0 fail.
+- Biome format: pass.
+
+### Stage 4 — command system
+
 Status: in progress.
