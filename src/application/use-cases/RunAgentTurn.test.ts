@@ -353,6 +353,25 @@ describe('RunAgentTurn', () => {
 		]);
 	});
 
+	test('reads a session once across consecutive turns in the same runtime', async () => {
+		const model = new ScriptedModel([
+			textResponse('First response.'),
+			textResponse('Second response.'),
+		]);
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({ model });
+
+		await collectAsyncIterable(useCase.run({ sessionId, prompt: 'First prompt' }));
+		await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Second prompt' }));
+
+		expect(sessionStore.readCount).toBe(1);
+		expect(model.receivedInputs[1]?.messages).toEqual([
+			{ role: 'system', content: 'You are a local coding agent.' },
+			expect.objectContaining({ role: 'user', content: 'First prompt' }),
+			expect.objectContaining({ role: 'assistant', content: 'First response.' }),
+			expect.objectContaining({ role: 'user', content: 'Second prompt' }),
+		]);
+	});
+
 	test('passes an abort signal to the model request', async () => {
 		const model = new ScriptedModel([textResponse('Hello', ' there')]);
 		const { sessionId, useCase } = createRunAgentTurnHarness({ model });

@@ -1,7 +1,7 @@
 import type { AgentState } from '@/domain/AgentState';
 import type { SessionId } from '@/domain/Ids';
 import type { SessionStorePort } from '../ports/SessionStorePort';
-import { reduceAgentState } from '../services/SessionReducer';
+import { SessionStateCache } from '../services/SessionStateCache';
 
 type LoadSessionInput = {
 	sessionId: SessionId;
@@ -16,14 +16,19 @@ type LoadSessionDependencies = {
 };
 
 export class LoadSession {
-	constructor(private readonly dependencies: LoadSessionDependencies) {}
+	private readonly sessionStore: SessionStateCache;
+
+	constructor(dependencies: LoadSessionDependencies) {
+		this.sessionStore =
+			dependencies.sessionStore instanceof SessionStateCache
+				? dependencies.sessionStore
+				: new SessionStateCache(dependencies.sessionStore);
+	}
 
 	async load(input: LoadSessionInput): Promise<LoadSessionResult> {
 		const { sessionId } = input;
 
-		const sessionEvents = await this.dependencies.sessionStore.readSessionEvents(sessionId);
-
-		const state = reduceAgentState(sessionId, sessionEvents);
+		const state = await this.sessionStore.readSessionState(sessionId);
 
 		return { state };
 	}

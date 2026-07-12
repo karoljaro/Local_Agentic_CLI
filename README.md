@@ -148,6 +148,8 @@ Persisted events include:
 
 The chat UI currently restores user and assistant messages. Tool events are persisted, but they are not yet shown as a dedicated timeline in the UI.
 
+JSONL remains the source of truth. During one process, each active session is read and validated once; successful appends update an in-memory incremental state after the durable write completes. Restarting the CLI rebuilds that state from JSONL.
+
 ## Requirements
 
 - Bun

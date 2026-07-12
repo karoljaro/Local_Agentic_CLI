@@ -1,36 +1,38 @@
+import type {
+	AgentEvent,
+	AssistantToolCallsCompleted,
+	ToolCallCompleted,
+	ToolCallFailed,
+} from '@/domain/AgentEvent';
 import { createInitialAgentState, type AgentState } from '@/domain/AgentState';
-
 import type { SessionId, ToolCallId } from '@/domain/Ids';
-import type { AgentEvent } from '@/domain/AgentEvent';
+import type { ModelMessage } from '@/domain/ModelMessage';
 import type { ModelToolCall } from '@/domain/Tool';
 
-export const reduceAgentState = (sessionId: SessionId, events: AgentEvent[]): AgentState => {
-	const state = createInitialAgentState(sessionId);
-	const pendingToolCalls = new Map<ToolCallId, ModelToolCall>();
-	const terminalToolCallIds = collectTerminalToolCallIds(events);
-	const persistedBatchToolCallIds = new Set<ToolCallId>();
-	const completeBatchToolCallIds = new Set<ToolCallId>();
+type TerminalToolCallEvent = ToolCallCompleted | ToolCallFailed;
 
-	for (const event of events) {
-		if (event.type !== 'assistant.tool_calls.completed') {
-			continue;
-		}
+type PendingToolCallBatch = {
+	event: AssistantToolCallsCompleted;
+	terminalEvents: Map<ToolCallId, TerminalToolCallEvent>;
+};
 
-		const isComplete = event.toolCalls.every((toolCall) => terminalToolCallIds.has(toolCall.id));
+export class AgentStateReducer {
+	private readonly state: AgentState;
+	private readonly pendingLegacyToolCalls = new Map<ToolCallId, ModelToolCall>();
+	private readonly pendingBatchesByToolCallId = new Map<ToolCallId, PendingToolCallBatch>();
 
-		for (const toolCall of event.toolCalls) {
-			persistedBatchToolCallIds.add(toolCall.id);
-
-			if (isComplete) {
-				completeBatchToolCallIds.add(toolCall.id);
-			}
-		}
+	constructor(private readonly sessionId: SessionId) {
+		this.state = createInitialAgentState(sessionId);
 	}
 
-	for (const event of events) {
+	apply(event: AgentEvent): void {
+		if (event.sessionId !== this.sessionId) {
+			throw new Error(`Cannot apply event from another session: ${event.sessionId}.`);
+		}
+
 		switch (event.type) {
 			case 'prompt.submitted':
-				state.messages.push({
+				this.state.messages.push({
 					id: event.messageId,
 					role: 'user',
 					content: event.prompt,
@@ -38,7 +40,7 @@ export const reduceAgentState = (sessionId: SessionId, events: AgentEvent[]): Ag
 				break;
 
 			case 'assistant.message.completed':
-				state.messages.push({
+				this.state.messages.push({
 					id: event.messageId,
 					role: 'assistant',
 					content: event.content,
@@ -46,115 +48,141 @@ export const reduceAgentState = (sessionId: SessionId, events: AgentEvent[]): Ag
 				break;
 
 			case 'assistant.tool_calls.completed':
-				if (event.toolCalls.every((toolCall) => completeBatchToolCallIds.has(toolCall.id))) {
-					state.messages.push({
-						id: event.messageId,
-						role: 'assistant',
-						content: event.content,
-						toolCalls: event.toolCalls,
+				this.registerToolCallBatch(event);
+				break;
+
+			case 'tool.call.requested':
+				if (!this.pendingBatchesByToolCallId.has(event.toolCallId)) {
+					this.pendingLegacyToolCalls.set(event.toolCallId, {
+						id: event.toolCallId,
+						name: event.toolName,
+						arguments: event.toolInput,
 					});
 				}
 				break;
 
-			case 'tool.call.requested':
-				if (persistedBatchToolCallIds.has(event.toolCallId)) {
-					break;
-				}
-
-				pendingToolCalls.set(event.toolCallId, {
-					id: event.toolCallId,
-					name: event.toolName,
-					arguments: event.toolInput,
-				});
-				break;
-
 			case 'tool.call.completed':
-				if (!persistedBatchToolCallIds.has(event.toolCallId)) {
-					appendToolCallMessage(state, pendingToolCalls.get(event.toolCallId));
-				}
-				pendingToolCalls.delete(event.toolCallId);
-
-				state.toolResults.push({
+				this.state.toolResults.push({
 					toolCallId: event.toolCallId,
 					toolName: event.toolName,
 					output: event.output,
 				});
-
-				if (
-					!persistedBatchToolCallIds.has(event.toolCallId) ||
-					completeBatchToolCallIds.has(event.toolCallId)
-				) {
-					state.messages.push({
-						role: 'tool',
-						toolCallId: event.toolCallId,
-						toolName: event.toolName,
-						content: stringifyToolOutput(event.output),
-					});
-				}
+				this.applyTerminalToolCall(event);
 				break;
 
 			case 'tool.call.failed':
-				if (!persistedBatchToolCallIds.has(event.toolCallId)) {
-					appendToolCallMessage(state, pendingToolCalls.get(event.toolCallId));
-				}
-				pendingToolCalls.delete(event.toolCallId);
-
-				if (
-					!persistedBatchToolCallIds.has(event.toolCallId) ||
-					completeBatchToolCallIds.has(event.toolCallId)
-				) {
-					state.messages.push({
-						role: 'tool',
-						toolCallId: event.toolCallId,
-						toolName: event.toolName,
-						content: JSON.stringify({
-							error: {
-								message: event.error.message,
-							},
-						}),
-					});
-				}
-
-				state.errors.push({
+				this.state.errors.push({
 					message: event.error.message,
 					...(event.error.code === undefined ? {} : { code: event.error.code }),
 					recoverable: true,
 					...(event.error.details === undefined ? {} : { details: event.error.details }),
 				});
+				this.applyTerminalToolCall(event);
 				break;
 
 			case 'agent.error':
-				state.errors.push(event.error);
+				this.state.errors.push(event.error);
+				break;
+
+			case 'tool.call.started':
 				break;
 		}
 	}
 
-	return state;
-};
+	snapshot(): AgentState {
+		return {
+			sessionId: this.state.sessionId,
+			messages: [...this.state.messages],
+			toolResults: [...this.state.toolResults],
+			errors: [...this.state.errors],
+		};
+	}
 
-const collectTerminalToolCallIds = (events: AgentEvent[]): Set<ToolCallId> => {
-	const terminalToolCallIds = new Set<ToolCallId>();
+	private registerToolCallBatch(event: AssistantToolCallsCompleted): void {
+		const batch: PendingToolCallBatch = {
+			event,
+			terminalEvents: new Map(),
+		};
 
-	for (const event of events) {
-		if (event.type === 'tool.call.completed' || event.type === 'tool.call.failed') {
-			terminalToolCallIds.add(event.toolCallId);
+		for (const toolCall of event.toolCalls) {
+			this.pendingBatchesByToolCallId.set(toolCall.id, batch);
+			this.pendingLegacyToolCalls.delete(toolCall.id);
 		}
 	}
 
-	return terminalToolCallIds;
-};
+	private applyTerminalToolCall(event: TerminalToolCallEvent): void {
+		const batch = this.pendingBatchesByToolCallId.get(event.toolCallId);
 
-const appendToolCallMessage = (state: AgentState, toolCall: ModelToolCall | undefined): void => {
-	if (toolCall === undefined) {
-		return;
+		if (batch === undefined) {
+			appendLegacyToolCallMessages(
+				this.state,
+				this.pendingLegacyToolCalls.get(event.toolCallId),
+				event,
+			);
+			this.pendingLegacyToolCalls.delete(event.toolCallId);
+			return;
+		}
+
+		batch.terminalEvents.set(event.toolCallId, event);
+
+		if (batch.terminalEvents.size !== batch.event.toolCalls.length) {
+			return;
+		}
+
+		this.state.messages.push({
+			id: batch.event.messageId,
+			role: 'assistant',
+			content: batch.event.content,
+			toolCalls: batch.event.toolCalls,
+		});
+
+		for (const toolCall of batch.event.toolCalls) {
+			const terminalEvent = batch.terminalEvents.get(toolCall.id);
+
+			if (terminalEvent !== undefined) {
+				this.state.messages.push(toToolMessage(terminalEvent));
+			}
+
+			this.pendingBatchesByToolCallId.delete(toolCall.id);
+		}
+	}
+}
+
+export const reduceAgentState = (sessionId: SessionId, events: AgentEvent[]): AgentState => {
+	const reducer = new AgentStateReducer(sessionId);
+
+	for (const event of events) {
+		reducer.apply(event);
 	}
 
-	state.messages.push({
-		role: 'assistant',
-		content: '',
-		toolCalls: [toolCall],
-	});
+	return reducer.snapshot();
 };
+
+const appendLegacyToolCallMessages = (
+	state: AgentState,
+	toolCall: ModelToolCall | undefined,
+	event: TerminalToolCallEvent,
+): void => {
+	if (toolCall !== undefined) {
+		state.messages.push({
+			role: 'assistant',
+			content: '',
+			toolCalls: [toolCall],
+		});
+	}
+
+	state.messages.push(toToolMessage(event));
+};
+
+const toToolMessage = (event: TerminalToolCallEvent): ModelMessage => ({
+	role: 'tool',
+	toolCallId: event.toolCallId,
+	toolName: event.toolName,
+	content:
+		event.type === 'tool.call.completed'
+			? stringifyToolOutput(event.output)
+			: JSON.stringify({ error: { message: event.error.message } }),
+});
 
 const stringifyToolOutput = (output: unknown): string => {
 	if (typeof output === 'string') {

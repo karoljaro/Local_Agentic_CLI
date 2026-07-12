@@ -10,6 +10,7 @@ type InMemorySessionStoreOptions = {
 export class InMemorySessionStore implements SessionStorePort {
 	readonly events: AgentEvent[];
 	readonly sessions: StoredSession[];
+	readCount = 0;
 
 	constructor(options: InMemorySessionStoreOptions = {}) {
 		this.events = options.events ?? [];
@@ -21,6 +22,7 @@ export class InMemorySessionStore implements SessionStorePort {
 	}
 
 	async readSessionEvents(sessionId: SessionId): Promise<AgentEvent[]> {
+		this.readCount += 1;
 		return this.events.filter((event) => event.sessionId === sessionId);
 	}
 

@@ -102,6 +102,11 @@ The current durable events are:
 
 Streaming deltas are runtime-only and are not persisted as durable events.
 
+`SessionStateCache` reads and validates a session JSONL file on first access in a runtime, then keeps
+its events and incrementally reduced state in memory. The transcript loader, `LoadSession`, and
+`RunAgentTurn` share that instance. Appends are serialized and written to JSONL before the cached
+events and state are updated. A new process always rebuilds the cache from JSONL.
+
 Tool-calling model responses are persisted as one `assistant.tool_calls.completed` event before
 tool execution starts. The event keeps the assistant content and the complete tool-call batch, so
 rebuilding a finished session produces the same model context as the live agent loop. Incomplete

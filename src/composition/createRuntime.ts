@@ -2,6 +2,7 @@ import type { IdGeneratorPort } from '@/application/ports/IdGeneratorPort';
 import type { ListModelsResult } from '@/application/ports/ModelCatalogPort';
 import type { UnloadModelInput } from '@/application/ports/ModelPort';
 import { ContextBuilder } from '@/application/services/ContextBuilder';
+import { SessionStateCache } from '@/application/services/SessionStateCache';
 import { ListSessionEvents } from '@/application/use-cases/ListSessionEvents';
 import { ListSessions } from '@/application/use-cases/ListSessions';
 import { LoadSession } from '@/application/use-cases/LoadSession';
@@ -33,7 +34,7 @@ export type Runtime = {
 };
 
 export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
-	const sessionStore = new JsonlSessionStore();
+	const sessionStore = new SessionStateCache(new JsonlSessionStore());
 	const modelRuntime = new OllamaModelRuntime(config);
 	const idGenerator = new BunUuidV7IdGenerator();
 	const clock = new TemporalClock();

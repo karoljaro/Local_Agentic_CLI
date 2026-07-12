@@ -11,8 +11,8 @@ import type {
 import type { SessionId, ToolCallId } from '@/domain/Ids';
 import type { ModelMessage } from '@/domain/ModelMessage';
 import type { ModelToolCall, ToolDefinition } from '@/domain/Tool';
-import { reduceAgentState } from '../services/SessionReducer';
 import { ContextBudgetExceededError, type ContextBuilder } from '../services/ContextBuilder';
+import { SessionStateCache } from '../services/SessionStateCache';
 import type { ModelChatInput, ModelPort } from '../ports/ModelPort';
 import type { SessionStorePort } from '../ports/SessionStorePort';
 import type { ClockPort } from '../ports/ClockPort';
@@ -68,7 +68,14 @@ export type RunAgentTurnDependencies = {
 };
 
 export class RunAgentTurn {
-	constructor(private readonly dependencies: RunAgentTurnDependencies) {}
+	private readonly sessionStore: SessionStateCache;
+
+	constructor(private readonly dependencies: RunAgentTurnDependencies) {
+		this.sessionStore =
+			dependencies.sessionStore instanceof SessionStateCache
+				? dependencies.sessionStore
+				: new SessionStateCache(dependencies.sessionStore);
+	}
 
 	async *run(input: RunAgentTurnInput): AsyncIterable<AgentTurnChunk> {
 		const { sessionId, prompt, modelName, signal } = input;
@@ -88,11 +95,9 @@ export class RunAgentTurn {
 		};
 		this.dependencies.contextBuilder.assertPromptFits(prompt, promptEvent.messageId);
 
-		await this.dependencies.sessionStore.appendSessionEvent(promptEvent);
+		await this.sessionStore.appendSessionEvent(promptEvent);
 
-		const sessionEvents = await this.dependencies.sessionStore.readSessionEvents(sessionId);
-
-		const reducedState = reduceAgentState(sessionId, sessionEvents);
+		const reducedState = await this.sessionStore.readSessionState(sessionId);
 		const { messages } = this.dependencies.contextBuilder.build(reducedState);
 
 		if (this.dependencies.toolExecutor !== undefined) {
@@ -326,7 +331,7 @@ export class RunAgentTurn {
 				toolCallId,
 				toolName,
 			};
-			await this.dependencies.sessionStore.appendSessionEvent(startedEvent);
+			await this.sessionStore.appendSessionEvent(startedEvent);
 
 			try {
 				const toolDefinition = getToolDefinition(toolName, tools);
@@ -365,7 +370,7 @@ export class RunAgentTurn {
 					toolName,
 					output,
 				};
-				await this.dependencies.sessionStore.appendSessionEvent(completedEvent);
+				await this.sessionStore.appendSessionEvent(completedEvent);
 
 				toolMessages.push({
 					role: 'tool',
@@ -421,7 +426,7 @@ export class RunAgentTurn {
 			approvalRequired: isApprovalRequired(toolCall.name, tools),
 		};
 
-		await this.dependencies.sessionStore.appendSessionEvent(requestedEvent);
+		await this.sessionStore.appendSessionEvent(requestedEvent);
 
 		return requestedEvent;
 	}
@@ -460,7 +465,7 @@ export class RunAgentTurn {
 			},
 		};
 
-		await this.dependencies.sessionStore.appendSessionEvent(failedEvent);
+		await this.sessionStore.appendSessionEvent(failedEvent);
 	}
 
 	private async appendAssistantCompleted(sessionId: SessionId, content: string): Promise<void> {
@@ -473,7 +478,7 @@ export class RunAgentTurn {
 			content,
 		};
 
-		await this.dependencies.sessionStore.appendSessionEvent(completedEvent);
+		await this.sessionStore.appendSessionEvent(completedEvent);
 	}
 
 	private async appendAssistantToolCallsCompleted(
@@ -491,7 +496,7 @@ export class RunAgentTurn {
 			toolCalls,
 		};
 
-		await this.dependencies.sessionStore.appendSessionEvent(completedEvent);
+		await this.sessionStore.appendSessionEvent(completedEvent);
 
 		return completedEvent;
 	}
@@ -512,7 +517,7 @@ export class RunAgentTurn {
 			},
 		};
 
-		await this.dependencies.sessionStore.appendSessionEvent(errorEvent);
+		await this.sessionStore.appendSessionEvent(errorEvent);
 	}
 
 	private async tryAppendAgentError(

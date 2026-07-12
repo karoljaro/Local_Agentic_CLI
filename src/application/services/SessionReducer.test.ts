@@ -12,7 +12,7 @@ import {
 	toolCallStartedEvent,
 } from '@/test-support/AgentEventFixtures';
 
-import { reduceAgentState } from './SessionReducer';
+import { AgentStateReducer, reduceAgentState } from './SessionReducer';
 
 describe('reduceAgentState', () => {
 	test('builds session state from durable events', () => {
@@ -175,6 +175,28 @@ describe('reduceAgentState', () => {
 		expect(state.messages).toEqual([]);
 	});
 
+	test('keeps an orphaned legacy terminal tool message readable', () => {
+		const sessionId = asSessionId('session-1');
+		const toolCallId = asToolCallId('tool-call-orphaned');
+		const state = reduceAgentState(sessionId, [
+			toolCallCompletedEvent({
+				sessionId,
+				toolCallId,
+				toolName: 'read_file',
+				output: { content: 'legacy' },
+			}),
+		]);
+
+		expect(state.messages).toEqual([
+			{
+				role: 'tool',
+				toolCallId,
+				toolName: 'read_file',
+				content: JSON.stringify({ content: 'legacy' }),
+			},
+		]);
+	});
+
 	test('rebuilds a complete tool-call batch as one assistant message with preserved content', () => {
 		const sessionId = asSessionId('session-1');
 		const firstToolCallId = asToolCallId('tool-call-1');
@@ -263,5 +285,42 @@ describe('reduceAgentState', () => {
 		]);
 
 		expect(state.messages).toEqual([]);
+	});
+
+	test('publishes an incrementally applied batch only after every tool call is terminal', () => {
+		const sessionId = asSessionId('session-1');
+		const firstToolCallId = asToolCallId('tool-call-1');
+		const secondToolCallId = asToolCallId('tool-call-2');
+		const reducer = new AgentStateReducer(sessionId);
+		const batch = assistantToolCallsCompletedEvent({
+			sessionId,
+			toolCalls: [
+				{ id: firstToolCallId, name: 'read_file', arguments: { path: 'README.md' } },
+				{ id: secondToolCallId, name: 'read_file', arguments: { path: 'package.json' } },
+			],
+		});
+
+		reducer.apply(batch);
+		reducer.apply(
+			toolCallCompletedEvent({
+				sessionId,
+				toolCallId: firstToolCallId,
+				output: { path: 'README.md' },
+			}),
+		);
+		expect(reducer.snapshot().messages).toEqual([]);
+
+		reducer.apply(
+			toolCallFailedEvent({
+				sessionId,
+				toolCallId: secondToolCallId,
+				error: { message: 'missing' },
+			}),
+		);
+		expect(reducer.snapshot().messages).toEqual([
+			expect.objectContaining({ role: 'assistant', toolCalls: batch.toolCalls }),
+			expect.objectContaining({ role: 'tool', toolCallId: firstToolCallId }),
+			expect.objectContaining({ role: 'tool', toolCallId: secondToolCallId }),
+		]);
 	});
 });
