@@ -62,7 +62,7 @@ describe('LocalToolExecutor', () => {
 			{
 				name: 'search_file',
 				description:
-					'Search workspace files for exact text. Use | for alternatives. Returns matching paths, line numbers, and excerpts.',
+					'Search workspace files for exact text. Use | for alternatives. Returns a bounded list of paths, line numbers, and excerpts; truncated indicates more matches exist.',
 				parameters: {
 					type: 'object',
 					required: ['query'],
@@ -322,8 +322,8 @@ describe('LocalToolExecutor', () => {
 			expect(result).toEqual({
 				toolName: 'search_file',
 				output: {
-					matchCount: 1,
-					fileCount: 1,
+					returnedMatches: 1,
+					returnedFiles: 1,
 					matches: [
 						{
 							path: 'src/first.ts',
@@ -354,8 +354,8 @@ describe('LocalToolExecutor', () => {
 			expect(result).toEqual({
 				toolName: 'search_file',
 				output: {
-					matchCount: 0,
-					fileCount: 0,
+					returnedMatches: 0,
+					returnedFiles: 0,
 					matches: [],
 					truncated: false,
 				},
@@ -385,8 +385,8 @@ describe('LocalToolExecutor', () => {
 			expect(result).toEqual({
 				toolName: 'search_file',
 				output: {
-					matchCount: 0,
-					fileCount: 0,
+					returnedMatches: 0,
+					returnedFiles: 0,
 					matches: [],
 					truncated: false,
 				},
@@ -435,8 +435,8 @@ describe('LocalToolExecutor', () => {
 			expect(result).toEqual({
 				toolName: 'search_file',
 				output: {
-					matchCount: 4,
-					fileCount: 1,
+					returnedMatches: 4,
+					returnedFiles: 1,
 					matches: [
 						{
 							path: 'src/calculator.py',
@@ -488,8 +488,8 @@ describe('LocalToolExecutor', () => {
 			expect(result).toEqual({
 				toolName: 'search_file',
 				output: {
-					matchCount: 2,
-					fileCount: 2,
+					returnedMatches: 2,
+					returnedFiles: 2,
 					matches: [
 						{
 							path: 'src/calculator.py',
@@ -526,8 +526,8 @@ describe('LocalToolExecutor', () => {
 			expect(result).toEqual({
 				toolName: 'search_file',
 				output: {
-					matchCount: 1,
-					fileCount: 1,
+					returnedMatches: 1,
+					returnedFiles: 1,
 					matches: [
 						{
 							path: '.env.example',
@@ -560,7 +560,7 @@ describe('LocalToolExecutor', () => {
 		}
 	});
 
-	test('limits returned search matches while preserving total counts', async () => {
+	test('limits returned search matches without scanning for an exact total', async () => {
 		const { directory, cleanup } = await createTempWorkspace();
 
 		try {
@@ -582,8 +582,8 @@ describe('LocalToolExecutor', () => {
 			expect(result).toEqual({
 				toolName: 'search_file',
 				output: {
-					matchCount: 3,
-					fileCount: 1,
+					returnedMatches: 2,
+					returnedFiles: 1,
 					matches: [
 						{
 							path: 'file.txt',

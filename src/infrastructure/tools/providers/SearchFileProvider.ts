@@ -7,7 +7,7 @@ export const SEARCH_FILE_TOOL_NAME = 'search_file';
 const TOOL_DEFINITION = {
 	name: SEARCH_FILE_TOOL_NAME,
 	description:
-		'Search workspace files for exact text. Use | for alternatives. Returns matching paths, line numbers, and excerpts.',
+		'Search workspace files for exact text. Use | for alternatives. Returns a bounded list of paths, line numbers, and excerpts; truncated indicates more matches exist.',
 	parameters: {
 		type: 'object',
 		required: ['query'],

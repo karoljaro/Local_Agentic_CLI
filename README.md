@@ -77,7 +77,7 @@ Use it to discover project structure. It is not a content search tool.
 
 ### `search_file`
 
-Searches the current workspace with ripgrep and returns paths, line numbers, and text excerpts. It ignores common internal directories such as `.git`, `.agent`, and `node_modules`.
+Searches the current workspace with ripgrep and returns a bounded list of paths, line numbers, and text excerpts. The result contains `returnedMatches`, `returnedFiles`, and `truncated`. Ripgrep output is parsed incrementally and the process is stopped after one match beyond the configured limit. Common internal directories such as `.git`, `.agent`, and `node_modules` are ignored.
 
 ### `read_file`
 

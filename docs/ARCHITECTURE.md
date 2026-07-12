@@ -49,6 +49,7 @@ Read-only tools run automatically. Mutating tools currently require approval:
 
 Tool results are atomic: a tool call is validated, executed, and only then appended to model context as a complete result.
 `read_file` bounds each result by line count and character count, returning range metadata for continuation.
+`search_file` parses ripgrep NDJSON incrementally and stops the process after detecting that the bounded result is truncated.
 
 ### Composition
 

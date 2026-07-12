@@ -9,8 +9,8 @@ export type SearchWorkspaceMatch = {
 };
 
 export type SearchWorkspaceOutput = {
-	matchCount: number;
-	fileCount: number;
+	returnedMatches: number;
+	returnedFiles: number;
 	matches: SearchWorkspaceMatch[];
 	truncated: boolean;
 };

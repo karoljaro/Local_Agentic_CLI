@@ -2,7 +2,11 @@ import { describe, expect, test } from 'bun:test';
 
 import { RipgrepSearch, type RipgrepCommandRunner } from './RipgrepSearch';
 
-type CommandResult = Awaited<ReturnType<RipgrepCommandRunner>>;
+type CommandFixture = {
+	stdout: string;
+	stderr: string;
+	exitCode: number;
+};
 
 const createSearch = (
 	runCommand: RipgrepCommandRunner,
@@ -21,18 +25,28 @@ const createSearch = (
 	});
 };
 
-const createSequenceRunner = (results: CommandResult[]): RipgrepCommandRunner => {
+const createSequenceRunner = (fixtures: CommandFixture[]): RipgrepCommandRunner => {
 	let index = 0;
 
-	return async () => {
-		const result = results[index];
+	return async ({ onStdoutLine }) => {
+		const fixture = fixtures[index];
 		index += 1;
 
-		if (result === undefined) {
+		if (fixture === undefined) {
 			throw new Error('unexpected rg call');
 		}
 
-		return result;
+		for (const line of fixture.stdout.split('\n').filter(Boolean)) {
+			if (!onStdoutLine(line)) {
+				return { stderr: fixture.stderr, exitCode: 143, stoppedEarly: true };
+			}
+		}
+
+		return {
+			stderr: fixture.stderr,
+			exitCode: fixture.exitCode,
+			stoppedEarly: false,
+		};
 	};
 };
 
@@ -46,24 +60,21 @@ const matchLine = (path: string, line: number, text: string): string =>
 		},
 	});
 
-const successful = (stdout: string): CommandResult => ({
+const successful = (stdout: string): CommandFixture => ({
 	stdout,
 	stderr: '',
 	exitCode: 0,
 });
 
+const noMatches = (): CommandFixture => ({ stdout: '', stderr: '', exitCode: 1 });
+
 describe('RipgrepSearch', () => {
 	test('returns empty output when rg exits with code 1', async () => {
-		const search = createSearch(
-			createSequenceRunner([
-				{ stdout: '', stderr: '', exitCode: 1 },
-				{ stdout: '', stderr: '', exitCode: 1 },
-			]),
-		);
+		const search = createSearch(createSequenceRunner([noMatches(), noMatches()]));
 
 		await expect(search.search({ query: 'missing' })).resolves.toEqual({
-			matchCount: 0,
-			fileCount: 0,
+			returnedMatches: 0,
+			returnedFiles: 0,
 			matches: [],
 			truncated: false,
 		});
@@ -78,8 +89,8 @@ describe('RipgrepSearch', () => {
 		);
 
 		await expect(search.search({ query: 'needle' })).resolves.toEqual({
-			matchCount: 2,
-			fileCount: 2,
+			returnedMatches: 2,
+			returnedFiles: 2,
 			matches: [
 				{
 					path: '.env.example',
@@ -96,12 +107,42 @@ describe('RipgrepSearch', () => {
 		});
 	});
 
+	test('stops consuming ripgrep output after one match beyond the limit', async () => {
+		let commandIndex = 0;
+		let processedMatchLines = 0;
+		const runCommand: RipgrepCommandRunner = async ({ onStdoutLine }) => {
+			const currentIndex = commandIndex;
+			commandIndex += 1;
+
+			if (currentIndex === 1) {
+				return { stderr: '', exitCode: 1, stoppedEarly: false };
+			}
+
+			for (let index = 1; index <= 10; index += 1) {
+				processedMatchLines += 1;
+
+				if (!onStdoutLine(matchLine(`src/${index}.ts`, index, 'needle'))) {
+					return { stderr: '', exitCode: 143, stoppedEarly: true };
+				}
+			}
+
+			return { stderr: '', exitCode: 0, stoppedEarly: false };
+		};
+		const search = createSearch(runCommand, { maxMatches: 2 });
+
+		const result = await search.search({ query: 'needle' });
+
+		expect(processedMatchLines).toBe(3);
+		expect(result).toMatchObject({
+			returnedMatches: 2,
+			returnedFiles: 2,
+			truncated: true,
+		});
+	});
+
 	test('reports timeout when rg is killed by timeout', async () => {
 		const search = createSearch(
-			createSequenceRunner([
-				{ stdout: '', stderr: '', exitCode: 143 },
-				{ stdout: '', stderr: '', exitCode: 1 },
-			]),
+			createSequenceRunner([{ stdout: '', stderr: '', exitCode: 143 }, noMatches()]),
 			{ timeoutMs: 250 },
 		);
 
@@ -124,10 +165,7 @@ describe('RipgrepSearch', () => {
 
 	test('uses exit code when rg fails without stderr', async () => {
 		const search = createSearch(
-			createSequenceRunner([
-				{ stdout: '', stderr: '', exitCode: 2 },
-				{ stdout: '', stderr: '', exitCode: 1 },
-			]),
+			createSequenceRunner([{ stdout: '', stderr: '', exitCode: 2 }, noMatches()]),
 		);
 
 		await expect(search.search({ query: 'needle' })).rejects.toThrow(
@@ -138,10 +176,7 @@ describe('RipgrepSearch', () => {
 	test('bounds long rg stderr in failure messages', async () => {
 		const longStderr = `${'x'.repeat(1200)}tail`;
 		const search = createSearch(
-			createSequenceRunner([
-				{ stdout: '', stderr: longStderr, exitCode: 2 },
-				{ stdout: '', stderr: '', exitCode: 1 },
-			]),
+			createSequenceRunner([{ stdout: '', stderr: longStderr, exitCode: 2 }, noMatches()]),
 		);
 
 		await expect(search.search({ query: 'needle' })).rejects.toThrow(
@@ -150,12 +185,32 @@ describe('RipgrepSearch', () => {
 	});
 
 	test('reports invalid rg JSON output', async () => {
-		const search = createSearch(
-			createSequenceRunner([successful('not-json\n'), { stdout: '', stderr: '', exitCode: 1 }]),
-		);
+		const search = createSearch(createSequenceRunner([successful('not-json\n'), noMatches()]));
 
 		await expect(search.search({ query: 'needle' })).rejects.toThrow(
 			'search_file failed: invalid rg JSON output',
 		);
+	});
+
+	test('waits for both runners to finish when one search fails', async () => {
+		let commandIndex = 0;
+		let secondRunnerFinished = false;
+		const runCommand: RipgrepCommandRunner = async () => {
+			const currentIndex = commandIndex;
+			commandIndex += 1;
+
+			if (currentIndex === 0) {
+				throw new Error('first search failed');
+			}
+
+			await Promise.resolve();
+			secondRunnerFinished = true;
+			return { stderr: '', exitCode: 1, stoppedEarly: false };
+		};
+
+		await expect(createSearch(runCommand).search({ query: 'needle' })).rejects.toThrow(
+			'first search failed',
+		);
+		expect(secondRunnerFinished).toBe(true);
 	});
 });
