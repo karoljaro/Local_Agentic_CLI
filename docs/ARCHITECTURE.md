@@ -52,6 +52,7 @@ Each local tool owns one Zod input schema, its execution function, and approval/
 `read_file` bounds each result by line count and character count, returning range metadata for continuation.
 `search_file` parses ripgrep NDJSON incrementally and stops the process after detecting that the bounded result is truncated.
 Repeated `list_files` and `search_file` calls within one turn reuse the earlier result through a short persisted tool-call reference. `read_file` is always executed again, and successful workspace mutations clear the references.
+`edit_file` applies `oldText` and `newText` exactly after JSON/schema parsing. It does not reinterpret literal escaped line-break sequences.
 
 ### Composition
 

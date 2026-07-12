@@ -119,7 +119,7 @@ Replaces exact text in a UTF-8 file:
 }
 ```
 
-The edit is applied only when `oldText` appears exactly once. The tool also normalizes escaped line breaks like `\\n` when models provide multiline edits as escaped text.
+The edit is applied only when `oldText` appears exactly once. `oldText` and `newText` are used exactly as decoded from the model's JSON arguments; literal sequences such as `\\n` are not converted into line breaks.
 
 `edit_file` requires interactive approval. Press `y` to approve, `n` or `Esc` to deny.
 

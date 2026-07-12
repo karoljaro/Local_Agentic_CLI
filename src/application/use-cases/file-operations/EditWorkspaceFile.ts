@@ -21,9 +21,7 @@ export class EditWorkspaceFile {
 			path: input.path,
 			maxFileBytes: input.maxFileBytes,
 		});
-		const oldText = normalizeEscapedLineBreaks(input.oldText);
-		const newText = normalizeEscapedLineBreaks(input.newText);
-		const matchCount = file.content.split(oldText).length - 1;
+		const matchCount = file.content.split(input.oldText).length - 1;
 
 		if (matchCount === 0) {
 			throw new Error(`oldText was not found in file: ${input.path}`);
@@ -35,7 +33,7 @@ export class EditWorkspaceFile {
 
 		const writtenFile = await this.workspaceFiles.writeFile({
 			path: file.path,
-			content: file.content.replace(oldText, newText),
+			content: file.content.replace(input.oldText, input.newText),
 			maxFileBytes: input.maxFileBytes,
 			expectedContent: file.content,
 		});
@@ -47,6 +45,3 @@ export class EditWorkspaceFile {
 		};
 	}
 }
-
-const normalizeEscapedLineBreaks = (text: string): string =>
-	text.replaceAll('\\r\\n', '\n').replaceAll('\\n', '\n').replaceAll('\\r', '\n');

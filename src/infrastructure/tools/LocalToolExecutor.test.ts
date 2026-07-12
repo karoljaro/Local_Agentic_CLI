@@ -675,7 +675,7 @@ describe('LocalToolRegistry', () => {
 		}
 	});
 
-	test('normalizes escaped newlines in edit text', async () => {
+	test('edits exact multiline text', async () => {
 		const { directory, cleanup } = await createTempWorkspace();
 
 		try {
@@ -698,9 +698,9 @@ describe('LocalToolRegistry', () => {
 				toolInput: {
 					path: 'demo.py',
 					oldText:
-						'def find_user_by_email(self, email):\\n    for user in self.users:\\n        if user.email == email:\\n            return user\\n    return None',
+						'def find_user_by_email(self, email):\n    for user in self.users:\n        if user.email == email:\n            return user\n    return None',
 					newText:
-						'def find_user_by_email(self, email):\\n    for user in self.users:\\n        if user.email.lower() == email.lower():\\n            return user\\n    return None',
+						'def find_user_by_email(self, email):\n    for user in self.users:\n        if user.email.lower() == email.lower():\n            return user\n    return None',
 				},
 			});
 
@@ -714,6 +714,51 @@ describe('LocalToolRegistry', () => {
 					'',
 				].join('\n'),
 			);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('preserves literal escaped line-break sequences in edit text', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await writeFile(join(directory, 'literal.txt'), 'before\\nvalue after', 'utf8');
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
+
+			await executor.execute({
+				toolName: 'edit_file',
+				toolInput: {
+					path: 'literal.txt',
+					oldText: 'before\\nvalue',
+					newText: 'after\\r\\nvalue',
+				},
+			});
+
+			await expect(readFile(join(directory, 'literal.txt'), 'utf8')).resolves.toBe(
+				'after\\r\\nvalue after',
+			);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('uses newline escapes decoded from JSON exactly once', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+
+		try {
+			await writeFile(join(directory, 'json.txt'), 'literal\\nvalue', 'utf8');
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
+			const toolInput: unknown = JSON.parse(
+				'{"path":"json.txt","oldText":"literal\\\\nvalue","newText":"updated\\\\nvalue"}',
+			);
+
+			await executor.execute({
+				toolName: 'edit_file',
+				toolInput,
+			});
+
+			await expect(readFile(join(directory, 'json.txt'), 'utf8')).resolves.toBe('updated\\nvalue');
 		} finally {
 			await cleanup();
 		}
