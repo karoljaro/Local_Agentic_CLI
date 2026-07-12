@@ -26,7 +26,7 @@ Implemented:
 - loading previous chat messages when continuing a session
 - tool calling through Ollama
 - multi-step tool loop with an iteration limit
-- per-turn cache for read-only tools
+- per-turn deduplication for repeated `list_files` and `search_file` calls
 - workspace tools:
   - `list_files`
   - `search_file`

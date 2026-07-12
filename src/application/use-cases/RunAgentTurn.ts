@@ -17,10 +17,10 @@ import type { ModelChatInput, ModelPort } from '../ports/ModelPort';
 import type { SessionStorePort } from '../ports/SessionStorePort';
 import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
-import type { ToolExecutionResult, ToolExecutorPort } from '../ports/ToolExecutorPort';
+import type { ToolExecutorPort } from '../ports/ToolExecutorPort';
 
 const MAX_TOOL_ITERATIONS = 12;
-const CACHEABLE_TOOLS = new Set(['list_files', 'read_file', 'search_file']);
+const DEDUPLICATED_TOOLS = new Set(['list_files', 'search_file']);
 const CACHE_INVALIDATING_TOOLS = new Set(['create_file', 'edit_file']);
 
 type RunAgentTurnInput = {
@@ -49,6 +49,10 @@ type ToolExecutionBatchResult = {
 };
 
 type PersistedModelToolCall = ModelToolCall & { id: ToolCallId };
+
+type ToolResultReference = {
+	sourceToolCallId: ToolCallId;
+};
 
 type StreamedModelResponse = {
 	contentDeltas: string[];
@@ -130,7 +134,7 @@ export class RunAgentTurn {
 		}
 
 		let currentMessages = messages;
-		const toolCache = new Map<string, ToolExecutionResult>();
+		const toolResultReferences = new Map<string, ToolResultReference>();
 
 		for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
 			currentMessages = await this.fitModelMessages(sessionId, currentMessages);
@@ -175,7 +179,7 @@ export class RunAgentTurn {
 				persistedToolCalls,
 				toolExecutor,
 				tools,
-				toolCache,
+				toolResultReferences,
 			);
 
 			if (terminalMessage !== undefined) {
@@ -255,7 +259,7 @@ export class RunAgentTurn {
 		toolCalls: PersistedModelToolCall[],
 		toolExecutor: ToolExecutorPort,
 		tools: ToolDefinition[],
-		toolCache: Map<string, ToolExecutionResult>,
+		toolResultReferences: Map<string, ToolResultReference>,
 	): Promise<ToolExecutionBatchResult> {
 		const toolMessages: ModelMessage[] = [];
 
@@ -314,24 +318,29 @@ export class RunAgentTurn {
 			await this.dependencies.sessionStore.appendSessionEvent(startedEvent);
 
 			try {
-				const cacheKey = CACHEABLE_TOOLS.has(toolName)
+				const cacheKey = DEDUPLICATED_TOOLS.has(toolName)
 					? JSON.stringify([toolName, toolCall.arguments])
 					: undefined;
-				let result = cacheKey === undefined ? undefined : toolCache.get(cacheKey);
+				const previousResult =
+					cacheKey === undefined ? undefined : toolResultReferences.get(cacheKey);
+				let output: unknown;
 
-				if (result === undefined) {
-					result = await toolExecutor.execute({
+				if (previousResult === undefined) {
+					const result = await toolExecutor.execute({
 						toolName,
 						toolInput: toolCall.arguments,
 					});
+					output = result.output;
 
 					if (cacheKey !== undefined) {
-						toolCache.set(cacheKey, result);
+						toolResultReferences.set(cacheKey, { sourceToolCallId: toolCallId });
 					}
+				} else {
+					output = createCachedToolOutput(previousResult.sourceToolCallId);
 				}
 
 				if (CACHE_INVALIDATING_TOOLS.has(toolName)) {
-					toolCache.clear();
+					toolResultReferences.clear();
 				}
 
 				const completedEvent: ToolCallCompleted = {
@@ -341,7 +350,7 @@ export class RunAgentTurn {
 					timestamp: this.dependencies.clock.now(),
 					toolCallId,
 					toolName,
-					output: result.output,
+					output,
 				};
 				await this.dependencies.sessionStore.appendSessionEvent(completedEvent);
 
@@ -349,7 +358,7 @@ export class RunAgentTurn {
 					role: 'tool',
 					toolCallId,
 					toolName,
-					content: stringifyToolOutput(result.output),
+					content: stringifyToolOutput(output),
 				});
 			} catch (caughtError) {
 				const error = toError(caughtError);
@@ -517,6 +526,12 @@ const stringifyToolOutput = (output: unknown): string => {
 
 	return json ?? String(output);
 };
+
+const createCachedToolOutput = (sourceToolCallId: ToolCallId): Record<string, unknown> => ({
+	cached: true,
+	sourceToolCallId,
+	message: `Result reused from tool call ${sourceToolCallId}.`,
+});
 
 const withSignal = (
 	input: Omit<ModelChatInput, 'signal'>,

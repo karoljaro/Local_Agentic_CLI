@@ -196,6 +196,26 @@ const createReadEditToolExecutor = (): RecordingToolExecutor => {
 	);
 };
 
+const createSearchEditToolExecutor = (): RecordingToolExecutor => {
+	let searchCount = 0;
+
+	return new RecordingToolExecutor([searchToolDefinition, looseEditToolDefinition], (request) => {
+		if (request.toolName === 'search_file') {
+			searchCount += 1;
+
+			return {
+				toolName: request.toolName,
+				output: { version: searchCount },
+			};
+		}
+
+		return {
+			toolName: request.toolName,
+			output: { replaced: true },
+		};
+	});
+};
+
 const createFailingToolExecutor = (): RecordingToolExecutor =>
 	new RecordingToolExecutor([readToolDefinition], () => {
 		throw new Error('file missing');
@@ -1184,30 +1204,92 @@ describe('RunAgentTurn', () => {
 		});
 	});
 
-	test('caches read tools during a turn and clears the cache after an edit', async () => {
+	test('executes repeated read_file calls instead of serving stale cached content', async () => {
 		const toolExecutor = createReadEditToolExecutor();
+		const model = new ScriptedModel([
+			toolCallResponse([readFileToolCall('src/file.ts')]),
+			toolCallResponse([readFileToolCall('src/file.ts')]),
+			textResponse('Done.'),
+		]);
 		const { sessionId, useCase } = createRunAgentTurnHarness({
-			model: new ScriptedModel([
-				toolCallResponse([readFileToolCall('src/file.ts')]),
-				toolCallResponse([readFileToolCall('src/file.ts')]),
-				toolCallResponse([editFileToolCall()]),
-				toolCallResponse([readFileToolCall('src/file.ts')]),
-				textResponse('Done.'),
-			]),
+			model,
+			toolExecutor,
+		});
+
+		await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Read twice' }));
+
+		expect(toolExecutor.receivedRequests.map((request) => request.toolName)).toEqual([
+			'read_file',
+			'read_file',
+		]);
+		expect(model.receivedInputs[2]?.messages.at(-1)).toMatchObject({
+			role: 'tool',
+			content: '{"content":"version-2"}',
+		});
+	});
+
+	test('deduplicates search_file output with a persisted reference to the source call', async () => {
+		const toolExecutor = createSearchReadToolExecutor();
+		const model = new ScriptedModel([
+			toolCallResponse([searchFileToolCall('UserRepository')]),
+			toolCallResponse([searchFileToolCall('UserRepository')]),
+			textResponse('Done.'),
+		]);
+		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
+			model,
+			toolExecutor,
+		});
+
+		await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Search twice' }));
+
+		expect(toolExecutor.receivedRequests).toHaveLength(1);
+		expect(model.receivedInputs[2]?.messages.at(-1)).toMatchObject({
+			role: 'tool',
+			content:
+				'{"cached":true,"sourceToolCallId":"tool-call-3","message":"Result reused from tool call tool-call-3."}',
+		});
+		expect(
+			sessionStore.events.filter((event) => event.type === 'tool.call.completed').at(-1),
+		).toMatchObject({
+			output: {
+				cached: true,
+				sourceToolCallId: asToolCallId('tool-call-3'),
+			},
+		});
+
+		const rebuiltState = reduceAgentState(sessionId, sessionStore.events);
+
+		expect(rebuiltState.messages.slice(0, -1)).toEqual(
+			model.receivedInputs[2]?.messages.slice(1) ?? [],
+		);
+	});
+
+	test('clears deduplicated search references after a successful edit', async () => {
+		const toolExecutor = createSearchEditToolExecutor();
+		const model = new ScriptedModel([
+			toolCallResponse([searchFileToolCall('value')]),
+			toolCallResponse([searchFileToolCall('value')]),
+			toolCallResponse([editFileToolCall()]),
+			toolCallResponse([searchFileToolCall('value')]),
+			textResponse('Done.'),
+		]);
+		const { sessionId, useCase } = createRunAgentTurnHarness({
+			model,
 			toolExecutor,
 			approveToolCall: async () => true,
 		});
 
-		const chunks = await collectAsyncIterable(
-			useCase.run({ sessionId, prompt: 'Read, edit, and read again' }),
-		);
+		await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Search, edit, and search' }));
 
-		expect(chunks).toEqual([{ contentDelta: 'Done.' }]);
 		expect(toolExecutor.receivedRequests.map((request) => request.toolName)).toEqual([
-			'read_file',
+			'search_file',
 			'edit_file',
-			'read_file',
+			'search_file',
 		]);
+		expect(model.receivedInputs[4]?.messages.at(-1)).toMatchObject({
+			role: 'tool',
+			content: '{"version":2}',
+		});
 	});
 
 	test('stores failed tool events and sends the error back to the model', async () => {
@@ -1332,7 +1414,7 @@ describe('RunAgentTurn', () => {
 			collectAsyncIterable(useCase.run({ sessionId, prompt: 'Keep reading' })),
 		).rejects.toThrow('Tool iteration limit reached.');
 
-		expect(toolExecutor.receivedRequests).toHaveLength(1);
+		expect(toolExecutor.receivedRequests).toHaveLength(12);
 		expect(sessionStore.events.at(-1)).toMatchObject({
 			sessionId,
 			type: 'agent.error',
