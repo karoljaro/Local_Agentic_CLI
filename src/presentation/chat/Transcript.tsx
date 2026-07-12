@@ -1,5 +1,5 @@
-import { memo, useMemo } from 'react';
-import { Box, Static, Text } from 'ink';
+import { memo } from 'react';
+import { Box, Text } from 'ink';
 
 import type { SessionId } from '@/domain/Ids';
 import { compactSessionId } from '../formatters/workspace';
@@ -11,29 +11,14 @@ type TranscriptProps = {
 	history: HistoryEntry[];
 };
 
-type StaticTranscriptItem =
-	| { type: 'header'; id: string; sessionId: SessionId }
-	| { type: 'entry'; id: string; entry: HistoryEntry };
-
 export const Transcript = memo(({ sessionId, history }: TranscriptProps) => {
-	const items = useMemo<StaticTranscriptItem[]>(
-		() => [
-			{ type: 'header', id: `header:${sessionId}`, sessionId },
-			...history.map((entry) => ({ type: 'entry' as const, id: entry.id, entry })),
-		],
-		[history, sessionId],
-	);
-
 	return (
-		<Static items={items}>
-			{(item) =>
-				item.type === 'header' ? (
-					<SessionHeader key={item.id} sessionId={item.sessionId} />
-				) : (
-					<Message key={item.id} entry={item.entry} />
-				)
-			}
-		</Static>
+		<Box flexDirection="column">
+			<SessionHeader sessionId={sessionId} />
+			{history.map((entry) => (
+				<Message entry={entry} key={entry.id} />
+			))}
+		</Box>
 	);
 });
 

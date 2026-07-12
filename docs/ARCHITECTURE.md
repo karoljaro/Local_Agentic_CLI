@@ -77,17 +77,20 @@ are not appended to session JSONL, and diagnostic failures are isolated from age
 
 ### Presentation
 
-The terminal UI currently lives in `src/App.tsx`, `src/Markdown.tsx`, and `src/presentation/hooks`.
+The terminal UI lives in the small orchestrating `src/App.tsx` component and `src/presentation`.
+`RuntimePresentationController` is its boundary over the composition runtime. The presentation layer:
 
-The UI is intentionally simple:
+- maps durable engine events into completed transcript/tool rows;
+- keeps the current response in a separate 32 ms batching buffer;
+- memoizes completed history so model deltas update only the live response;
+- owns chat/model/resume screen navigation and keyboard focus;
+- defines slash-command metadata once and separates parsing from command effects;
+- renders concise approval requests and forwards only the decision to the engine;
+- uses a lightweight Marked-to-Ink renderer for terminal Markdown.
 
-- session picker;
-- chat-like transcript;
-- streaming final responses;
-- model switching with `/model`;
-- approval prompt for mutating tools.
-
-Stage 4 may move presentation files under a clearer `src/presentation` structure.
+The composition runtime publishes a durable event only after its JSONL append succeeds. Presentation
+subscribes with an explicit cleanup function. Tool execution, model/provider access, session policy,
+approval consequences, and durable state remain outside React.
 
 ## Runtime Data
 
@@ -108,7 +111,9 @@ The current durable events are:
 - `tool.call.failed`;
 - `agent.error`.
 
-Streaming deltas are runtime-only and are not persisted as durable events.
+Streaming deltas are runtime-only and are not persisted as durable events. Tool-enabled rounds yield
+their text immediately; `assistant.tool_calls.completed` is the boundary between an intermediate
+assistant response and the next model round.
 
 `SessionStateCache` reads and validates a session JSONL file on first access in a runtime, then keeps
 its events and incrementally reduced state in memory. The transcript loader and `AgentLoop`

@@ -1,6 +1,6 @@
 # Presentation redesign plan
 
-Status: in progress (started 2026-07-12)
+Status: complete (2026-07-12)
 
 This document is the working record for the staged rebuild described in
 `codex-prompt-agentic-cli-presentation.md`. It is updated after every implementation stage and
@@ -109,8 +109,11 @@ The exact structure may be consolidated as implementation shows which boundaries
 
 ### State, history, and stream design
 
-- Completed transcript entries live in reducer state and are rendered through Ink `Static` with stable
-  event/UI ids. The session header is a single static item.
+- Completed transcript entries live in reducer state with stable event/UI ids. `Transcript` and each
+  completed row are memoized; the high-frequency stream store updates only `LiveTurn`. Ink `Static` was
+  evaluated but rejected for the final multi-screen design because its permanent scrollback would leave
+  chat above a full-screen selector and reprint history after remount. The session header is one stable,
+  memoized row.
 - The active response is separate from completed history. Deltas enter a ref-backed buffer and flush at
   a short interval; completion flushes synchronously before promoting exactly one non-empty answer.
 - Engine events append tool/system/error rows without copying or reparsing the entire session. Initial
@@ -174,8 +177,9 @@ Implemented:
 - `presentationReducer` owns completed history and active tool transitions;
 - `StreamBuffer` owns ref-like high-frequency delta batching outside completed history;
 - startup parsing moved into the active presentation and is wired by `index.tsx`;
-- archived `ui_old/` is excluded from the active TypeScript program. It remains unchanged and available
-  for reference and old behavioural tests.
+- archived `ui_old/` is excluded from the active TypeScript program. It remains functionally unchanged
+  and available for reference and old behavioural tests; one renderer import is relative so those tests
+  remain self-contained.
 
 Engine contract changes:
 
@@ -203,9 +207,9 @@ Status: complete.
 
 Implemented:
 
-- `Transcript` always starts with one stable session header and renders completed entries through Ink
-  `Static`; user, assistant, system, tool, error, and cancellation rows have textual markers in addition
-  to colour;
+- `Transcript` always starts with one stable memoized session header; completed message rows are memoized,
+  and user, assistant, system, tool, error, and cancellation rows have textual markers in addition to
+  colour;
 - active stream text lives only in `StreamBuffer` and is read with `useSyncExternalStore` by `LiveTurn`,
   so token batches do not update or copy the completed history array;
 - 32 ms batching flushes every delta on completion/error and timers are cleared on start, reset, and
@@ -301,8 +305,12 @@ Status: complete.
   escapes, and line breaks.
 - Raw HTML is suppressed. Code has no frame or horizontal padding, normalises tabs/CR, remains copyable,
   and wraps within the terminal.
-- Message bodies use only a two-column marker indent and one vertical line between entries; there are no
+- Message bodies use only a two-column marker indent and one blank line between entries; there are no
   per-message frames or large banners.
+- Ink `Static` was deliberately not used in the final transcript: its permanent scrollback conflicts with
+  replacing chat by model/resume screens. The external stream store already ensures completed history is
+  not rendered on delta updates, while React memoization retains stable completed rows on ordinary UI
+  events.
 - Narrow-width render tests at 24/28 columns verify both prose and code stay within the terminal. Flex
   layout and Ink window-size state provide resize behaviour without cached widths.
 - The old table-heavy renderer was rejected; tables were outside the required syntax surface and would
@@ -322,4 +330,92 @@ Verification after stage 7:
 
 ### Stage 8 — optimisation and final verification
 
-Status: in progress.
+Status: complete.
+
+Final presentation structure:
+
+```text
+src/App.tsx                         small interactive guard and screen composition
+src/presentation/
+  adapters/PresentationController.ts
+  approval/ApprovalView.tsx
+  chat/{ChatScreen,LiveTurn,Transcript}.tsx
+  commands/commands.ts
+  components/{Markdown,SelectionScreen}.tsx
+  formatters/{tool,workspace}.ts
+  hooks/{useChatSession,useComposer,usePresentation}.ts
+  input/{CommandMenu,Composer}.tsx
+  screens/{ModelScreen,ResumeScreen}.tsx
+  state/{StreamBuffer,presentationReducer,sessionSummary}.ts
+  startupMode.ts
+  types.ts
+  **/*.test.{ts,tsx}
+```
+
+`App.tsx` is 80 lines including types/imports. It creates or accepts the presentation controller,
+guards non-interactive stdin before mounting input hooks, selects one active screen, and composes screen
+props. It contains no transcript rendering, command parsing, list filtering, stream buffering, reducer,
+Markdown, approval logic, or detailed key handling.
+
+Final performance/cleanup review:
+
+- Deltas append to a mutable pending string and notify only `LiveTurn` at most every 32 ms. They never copy
+  the history array or duplicate text into reducer state.
+- Completion/error synchronously flushes pending text, promotes one stable entry, then resets the stream.
+  Intermediate tool-round content uses its durable event as the promotion boundary.
+- `Transcript` and every completed row are memoized. It receives the same history reference during
+  waiting/stream updates, approval selection, composer editing, and active-tool status changes.
+- Engine event listeners are held in a Set, unsubscribe explicitly, publish only after durable success,
+  and isolate observer exceptions.
+- Abort controllers cover active turns, model warm-up/listing/switching, and session/model screen teardown.
+  Approval rejects pending work on supersession/unmount. Waiting and stream timers clean up.
+- Active tools update a small list by `toolCallId`; durable history changes only at semantic event
+  boundaries, never per token.
+- Long selection lists use a terminal-height-aware viewport. Resume history parsing is cached by the
+  existing `SessionStateCache`, so choosing an already summarised session does not reread JSONL.
+- Screen swaps unmount only visual screens; reducer, session id, model, and composer draft remain above
+  them in `usePresentation`.
+
+Final changes outside `presentation/`:
+
+- `src/App.tsx` and `index.tsx`: new entry/orchestration and startup mode wiring.
+- `PublishingSessionStore` plus `Runtime.subscribeSessionEvents`: post-durable event observer.
+- `ListSessionEvents`: returns the complete durable session timeline for restoration.
+- `RunAgentTurn`: streams content from tool-enabled rounds immediately instead of replaying a buffered
+  final round.
+- `tsconfig.json`: excludes archived `src/ui_old` from the active typecheck.
+- `package.json`: points `test:unit` at the active presentation tests.
+- README and architecture documentation now describe the implemented UI/event boundary.
+- One archived Markdown import was made relative inside `ui_old/` so historical tests remain runnable;
+  active code does not import the archive.
+
+Final verification (2026-07-12):
+
+- `bun run typecheck`: pass.
+- `bun test`: **185 pass, 0 fail**, 364 assertions across 38 files.
+- Interactive Ink test: slash menu -> model screen -> Escape -> preserved chat, pass.
+- Non-interactive stdin guard test: pass.
+- Narrow terminal render tests at 24 and 28 columns: pass.
+- `bun run format:check`: pass, 125 files.
+- Repository Biome config intentionally has its linter disabled. A forced JavaScript lint run over the
+  new presentation and changed engine boundary passes (Markdown AST index keys are explicitly skipped;
+  token order is immutable and has no stable domain ids). The two remaining diagnostics are informational
+  bracket-access suggestions required by `noPropertyAccessFromIndexSignature`.
+- `bun run build`: pass for Linux and Windows artifacts.
+- `bun run smoke:build`: pass.
+- `git diff --check`: pass.
+- `rg "ui_old" src/App.tsx src/presentation`: no matches.
+
+Known limitations / deliberate scope:
+
+- Markdown tables are not rendered; required prose, headings, lists, inline code, and fenced code are
+  supported. This keeps narrow-terminal behaviour predictable.
+- Resume previews require reading each session's events the first time the picker opens. Reads are cached,
+  but a future summary index would improve first-open latency for thousands of very large sessions.
+- Provider behaviour is covered by contract/unit tests and build smoke tests; this run did not depend on a
+  live local Ollama daemon or a specific installed model.
+- Diff previews, persistent settings, and command-execution tools remain product non-goals already listed
+  in the repository roadmap/README; approval details remain intentionally concise.
+
+All eight specification stages and acceptance criteria are implemented. No required presentation work is
+left open in this plan.

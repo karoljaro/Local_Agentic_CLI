@@ -40,7 +40,11 @@ export const ChatScreen = ({
 		{chat.loadStatus === 'loading' ? <Text color="gray">Loading session…</Text> : null}
 		<LiveTurn activeTools={chat.activeTools} status={chat.turnStatus} stream={stream} />
 		{pendingApproval === null ? null : (
-			<ApprovalView onResolve={onResolveApproval} request={pendingApproval} />
+			<ApprovalView
+				key={String(pendingApproval.toolCallId)}
+				onResolve={onResolveApproval}
+				request={pendingApproval}
+			/>
 		)}
 		<CommandMenu menu={commandMenu} />
 		<Composer

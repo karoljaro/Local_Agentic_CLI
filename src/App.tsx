@@ -23,11 +23,22 @@ export function App({ controller: injectedController, initialMode = 'new' }: App
 		[injectedController],
 	);
 	const { isRawModeSupported } = useStdin();
-	const presentation = usePresentation(controller, initialMode);
 
 	if (!isRawModeSupported) {
 		return <Text color="yellow">codesh requires an interactive terminal.</Text>;
 	}
+
+	return <InteractiveApp controller={controller} initialMode={initialMode} />;
+}
+
+const InteractiveApp = ({
+	controller,
+	initialMode,
+}: {
+	controller: PresentationController;
+	initialMode: StartupMode;
+}) => {
+	const presentation = usePresentation(controller, initialMode);
 
 	if (presentation.screen === 'models') {
 		return (
@@ -66,4 +77,4 @@ export function App({ controller: injectedController, initialMode = 'new' }: App
 			workspacePath={controller.workspacePath}
 		/>
 	);
-}
+};

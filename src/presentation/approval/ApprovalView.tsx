@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 
 import { describeToolRequest, formatToolDetails } from '../formatters/tool';
@@ -12,11 +12,6 @@ type ApprovalViewProps = {
 export const ApprovalView = ({ onResolve, request }: ApprovalViewProps) => {
 	const [selected, setSelected] = useState<'approve' | 'reject'>('reject');
 	const [showDetails, setShowDetails] = useState(false);
-
-	useEffect(() => {
-		setSelected('reject');
-		setShowDetails(false);
-	}, [request.toolCallId]);
 
 	useInput((value, key) => {
 		const normalized = value.toLowerCase();
