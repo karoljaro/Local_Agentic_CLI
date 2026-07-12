@@ -95,4 +95,28 @@ Verification after stage 2:
 
 ### Stage 3 — selection screens
 
+Status: complete.
+
+- `SelectionScreen` now owns the shared title -> filter -> options/status -> key-hints hierarchy.
+- The filter uses `InputSurface` with a search marker, visible end cursor, screen-specific placeholder,
+  and a muted state while loading/submitting.
+- Options sit on a subtle left edge and every model/session uses `SelectionRow`: marker + bold + inverse
+  selection, not colour alone.
+- Keyboard help moved from the title to a dedicated low-priority footer. Loading, empty/no-match, error,
+  secondary information, and submitting states remain inside the list surface.
+- Model names retain priority over current/size/quantisation metadata; below 40 columns model metadata
+  moves to an indented second line.
+- Session id/current state occupies the first line; timestamp and prompt preview form an indented second
+  level. The terminal-height viewport accounts for the estimated two-line session row.
+
+Verification after stage 3:
+
+- model/resume rendering, metadata and error test: pass;
+- common hierarchy and maximum width at 30 columns: pass;
+- loading and no-session state test: pass;
+- interactive open/cancel test: pass;
+- `bun run typecheck`: pass.
+
+### Stage 4 — approval
+
 Status: in progress.

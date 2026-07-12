@@ -1,4 +1,4 @@
-import { Box, Text } from 'ink';
+import { Text } from 'ink';
 
 import { SelectionScreen } from '../components/SelectionScreen';
 import { compactSessionId } from '../formatters/workspace';
@@ -27,55 +27,54 @@ export const ResumeScreen = ({
 	];
 
 	return (
-		<Box flexDirection="column">
-			<SelectionScreen
-				canCancel={canCancel}
-				emptyMessage="No sessions available."
-				error={selection.error}
-				getKey={(choice) =>
-					choice.type === 'new' ? 'new-session' : String(choice.session.sessionId)
+		<SelectionScreen
+			canCancel={canCancel}
+			emptyMessage="No sessions available."
+			error={selection.error}
+			estimatedItemHeight={2}
+			filterPlaceholder="Filter sessions…"
+			getKey={(choice) =>
+				choice.type === 'new' ? 'new-session' : String(choice.session.sessionId)
+			}
+			getSearchText={(choice) =>
+				choice.type === 'new'
+					? 'new chat session'
+					: `${choice.session.sessionId} ${choice.session.preview ?? ''}`
+			}
+			items={choices}
+			onCancel={onCancel}
+			onSelect={onSelect}
+			renderItem={(choice, selected) => {
+				if (choice.type === 'new') {
+					return <Text bold> New chat</Text>;
 				}
-				getSearchText={(choice) =>
-					choice.type === 'new'
-						? 'new chat session'
-						: `${choice.session.sessionId} ${choice.session.preview ?? ''}`
-				}
-				items={choices}
-				onCancel={onCancel}
-				onSelect={onSelect}
-				renderItem={(choice, selected) => {
-					if (choice.type === 'new') {
-						return (
-							<Text bold={selected} color={selected ? 'cyan' : 'white'}>
-								{selected ? '›' : ' '} New chat
+				const session = choice.session;
+				const metadata = [
+					session.lastActiveAt === undefined ? undefined : formatTimestamp(session.lastActiveAt),
+					session.preview === undefined ? undefined : truncate(session.preview, 64),
+				].filter((value): value is string => value !== undefined);
+				return (
+					<>
+						<Text bold>{` ${compactSessionId(String(session.sessionId))}`}</Text>
+						{String(session.sessionId) === currentSessionId ? (
+							<Text {...(selected ? { dimColor: true } : { color: 'green' })}> · current</Text>
+						) : null}
+						{metadata.length === 0 ? null : (
+							<Text {...(selected ? { dimColor: true } : { color: 'gray' })}>
+								{`\n    ${metadata.join(' · ')}`}
 							</Text>
-						);
-					}
-					const session = choice.session;
-					return (
-						<>
-							<Text bold={selected} color={selected ? 'cyan' : 'white'}>
-								{selected ? '›' : ' '} {compactSessionId(String(session.sessionId))}
-							</Text>
-							{String(session.sessionId) === currentSessionId ? (
-								<Text color="green"> · current</Text>
-							) : null}
-							{session.lastActiveAt === undefined ? null : (
-								<Text color="gray"> · {formatTimestamp(session.lastActiveAt)}</Text>
-							)}
-							{session.preview === undefined ? null : (
-								<Text color="gray"> · {truncate(session.preview, 64)}</Text>
-							)}
-						</>
-					);
-				}}
-				status={selection.status}
-				title="Resume session"
-			/>
-			{selection.status === 'idle' && selection.items.length === 0 ? (
-				<Text color="gray"> No saved sessions yet.</Text>
-			) : null}
-		</Box>
+						)}
+					</>
+				);
+			}}
+			secondaryMessage={
+				selection.status === 'idle' && selection.items.length === 0
+					? 'No saved sessions yet'
+					: undefined
+			}
+			status={selection.status}
+			title="Resume session"
+		/>
 	);
 };
 

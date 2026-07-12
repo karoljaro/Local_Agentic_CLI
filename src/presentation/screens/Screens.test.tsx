@@ -60,4 +60,61 @@ describe('selection screens', () => {
 		expect(output).toContain('session-1');
 		expect(output).toContain('Explain the repository');
 	});
+
+	test('uses the same title, filter, list, and help hierarchy on narrow screens', () => {
+		const output = Bun.stripANSI(
+			renderToString(
+				<ModelScreen
+					currentModelName="qwen:latest"
+					onCancel={() => undefined}
+					onSelect={() => undefined}
+					selection={{
+						status: 'idle',
+						items: [{ name: 'qwen:latest', parameterSize: '7B' }],
+					}}
+				/>,
+				{ columns: 30 },
+			),
+		);
+		const titleIndex = output.indexOf('Select model');
+		const filterIndex = output.indexOf('Filter models…');
+		const optionIndex = output.indexOf('qwen:latest');
+		const helpIndex = output.indexOf('Enter select');
+
+		expect(titleIndex).toBeGreaterThanOrEqual(0);
+		expect(filterIndex).toBeGreaterThan(titleIndex);
+		expect(optionIndex).toBeGreaterThan(filterIndex);
+		expect(helpIndex).toBeGreaterThan(optionIndex);
+		expect(Math.max(...output.split('\n').map((line) => line.length))).toBeLessThanOrEqual(30);
+	});
+
+	test('styles loading and no-session states inside their selection surfaces', () => {
+		const loading = Bun.stripANSI(
+			renderToString(
+				<ModelScreen
+					currentModelName="qwen:latest"
+					onCancel={() => undefined}
+					onSelect={() => undefined}
+					selection={{ status: 'loading', items: [] }}
+				/>,
+			),
+		);
+		const noSessions = Bun.stripANSI(
+			renderToString(
+				<ResumeScreen
+					canCancel
+					currentSessionId="session-1"
+					onCancel={() => undefined}
+					onSelect={() => undefined}
+					selection={{ status: 'idle', items: [] }}
+				/>,
+			),
+		);
+
+		expect(loading).toContain('Filter models…');
+		expect(loading).toContain('◌ Loading…');
+		expect(noSessions).toContain('Filter sessions…');
+		expect(noSessions).toContain('New chat');
+		expect(noSessions).toContain('No saved sessions yet');
+	});
 });

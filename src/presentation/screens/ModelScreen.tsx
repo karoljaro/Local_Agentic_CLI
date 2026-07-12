@@ -1,4 +1,4 @@
-import { Text } from 'ink';
+import { Text, useWindowSize } from 'ink';
 
 import type { ListedModel } from '@/application/ports/ModelCatalogPort';
 import { SelectionScreen } from '../components/SelectionScreen';
@@ -21,6 +21,7 @@ export const ModelScreen = ({
 		canCancel
 		emptyMessage="No local Ollama models found."
 		error={selection.error}
+		filterPlaceholder="Filter models…"
 		getKey={(model) => model.name}
 		getSearchText={(model) =>
 			[model.name, model.parameterSize, model.quantizationLevel].filter(Boolean).join(' ')
@@ -30,11 +31,11 @@ export const ModelScreen = ({
 		onSelect={onSelect}
 		renderItem={(model, selected) => (
 			<>
-				<Text bold={selected} color={selected ? 'cyan' : 'white'}>
-					{selected ? '›' : ' '} {model.name}
-				</Text>
-				{model.name === currentModelName ? <Text color="green"> · current</Text> : null}
-				<ModelDetails model={model} />
+				<Text bold>{` ${model.name}`}</Text>
+				{model.name === currentModelName ? (
+					<Text {...(selected ? { dimColor: true } : { color: 'green' })}> · current</Text>
+				) : null}
+				<ModelDetails model={model} selected={selected} />
 			</>
 		)}
 		status={selection.status}
@@ -42,9 +43,14 @@ export const ModelScreen = ({
 	/>
 );
 
-const ModelDetails = ({ model }: { model: ListedModel }) => {
+const ModelDetails = ({ model, selected }: { model: ListedModel; selected: boolean }) => {
+	const { columns } = useWindowSize();
 	const details = [model.parameterSize, model.quantizationLevel].filter(
 		(value): value is string => value !== undefined,
 	);
-	return details.length === 0 ? null : <Text color="gray"> · {details.join(', ')}</Text>;
+	return details.length === 0 ? null : (
+		<Text {...(selected ? { dimColor: true } : { color: 'gray' })}>
+			{columns < 40 ? `\n    ${details.join(' · ')}` : ` · ${details.join(', ')}`}
+		</Text>
+	);
 };

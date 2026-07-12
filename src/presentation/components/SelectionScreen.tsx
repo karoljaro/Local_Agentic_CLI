@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Box, Text, useInput, usePaste, useWindowSize } from 'ink';
+import { InputSurface, KeyHints, SelectionRow, type KeyHint } from './Interactive';
 
 type SelectionScreenProps<TItem> = {
 	canCancel: boolean;
 	emptyMessage: string;
 	error?: string | undefined;
+	filterPlaceholder: string;
 	getKey: (item: TItem) => string;
 	getSearchText: (item: TItem) => string;
+	estimatedItemHeight?: number | undefined;
 	items: TItem[];
 	onCancel: () => void;
 	onSelect: (item: TItem) => void;
 	renderItem: (item: TItem, selected: boolean) => ReactNode;
+	secondaryMessage?: string | undefined;
 	status: 'idle' | 'loading' | 'submitting';
 	title: string;
 };
@@ -19,12 +23,15 @@ export const SelectionScreen = <TItem,>({
 	canCancel,
 	emptyMessage,
 	error,
+	filterPlaceholder,
 	getKey,
 	getSearchText,
+	estimatedItemHeight = 1,
 	items,
 	onCancel,
 	onSelect,
 	renderItem,
+	secondaryMessage,
 	status,
 	title,
 }: SelectionScreenProps<TItem>) => {
@@ -102,7 +109,10 @@ export const SelectionScreen = <TItem,>({
 		}
 	});
 
-	const maxVisibleRows = Math.max(3, Math.min(12, rows - 8));
+	const maxVisibleRows = Math.max(
+		3,
+		Math.min(12, Math.floor(Math.max(3, rows - 8) / estimatedItemHeight)),
+	);
 	const firstVisibleIndex = Math.max(
 		0,
 		Math.min(selectedIndex - Math.floor(maxVisibleRows / 2), filteredItems.length - maxVisibleRows),
@@ -111,28 +121,92 @@ export const SelectionScreen = <TItem,>({
 
 	return (
 		<Box flexDirection="column" paddingX={1}>
-			<Box justifyContent="space-between">
-				<Text bold>{title}</Text>
-				<Text color="gray">↑/↓ choose · Enter confirm{canCancel ? ' · Esc back' : ''}</Text>
+			<Box marginBottom={1}>
+				<Text bold color="cyan">
+					◇ {title}
+				</Text>
 			</Box>
-			<Box marginY={1}>
-				<Text color="cyan">/ </Text>
-				<Text>{query}</Text>
-				<Text inverse> </Text>
-			</Box>
+			<InputSurface ariaLabel={`Filter ${title}`} focused={status === 'idle'} marker="⌕">
+				<FilterText focused={status === 'idle'} placeholder={filterPlaceholder} query={query} />
+			</InputSurface>
 
-			{status === 'loading' ? <Text color="gray">Loading…</Text> : null}
-			{visibleItems.map((item, visibleIndex) => {
-				const absoluteIndex = firstVisibleIndex + visibleIndex;
-				return <Box key={getKey(item)}>{renderItem(item, absoluteIndex === selectedIndex)}</Box>;
-			})}
-			{status !== 'loading' && filteredItems.length === 0 ? (
-				<Text color="gray">{query.length === 0 ? emptyMessage : 'No matches.'}</Text>
-			) : null}
-			{error === undefined ? null : <Text color="red">! {error}</Text>}
-			{status === 'submitting' ? <Text color="yellow">Applying selection…</Text> : null}
+			<Box
+				aria-label={`${title} options`}
+				aria-role="listbox"
+				borderBottom={false}
+				borderColor="gray"
+				borderLeft
+				borderLeftDimColor
+				borderRight={false}
+				borderStyle="single"
+				borderTop={false}
+				flexDirection="column"
+				marginTop={1}
+				paddingLeft={1}
+			>
+				{status === 'loading' ? <Text color="gray">◌ Loading…</Text> : null}
+				{status === 'loading'
+					? null
+					: visibleItems.map((item, visibleIndex) => {
+							const absoluteIndex = firstVisibleIndex + visibleIndex;
+							const selected = absoluteIndex === selectedIndex;
+							return (
+								<SelectionRow key={getKey(item)} selected={selected}>
+									{renderItem(item, selected)}
+								</SelectionRow>
+							);
+						})}
+				{status !== 'loading' && filteredItems.length === 0 ? (
+					<Text color="gray">· {query.length === 0 ? emptyMessage : 'No matches.'}</Text>
+				) : null}
+				{secondaryMessage === undefined ? null : (
+					<Text color="gray" dimColor>
+						· {secondaryMessage}
+					</Text>
+				)}
+				{error === undefined ? null : <Text color="red">! {error}</Text>}
+				{status === 'submitting' ? <Text color="yellow">◌ Applying selection…</Text> : null}
+			</Box>
+			<Box marginTop={1} paddingLeft={2}>
+				<KeyHints hints={getSelectionHints(canCancel)} />
+			</Box>
 		</Box>
 	);
+};
+
+const FilterText = ({
+	focused,
+	placeholder,
+	query,
+}: {
+	focused: boolean;
+	placeholder: string;
+	query: string;
+}) => {
+	if (query.length === 0) {
+		return (
+			<Text color="gray" italic>
+				{focused ? <Text inverse> </Text> : null}
+				{placeholder}
+			</Text>
+		);
+	}
+
+	return (
+		<Text wrap="truncate-end">
+			{query}
+			{focused ? <Text inverse> </Text> : null}
+		</Text>
+	);
+};
+
+const getSelectionHints = (canCancel: boolean): KeyHint[] => {
+	return [
+		{ key: '↑↓', label: 'move' },
+		{ key: 'Enter', label: 'select' },
+		...(canCancel ? [{ key: 'Esc', label: 'back' }] : []),
+		{ key: 'Ctrl+U', label: 'clear filter' },
+	];
 };
 
 const normalizePaste = (value: string): string => {
