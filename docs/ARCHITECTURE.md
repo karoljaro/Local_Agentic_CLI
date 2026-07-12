@@ -28,7 +28,7 @@ Important pieces:
 - `RunAgentTurn`, which owns the agent loop;
 - `ContextBuilder`, which keeps the current turn and the newest complete historical turns within a configured character budget;
 - `SessionReducer`, which rebuilds chat/model state from durable events;
-- file-operation use-cases for listing, reading, searching, creating, and editing workspace files.
+- `EditWorkspaceFile`, which owns exact-match replacement and optimistic concurrency policy.
 
 Application code should depend on ports and domain types, not concrete adapters.
 
@@ -103,8 +103,8 @@ The current durable events are:
 Streaming deltas are runtime-only and are not persisted as durable events.
 
 `SessionStateCache` reads and validates a session JSONL file on first access in a runtime, then keeps
-its events and incrementally reduced state in memory. The transcript loader, `LoadSession`, and
-`RunAgentTurn` share that instance. Appends are serialized and written to JSONL before the cached
+its events and incrementally reduced state in memory. The transcript loader and `RunAgentTurn`
+share that instance. Appends are serialized and written to JSONL before the cached
 events and state are updated. A new process always rebuilds the cache from JSONL.
 
 Tool-calling model responses are persisted as one `assistant.tool_calls.completed` event before
@@ -124,7 +124,7 @@ Keep these boundaries stable while adding features:
 
 New tools should usually be added by:
 
-1. adding or reusing an application use-case;
+1. reusing a port directly, or adding an application use-case only when the operation has real policy;
 2. defining one local tool with its Zod input schema, metadata, and execution function;
 3. registering it in the local tool factory;
 4. adding focused schema and execution tests.

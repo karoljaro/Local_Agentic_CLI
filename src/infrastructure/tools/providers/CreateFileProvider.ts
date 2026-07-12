@@ -1,4 +1,4 @@
-import type { CreateWorkspaceFile } from '@/application/use-cases/file-operations/CreateWorkspaceFile';
+import type { WorkspaceFilePort } from '@/application/ports/WorkspaceFilePort';
 import { z } from 'zod';
 import { defineLocalTool, type LocalTool } from '../LocalTool';
 
@@ -9,7 +9,7 @@ type CreateFileProviderOptions = {
 };
 
 export const createFileTool = (
-	createWorkspaceFile: CreateWorkspaceFile,
+	workspaceFiles: WorkspaceFilePort,
 	options: CreateFileProviderOptions,
 ): LocalTool =>
 	defineLocalTool({
@@ -27,7 +27,7 @@ export const createFileTool = (
 			content: z.string().describe('The complete content of the new file.'),
 		}),
 		execute: async (input) => {
-			const file = await createWorkspaceFile.execute({
+			const file = await workspaceFiles.createFile({
 				...input,
 				maxFileBytes: options.maxFileBytes,
 			});

@@ -62,28 +62,14 @@ export class AgentStateReducer {
 				break;
 
 			case 'tool.call.completed':
-				this.state.toolResults.push({
-					toolCallId: event.toolCallId,
-					toolName: event.toolName,
-					output: event.output,
-				});
 				this.applyTerminalToolCall(event);
 				break;
 
 			case 'tool.call.failed':
-				this.state.errors.push({
-					message: event.error.message,
-					...(event.error.code === undefined ? {} : { code: event.error.code }),
-					recoverable: true,
-					...(event.error.details === undefined ? {} : { details: event.error.details }),
-				});
 				this.applyTerminalToolCall(event);
 				break;
 
 			case 'agent.error':
-				this.state.errors.push(event.error);
-				break;
-
 			case 'tool.call.started':
 				break;
 		}
@@ -93,8 +79,6 @@ export class AgentStateReducer {
 		return {
 			sessionId: this.state.sessionId,
 			messages: [...this.state.messages],
-			toolResults: [...this.state.toolResults],
-			errors: [...this.state.errors],
 		};
 	}
 

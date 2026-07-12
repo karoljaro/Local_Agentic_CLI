@@ -1,10 +1,10 @@
-import type { SearchWorkspaceFiles } from '@/application/use-cases/file-operations/SearchWorkspaceFiles';
+import type { WorkspaceSearchPort } from '@/application/ports/WorkspaceSearchPort';
 import { z } from 'zod';
 import { defineLocalTool, type LocalTool } from '../LocalTool';
 
 export const SEARCH_FILE_TOOL_NAME = 'search_file';
 
-export const searchFileTool = (searchWorkspaceFiles: SearchWorkspaceFiles): LocalTool =>
+export const searchFileTool = (workspaceSearch: WorkspaceSearchPort): LocalTool =>
 	defineLocalTool({
 		name: SEARCH_FILE_TOOL_NAME,
 		description:
@@ -17,5 +17,5 @@ export const searchFileTool = (searchWorkspaceFiles: SearchWorkspaceFiles): Loca
 				.min(1, 'search_file requires a non-empty string query.')
 				.describe('Exact text or | separated alternatives.'),
 		}),
-		execute: async ({ query }) => searchWorkspaceFiles.execute({ query }),
+		execute: async ({ query }) => workspaceSearch.search({ query }),
 	});

@@ -1,10 +1,6 @@
 import { resolve } from 'node:path';
 
-import { CreateWorkspaceFile } from '@/application/use-cases/file-operations/CreateWorkspaceFile';
 import { EditWorkspaceFile } from '@/application/use-cases/file-operations/EditWorkspaceFile';
-import { ListWorkspaceFiles } from '@/application/use-cases/file-operations/ListWorkspaceFiles';
-import { ReadWorkspaceFile } from '@/application/use-cases/file-operations/ReadWorkspaceFile';
-import { SearchWorkspaceFiles } from '@/application/use-cases/file-operations/SearchWorkspaceFiles';
 import { NodeWorkspaceFileSystem } from '@/infrastructure/file-system/NodeWorkspaceFileSystem';
 import { LocalToolRegistry } from '@/infrastructure/tools/LocalToolExecutor';
 import { createFileTool } from '@/infrastructure/tools/providers/CreateFileProvider';
@@ -52,16 +48,16 @@ export const createLocalToolExecutor = (
 	}
 
 	return new LocalToolRegistry([
-		listFilesTool(new ListWorkspaceFiles(workspaceFiles), {
+		listFilesTool(workspaceFiles, {
 			maxEntries: options.maxListFiles ?? DEFAULT_MAX_LIST_FILES,
 		}),
-		readFileTool(new ReadWorkspaceFile(workspaceFiles), {
+		readFileTool(workspaceFiles, {
 			maxFileBytes,
 			maxLines: options.maxReadLines ?? DEFAULT_MAX_READ_LINES,
 			maxCharacters: options.maxReadCharacters ?? DEFAULT_MAX_READ_CHARACTERS,
 		}),
-		searchFileTool(new SearchWorkspaceFiles(new RipgrepSearch(searchOptions))),
-		createFileTool(new CreateWorkspaceFile(workspaceFiles), {
+		searchFileTool(new RipgrepSearch(searchOptions)),
+		createFileTool(workspaceFiles, {
 			maxFileBytes,
 		}),
 		editFileTool(new EditWorkspaceFile(workspaceFiles), { maxFileBytes }),

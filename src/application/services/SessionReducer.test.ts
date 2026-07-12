@@ -129,27 +129,6 @@ describe('reduceAgentState', () => {
 				}),
 			},
 		]);
-		expect(state.toolResults).toEqual([
-			{
-				toolCallId,
-				toolName: 'read_file',
-				output: { path: 'README.md', content: 'hello' },
-			},
-		]);
-		expect(state.errors).toEqual([
-			{
-				message: 'rg failed',
-				code: 'TOOL_FAILED',
-				recoverable: true,
-				details: { exitCode: 2 },
-			},
-			{
-				message: 'model unavailable',
-				code: 'MODEL_UNAVAILABLE',
-				recoverable: true,
-				details: { provider: 'ollama' },
-			},
-		]);
 	});
 
 	test('ignores an unfinished tool call when rebuilding messages', () => {

@@ -5,7 +5,6 @@ import { ContextBuilder } from '@/application/services/ContextBuilder';
 import { SessionStateCache } from '@/application/services/SessionStateCache';
 import { ListSessionEvents } from '@/application/use-cases/ListSessionEvents';
 import { ListSessions } from '@/application/use-cases/ListSessions';
-import { LoadSession } from '@/application/use-cases/LoadSession';
 import { RunAgentTurn, type ToolApprovalHandler } from '@/application/use-cases/RunAgentTurn';
 import { readConfig, type AppConfig } from '@/composition/config';
 import {
@@ -21,7 +20,6 @@ export type { RuntimeListModelsOptions } from '@/composition/model/OllamaModelRu
 
 export type Runtime = {
 	runAgentTurn: RunAgentTurn;
-	loadSession: LoadSession;
 	listSessionEvents: ListSessionEvents;
 	listSessions: ListSessions;
 	idGenerator: IdGeneratorPort;
@@ -46,10 +44,6 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 		maxContextCharacters: config.MAX_CONTEXT_CHARACTERS,
 	});
 
-	const loadSession = new LoadSession({
-		sessionStore,
-	});
-
 	const listSessions = new ListSessions({
 		sessionStore,
 	});
@@ -60,7 +54,6 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 
 	return {
 		idGenerator,
-		loadSession,
 		listSessionEvents,
 		listSessions,
 		workspacePath: process.cwd(),

@@ -1,4 +1,4 @@
-import type { ListWorkspaceFiles } from '@/application/use-cases/file-operations/ListWorkspaceFiles';
+import type { WorkspaceFilePort } from '@/application/ports/WorkspaceFilePort';
 import { z } from 'zod';
 import { defineLocalTool, type LocalTool } from '../LocalTool';
 
@@ -9,7 +9,7 @@ type ListFilesProviderOptions = {
 };
 
 export const listFilesTool = (
-	listWorkspaceFiles: ListWorkspaceFiles,
+	workspaceFiles: WorkspaceFilePort,
 	options: ListFilesProviderOptions,
 ): LocalTool => {
 	if (!Number.isInteger(options.maxEntries) || options.maxEntries <= 0) {
@@ -32,7 +32,7 @@ export const listFilesTool = (
 		execute: async (input) => {
 			const path = input.path;
 
-			return listWorkspaceFiles.execute({
+			return workspaceFiles.listFiles({
 				...(path === undefined ? {} : { path }),
 				maxEntries: options.maxEntries,
 			});

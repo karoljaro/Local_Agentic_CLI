@@ -1,4 +1,4 @@
-import type { ReadWorkspaceFile } from '@/application/use-cases/file-operations/ReadWorkspaceFile';
+import type { WorkspaceFilePort } from '@/application/ports/WorkspaceFilePort';
 import { z } from 'zod';
 import { defineLocalTool, type LocalTool } from '../LocalTool';
 
@@ -30,7 +30,7 @@ const readFileInputSchema = z
 type ReadFileInput = z.output<typeof readFileInputSchema>;
 
 export const readFileTool = (
-	readWorkspaceFile: ReadWorkspaceFile,
+	workspaceFiles: WorkspaceFilePort,
 	options: ReadFileProviderOptions,
 ): LocalTool => {
 	if (
@@ -48,7 +48,7 @@ export const readFileTool = (
 			'Read a bounded line range from a UTF-8 text file in the current workspace. Use startLine and endLine to continue reading truncated files.',
 		inputSchema: readFileInputSchema,
 		execute: async (input) => {
-			const file = await readWorkspaceFile.execute({
+			const file = await workspaceFiles.readFile({
 				path: input.path,
 				maxFileBytes: options.maxFileBytes,
 			});
