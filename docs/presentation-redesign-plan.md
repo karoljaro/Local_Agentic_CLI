@@ -162,5 +162,41 @@ moved to presentation.
 
 ## Stage log
 
-Subsequent sections will record completed files, decisions, reuse/rejection notes, contract changes, and
-verification results after each stage.
+### Stage 2 — foundation (complete)
+
+Implemented:
+
+- `src/App.tsx` now exports a small initial orchestration shell with injected-controller support and an
+  interactive-terminal guard;
+- `presentation/types.ts` defines screens, stable history entries, active tools, selection states, and
+  turn state without depending on React;
+- `RuntimePresentationController` is the only presentation adapter over the concrete runtime;
+- `presentationReducer` owns completed history and active tool transitions;
+- `StreamBuffer` owns ref-like high-frequency delta batching outside completed history;
+- startup parsing moved into the active presentation and is wired by `index.tsx`;
+- archived `ui_old/` is excluded from the active TypeScript program. It remains unchanged and available
+  for reference and old behavioural tests.
+
+Engine contract changes:
+
+- `PublishingSessionStore` decorates the real JSONL store and publishes a durable `AgentEvent` only after
+  `appendSessionEvent` succeeds. Listener exceptions cannot affect the engine, and unsubscribe removes
+  the listener.
+- Runtime now exposes `subscribeSessionEvents(listener)`.
+- `ListSessionEvents` now returns every durable event for the requested session, not only user/final
+  assistant messages. This is required to restore the same concise tool timeline shown live. It also
+  defensively filters mismatched session ids.
+
+No agent loop, provider, tool execution, persistence format, approval policy, or session reducer domain
+logic changed.
+
+Verification after stage 2:
+
+- `bun run typecheck`: pass.
+- Focused tests for publishing, full event listing, startup, stream batching, and presentation reduction:
+  10 pass, 0 fail.
+- Biome format on all touched files: pass.
+
+### Stage 3 — main chat
+
+Status: in progress.
