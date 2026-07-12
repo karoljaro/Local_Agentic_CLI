@@ -3,21 +3,24 @@ import type {
 	AssistantMessageCompleted,
 	AssistantToolCallsCompleted,
 	PromptSubmitted,
-	ToolCallCompleted,
-	ToolCallFailed,
-	ToolCallRequested,
-	ToolCallStarted,
 } from '@/domain/AgentEvent';
-import type { SessionId, ToolCallId } from '@/domain/Ids';
+import type { SessionId } from '@/domain/Ids';
 import type { ModelMessage } from '@/domain/ModelMessage';
-import type { ModelToolCall, ToolDefinition } from '@/domain/Tool';
-import { ContextBudgetExceededError, type ContextBuilder } from '../services/ContextBuilder';
-import { SessionStateCache } from '../services/SessionStateCache';
-import type { ModelChatInput, ModelPort } from '../ports/ModelPort';
-import type { SessionStorePort } from '../ports/SessionStorePort';
+import type { ModelToolCall } from '@/domain/Tool';
 import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
+import type { ModelChatInput, ModelPort } from '../ports/ModelPort';
+import type { SessionStorePort } from '../ports/SessionStorePort';
 import type { ToolExecutorPort } from '../ports/ToolExecutorPort';
+import { ContextBudgetExceededError, type ContextBuilder } from '../services/ContextBuilder';
+import { SessionStateCache } from '../services/SessionStateCache';
+import {
+	ToolRunner,
+	type PersistedModelToolCall,
+	type ToolApprovalHandler,
+} from '../services/ToolRunner';
+
+export type { ToolApprovalHandler, ToolApprovalRequest } from '../services/ToolRunner';
 
 const MAX_TOOL_ITERATIONS = 12;
 
@@ -30,26 +33,6 @@ type RunAgentTurnInput = {
 
 type AgentTurnChunk = {
 	contentDelta: string;
-};
-
-export type ToolApprovalRequest = {
-	sessionId: SessionId;
-	toolCallId: ToolCallId;
-	toolName: string;
-	toolInput: unknown;
-};
-
-export type ToolApprovalHandler = (request: ToolApprovalRequest) => Promise<boolean>;
-
-type ToolExecutionBatchResult = {
-	toolMessages: ModelMessage[];
-	terminalMessage?: string;
-};
-
-type PersistedModelToolCall = ModelToolCall & { id: ToolCallId };
-
-type ToolResultReference = {
-	sourceToolCallId: ToolCallId;
 };
 
 type StreamedModelResponse = {
@@ -67,7 +50,7 @@ export type RunAgentTurnDependencies = {
 	approveToolCall?: ToolApprovalHandler;
 };
 
-export class RunAgentTurn {
+export class AgentLoop {
 	private readonly sessionStore: SessionStateCache;
 
 	constructor(private readonly dependencies: RunAgentTurnDependencies) {
@@ -97,15 +80,15 @@ export class RunAgentTurn {
 
 		await this.sessionStore.appendSessionEvent(promptEvent);
 
-		const reducedState = await this.sessionStore.readSessionState(sessionId);
-		const { messages } = this.dependencies.contextBuilder.build(reducedState);
+		const state = await this.sessionStore.readSessionState(sessionId);
+		const { messages } = this.dependencies.contextBuilder.build(state);
 
-		if (this.dependencies.toolExecutor !== undefined) {
-			yield* this.runWithTools(sessionId, messages, signal);
+		if (this.dependencies.toolExecutor === undefined) {
+			yield* this.runStreamingModelTurn(sessionId, messages, signal);
 			return;
 		}
 
-		yield* this.runStreamingModelTurn(sessionId, messages, signal);
+		yield* this.runWithTools(sessionId, messages, signal, this.dependencies.toolExecutor);
 	}
 
 	private async *runStreamingModelTurn(
@@ -122,14 +105,18 @@ export class RunAgentTurn {
 		sessionId: SessionId,
 		messages: ModelMessage[],
 		signal: AbortSignal | undefined,
+		toolExecutor: ToolExecutorPort,
 	): AsyncIterable<AgentTurnChunk> {
-		const toolExecutor = this.dependencies.toolExecutor;
-
-		if (toolExecutor === undefined) {
-			return;
-		}
-
-		const tools = toolExecutor.listTools();
+		const toolRunner = new ToolRunner({
+			sessionStore: this.sessionStore,
+			clock: this.dependencies.clock,
+			idGenerator: this.dependencies.idGenerator,
+			toolExecutor,
+			...(this.dependencies.approveToolCall === undefined
+				? {}
+				: { approveToolCall: this.dependencies.approveToolCall }),
+		});
+		const tools = toolRunner.listTools();
 
 		if (tools.length === 0) {
 			yield* this.runStreamingModelTurn(sessionId, messages, signal);
@@ -137,7 +124,6 @@ export class RunAgentTurn {
 		}
 
 		let currentMessages = messages;
-		const toolResultReferences = new Map<string, ToolResultReference>();
 
 		for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
 			currentMessages = await this.fitModelMessages(sessionId, currentMessages);
@@ -156,21 +142,10 @@ export class RunAgentTurn {
 				return;
 			}
 
-			let preparedToolCalls: ModelToolCall[];
+			let persistedToolCalls: PersistedModelToolCall[];
 
 			try {
-				preparedToolCalls = result.toolCalls.map((toolCall) => {
-					const prepared = toolExecutor.prepare({
-						toolName: toolCall.name,
-						toolInput: toolCall.arguments,
-					});
-
-					return {
-						...toolCall,
-						name: prepared.toolName,
-						arguments: prepared.toolInput,
-					};
-				});
+				persistedToolCalls = toolRunner.prepareToolCalls(result.toolCalls);
 			} catch (caughtError) {
 				const error = toError(caughtError);
 
@@ -178,24 +153,14 @@ export class RunAgentTurn {
 				throw error;
 			}
 
-			const persistedToolCalls = preparedToolCalls.map((toolCall) => ({
-				id: this.dependencies.idGenerator.nextToolCallId(),
-				name: toolCall.name,
-				arguments: toolCall.arguments,
-			}));
-
 			const persistedAssistantMessage = await this.appendAssistantToolCallsCompleted(
 				sessionId,
 				toContent(result),
 				persistedToolCalls,
 			);
-
-			const { toolMessages, terminalMessage } = await this.executeToolCalls(
+			const { toolMessages, terminalMessage } = await toolRunner.executeToolCalls(
 				sessionId,
 				persistedToolCalls,
-				toolExecutor,
-				tools,
-				toolResultReferences,
 			);
 
 			if (terminalMessage !== undefined) {
@@ -270,206 +235,8 @@ export class RunAgentTurn {
 		return { contentDeltas, toolCalls };
 	}
 
-	private async executeToolCalls(
-		sessionId: SessionId,
-		toolCalls: PersistedModelToolCall[],
-		toolExecutor: ToolExecutorPort,
-		tools: ToolDefinition[],
-		toolResultReferences: Map<string, ToolResultReference>,
-	): Promise<ToolExecutionBatchResult> {
-		const toolMessages: ModelMessage[] = [];
-
-		for (const [toolCallIndex, toolCall] of toolCalls.entries()) {
-			const toolCallId = toolCall.id;
-			const toolName = toolCall.name;
-
-			const requestedEvent = await this.appendToolCallRequested(sessionId, toolCall, tools);
-
-			if (requestedEvent.approvalRequired) {
-				const approved = await this.requestToolApproval({
-					sessionId,
-					toolCallId,
-					toolName,
-					toolInput: toolCall.arguments,
-				});
-
-				if (!approved) {
-					const errorMessage = `Tool call was not approved: ${toolName}`;
-
-					await this.appendToolCallFailed({
-						sessionId,
-						toolCallId,
-						toolName,
-						message: errorMessage,
-						code: 'TOOL_APPROVAL_DENIED',
-					});
-					for (const cancelledToolCall of toolCalls.slice(toolCallIndex + 1)) {
-						await this.appendToolCallRequested(sessionId, cancelledToolCall, tools);
-						const cancelledMessage = `Tool call was cancelled after approval denial: ${cancelledToolCall.name}`;
-
-						await this.appendToolCallFailed({
-							sessionId,
-							toolCallId: cancelledToolCall.id,
-							toolName: cancelledToolCall.name,
-							message: cancelledMessage,
-							code: 'TOOL_BATCH_CANCELLED',
-						});
-					}
-
-					return {
-						toolMessages,
-						terminalMessage: errorMessage,
-					};
-				}
-			}
-
-			const startedEvent: ToolCallStarted = {
-				id: this.dependencies.idGenerator.nextEventId(),
-				sessionId,
-				type: 'tool.call.started',
-				timestamp: this.dependencies.clock.now(),
-				toolCallId,
-				toolName,
-			};
-			await this.sessionStore.appendSessionEvent(startedEvent);
-
-			try {
-				const toolDefinition = getToolDefinition(toolName, tools);
-				const cacheKey =
-					toolDefinition.deduplicate === true
-						? JSON.stringify([toolName, toolCall.arguments])
-						: undefined;
-				const previousResult =
-					cacheKey === undefined ? undefined : toolResultReferences.get(cacheKey);
-				let output: unknown;
-
-				if (previousResult === undefined) {
-					const result = await toolExecutor.execute({
-						toolName,
-						toolInput: toolCall.arguments,
-					});
-					output = result.output;
-
-					if (cacheKey !== undefined) {
-						toolResultReferences.set(cacheKey, { sourceToolCallId: toolCallId });
-					}
-				} else {
-					output = createCachedToolOutput(previousResult.sourceToolCallId);
-				}
-
-				if (toolDefinition.invalidatesWorkspaceCache === true) {
-					toolResultReferences.clear();
-				}
-
-				const completedEvent: ToolCallCompleted = {
-					id: this.dependencies.idGenerator.nextEventId(),
-					sessionId,
-					type: 'tool.call.completed',
-					timestamp: this.dependencies.clock.now(),
-					toolCallId,
-					toolName,
-					output,
-				};
-				await this.sessionStore.appendSessionEvent(completedEvent);
-
-				toolMessages.push({
-					role: 'tool',
-					toolCallId,
-					toolName,
-					content: stringifyToolOutput(output),
-				});
-			} catch (caughtError) {
-				const error = toError(caughtError);
-
-				await this.appendToolCallFailed({
-					sessionId,
-					toolCallId,
-					toolName,
-					message: error.message,
-					code: 'TOOL_FAILED',
-					details: {
-						name: error.name,
-					},
-				});
-
-				toolMessages.push({
-					role: 'tool',
-					toolCallId,
-					toolName,
-					content: stringifyToolOutput({
-						error: {
-							message: error.message,
-						},
-					}),
-				});
-			}
-		}
-
-		return {
-			toolMessages,
-		};
-	}
-
-	private async appendToolCallRequested(
-		sessionId: SessionId,
-		toolCall: PersistedModelToolCall,
-		tools: ToolDefinition[],
-	): Promise<ToolCallRequested> {
-		const requestedEvent: ToolCallRequested = {
-			id: this.dependencies.idGenerator.nextEventId(),
-			sessionId,
-			type: 'tool.call.requested',
-			timestamp: this.dependencies.clock.now(),
-			toolCallId: toolCall.id,
-			toolName: toolCall.name,
-			toolInput: toolCall.arguments,
-			approvalRequired: isApprovalRequired(toolCall.name, tools),
-		};
-
-		await this.sessionStore.appendSessionEvent(requestedEvent);
-
-		return requestedEvent;
-	}
-
-	private async requestToolApproval(request: ToolApprovalRequest): Promise<boolean> {
-		if (this.dependencies.approveToolCall === undefined) {
-			return false;
-		}
-
-		try {
-			return await this.dependencies.approveToolCall(request);
-		} catch {
-			return false;
-		}
-	}
-
-	private async appendToolCallFailed(input: {
-		sessionId: SessionId;
-		toolCallId: ToolCallId;
-		toolName: string;
-		message: string;
-		code: string;
-		details?: unknown;
-	}): Promise<void> {
-		const failedEvent: ToolCallFailed = {
-			id: this.dependencies.idGenerator.nextEventId(),
-			sessionId: input.sessionId,
-			type: 'tool.call.failed',
-			timestamp: this.dependencies.clock.now(),
-			toolCallId: input.toolCallId,
-			toolName: input.toolName,
-			error: {
-				message: input.message,
-				code: input.code,
-				...(input.details === undefined ? {} : { details: input.details }),
-			},
-		};
-
-		await this.sessionStore.appendSessionEvent(failedEvent);
-	}
-
 	private async appendAssistantCompleted(sessionId: SessionId, content: string): Promise<void> {
-		const completedEvent: AssistantMessageCompleted = {
+		const event: AssistantMessageCompleted = {
 			id: this.dependencies.idGenerator.nextEventId(),
 			messageId: this.dependencies.idGenerator.nextMessageId(),
 			sessionId,
@@ -478,7 +245,7 @@ export class RunAgentTurn {
 			content,
 		};
 
-		await this.sessionStore.appendSessionEvent(completedEvent);
+		await this.sessionStore.appendSessionEvent(event);
 	}
 
 	private async appendAssistantToolCallsCompleted(
@@ -486,7 +253,7 @@ export class RunAgentTurn {
 		content: string,
 		toolCalls: PersistedModelToolCall[],
 	): Promise<AssistantToolCallsCompleted> {
-		const completedEvent: AssistantToolCallsCompleted = {
+		const event: AssistantToolCallsCompleted = {
 			id: this.dependencies.idGenerator.nextEventId(),
 			messageId: this.dependencies.idGenerator.nextMessageId(),
 			sessionId,
@@ -496,13 +263,13 @@ export class RunAgentTurn {
 			toolCalls,
 		};
 
-		await this.sessionStore.appendSessionEvent(completedEvent);
+		await this.sessionStore.appendSessionEvent(event);
 
-		return completedEvent;
+		return event;
 	}
 
 	private async appendAgentError(sessionId: SessionId, error: Error, code: string): Promise<void> {
-		const errorEvent: AgentErrorOccurred = {
+		const event: AgentErrorOccurred = {
 			id: this.dependencies.idGenerator.nextEventId(),
 			sessionId,
 			type: 'agent.error',
@@ -511,13 +278,11 @@ export class RunAgentTurn {
 				message: error.message,
 				code,
 				recoverable: true,
-				details: {
-					name: error.name,
-				},
+				details: { name: error.name },
 			},
 		};
 
-		await this.sessionStore.appendSessionEvent(errorEvent);
+		await this.sessionStore.appendSessionEvent(event);
 	}
 
 	private async tryAppendAgentError(
@@ -533,44 +298,14 @@ export class RunAgentTurn {
 	}
 }
 
+export { AgentLoop as RunAgentTurn };
+
 const toContent = (response: StreamedModelResponse): string => response.contentDeltas.join('');
-
-const stringifyToolOutput = (output: unknown): string => {
-	if (typeof output === 'string') {
-		return output;
-	}
-
-	const json = JSON.stringify(output);
-
-	return json ?? String(output);
-};
-
-const createCachedToolOutput = (sourceToolCallId: ToolCallId): Record<string, unknown> => ({
-	cached: true,
-	sourceToolCallId,
-	message: `Result reused from tool call ${sourceToolCallId}.`,
-});
 
 const withSignal = (
 	input: Omit<ModelChatInput, 'signal'>,
 	signal: AbortSignal | undefined,
-): ModelChatInput => {
-	return signal === undefined ? input : { ...input, signal };
-};
+): ModelChatInput => (signal === undefined ? input : { ...input, signal });
 
 const toError = (caughtError: unknown): Error =>
 	caughtError instanceof Error ? caughtError : new Error(String(caughtError));
-
-const isApprovalRequired = (toolName: string, tools: ToolDefinition[]): boolean => {
-	return getToolDefinition(toolName, tools).requiresApproval === true;
-};
-
-const getToolDefinition = (toolName: string, tools: ToolDefinition[]): ToolDefinition => {
-	const tool = tools.find((candidate) => candidate.name === toolName);
-
-	if (tool === undefined) {
-		throw new Error(`Unknown tool requested by model: ${toolName}`);
-	}
-
-	return tool;
-};

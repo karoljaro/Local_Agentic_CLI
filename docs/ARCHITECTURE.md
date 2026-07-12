@@ -25,7 +25,8 @@ Domain code should not import infrastructure, Bun APIs, React, Ollama, file-syst
 Important pieces:
 
 - ports such as `ModelPort`, `SessionStorePort`, `ToolExecutorPort`, `WorkspaceFilePort`, and `WorkspaceSearchPort`;
-- `RunAgentTurn`, which owns the agent loop;
+- `AgentLoop`, exported through the existing `RunAgentTurn` use-case name, for model rounds, context, streaming, and stop conditions;
+- `ToolRunner` for tool preparation, approval, execution, per-turn deduplication, and tool lifecycle events;
 - `ContextBuilder`, which keeps the current turn and the newest complete historical turns within a configured character budget;
 - `SessionReducer`, which rebuilds chat/model state from durable events;
 - `EditWorkspaceFile`, which owns exact-match replacement and optimistic concurrency policy.
@@ -103,7 +104,7 @@ The current durable events are:
 Streaming deltas are runtime-only and are not persisted as durable events.
 
 `SessionStateCache` reads and validates a session JSONL file on first access in a runtime, then keeps
-its events and incrementally reduced state in memory. The transcript loader and `RunAgentTurn`
+its events and incrementally reduced state in memory. The transcript loader and `AgentLoop`
 share that instance. Appends are serialized and written to JSONL before the cached
 events and state are updated. A new process always rebuilds the cache from JSONL.
 
