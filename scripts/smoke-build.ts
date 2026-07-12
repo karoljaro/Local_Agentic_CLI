@@ -1,24 +1,31 @@
-import { access, mkdtemp, rm } from 'node:fs/promises';
+import { chmod, copyFile, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 
-const distExecutable =
-	process.platform === 'win32' ? resolve('dist/codesh.exe') : resolve('dist/codesh');
-const distRipgrep = process.platform === 'win32' ? resolve('dist/rg.exe') : resolve('dist/rg');
+import { validateReleaseArtifacts } from './release-artifacts';
 
 type RunResult = {
 	stdout: string;
 	stderr: string;
 };
 
-async function run(cmd: string[], cwd: string): Promise<RunResult> {
+const DIST_DIRECTORY = resolve('dist');
+const RUN_TIMEOUT_MS = 10_000;
+
+const run = async (cmd: string[], cwd: string): Promise<RunResult> => {
 	const child = Bun.spawn({
 		cmd,
 		cwd,
+		env: {
+			...process.env,
+			OLLAMA_BASE_URL: 'http://127.0.0.1:1',
+			OLLAMA_MODEL: 'release-smoke-model',
+			OLLAMA_KEEP_ALIVE: '0',
+		},
 		stdin: 'ignore',
 		stdout: 'pipe',
 		stderr: 'pipe',
-		timeout: 5000,
+		timeout: RUN_TIMEOUT_MS,
 	});
 
 	const [stdout, stderr, exitCode] = await Promise.all([
@@ -32,21 +39,49 @@ async function run(cmd: string[], cwd: string): Promise<RunResult> {
 	}
 
 	return { stdout, stderr };
-}
+};
 
-await access(distExecutable);
-await access(distRipgrep);
+const assertIncludes = (actual: string, expected: string, command: string): void => {
+	if (!actual.includes(expected)) {
+		throw new Error(`${command} output did not include ${JSON.stringify(expected)}.\n${actual}`);
+	}
+};
 
-const ripgrep = await run([distRipgrep, '--version'], process.cwd());
+await validateReleaseArtifacts(DIST_DIRECTORY);
 
-if (!ripgrep.stdout.toLowerCase().includes('ripgrep')) {
-	throw new Error(`${distRipgrep} did not print a ripgrep version.`);
-}
-
-const workspace = await mkdtemp(join(tmpdir(), 'codesh-smoke-'));
+const smokeRoot = await mkdtemp(join(tmpdir(), 'codesh-release-smoke-'));
+const releaseDirectory = join(smokeRoot, 'release');
+const workspaceDirectory = join(smokeRoot, 'workspace');
+const executableName = process.platform === 'win32' ? 'codesh.exe' : 'codesh';
+const ripgrepName = process.platform === 'win32' ? 'rg.exe' : 'rg';
+const executable = join(releaseDirectory, executableName);
+const ripgrep = join(releaseDirectory, ripgrepName);
 
 try {
-	await run([distExecutable], workspace);
+	await mkdir(releaseDirectory);
+	await mkdir(workspaceDirectory);
+	await copyFile(join(DIST_DIRECTORY, executableName), executable);
+	await copyFile(join(DIST_DIRECTORY, ripgrepName), ripgrep);
+
+	if (process.platform !== 'win32') {
+		await chmod(executable, 0o755);
+		await chmod(ripgrep, 0o755);
+	}
+
+	await writeFile(join(workspaceDirectory, 'smoke.txt'), 'release-smoke-marker\n');
+
+	const ripgrepVersion = await run([ripgrep, '--version'], workspaceDirectory);
+	assertIncludes(ripgrepVersion.stdout, 'ripgrep', `${basename(ripgrep)} --version`);
+
+	const ripgrepSearch = await run(
+		[ripgrep, '--fixed-strings', 'release-smoke-marker', '.'],
+		workspaceDirectory,
+	);
+	assertIncludes(ripgrepSearch.stdout, 'smoke.txt', `${basename(ripgrep)} search`);
+
+	for (const args of [[], ['resume']] as const) {
+		await run([executable, ...args], workspaceDirectory);
+	}
 } finally {
-	await rm(workspace, { recursive: true, force: true });
+	await rm(smokeRoot, { recursive: true, force: true });
 }

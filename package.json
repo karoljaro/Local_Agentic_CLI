@@ -10,6 +10,7 @@
 		"test:integration": "bun test src/infrastructure/persistence src/infrastructure/runtime src/infrastructure/tools src/infrastructure/file-system",
 		"test:contract": "bun test src/infrastructure/model/OllamaModelAdapter.test.ts",
 		"test:smoke": "bun run build && bun run smoke:build",
+		"release:check": "bun run format:check && bun run typecheck && bun test && bun run build && bun run smoke:build",
 		"typecheck": "bunx tsc --noEmit",
 		"build": "bun run build:all",
 		"build:linux": "bun run scripts/build-linux.ts",

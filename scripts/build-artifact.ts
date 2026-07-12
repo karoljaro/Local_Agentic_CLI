@@ -15,11 +15,10 @@ export const buildLinux = async (): Promise<void> => {
 
 	const result = await Bun.build({
 		...shared,
-		outdir: DIST_DIR,
-		naming: 'codesh',
-		target: 'bun',
-		packages: 'external',
-		banner: '#!/usr/bin/env bun\n',
+		compile: {
+			outfile: `${DIST_DIR}/codesh`,
+			target: 'bun-linux-x64',
+		},
 	});
 
 	if (!result.success) {

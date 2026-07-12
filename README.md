@@ -180,7 +180,8 @@ The build output is placed in `dist`:
 - Linux x64: `codesh` and `rg`
 - Windows x64: `codesh.exe` and `rg.exe`
 
-Keep each CLI executable together with its matching ripgrep binary.
+The `codesh` executables are standalone. Keep each executable together with its matching ripgrep
+binary; no project checkout or `node_modules` directory is required at runtime.
 
 To run the built CLI from any folder, add the `dist` directory to your shell `PATH`:
 
@@ -257,6 +258,17 @@ Run the full local check:
 ```bash
 bun run check
 ```
+
+Run the complete automated release gate:
+
+```bash
+bun run release:check
+```
+
+The release gate formats and type-checks the project, runs the complete test suite, builds Linux
+and Windows artifacts, validates their ELF/PE formats and Linux executable bits, then copies the
+native artifact pair outside the repository. The isolated smoke test starts both new and resume CLI
+modes and verifies ripgrep with a real search. It does not require a running Ollama instance.
 
 ## Next Steps
 
