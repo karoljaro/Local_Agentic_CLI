@@ -11,7 +11,7 @@ import { InMemorySessionStore } from '@/test-support/InMemorySessionStore';
 import { ListSessionEvents } from './ListSessionEvents';
 
 describe('ListSessionEvents', () => {
-	test('returns prompt and completed assistant events in stored order', async () => {
+	test('returns every durable event for the session in stored order', async () => {
 		const sessionId = asSessionId('session-1');
 		const timestamp = asISODateTime('2026-06-09T12:00:00.000Z');
 		const promptEvent = promptSubmittedEvent({
@@ -47,10 +47,14 @@ describe('ListSessionEvents', () => {
 
 		const result = await useCase.list({ sessionId });
 
-		expect(result.events).toEqual([promptEvent, assistantEvent]);
+		expect(result.events).toEqual([
+			promptEvent,
+			expect.objectContaining({ type: 'tool.call.completed' }),
+			assistantEvent,
+		]);
 	});
 
-	test('does not return events from another session or non-chat event types', async () => {
+	test('defensively excludes events from another session', async () => {
 		const sessionId = asSessionId('session-1');
 		const otherSessionId = asSessionId('session-2');
 		const timestamp = asISODateTime('2026-06-09T12:00:00.000Z');
@@ -87,6 +91,9 @@ describe('ListSessionEvents', () => {
 
 		const result = await useCase.list({ sessionId });
 
-		expect(result.events).toEqual([]);
+		expect(result.events).toEqual([
+			expect.objectContaining({ type: 'tool.call.completed' }),
+			expect.objectContaining({ type: 'agent.error' }),
+		]);
 	});
 });

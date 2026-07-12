@@ -35,5 +35,6 @@
 		"noUnusedParameters": true,
 
 		"skipLibCheck": true
-	}
+	},
+	"exclude": ["src/ui_old"]
 }
