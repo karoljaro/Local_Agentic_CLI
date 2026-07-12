@@ -1,6 +1,6 @@
 # Presentation visual polish plan
 
-Status: in progress (started 2026-07-13)
+Status: complete (2026-07-13)
 
 This document tracks the staged visual/interaction polish defined by
 `codex-visual-polish-prompt.md`. The existing presentation architecture, controller, reducer, stream
@@ -41,7 +41,7 @@ Only three reusable primitives are justified:
 
 This is not a theme or design system. Semantic colour rules stay local and small:
 
-- cyan: keyboard focus and primary selection only;
+- cyan: keyboard focus, primary selection, and the existing `You` identity marker;
 - green: success/current/approve;
 - yellow: tool activity and approval attention;
 - red: errors/reject/destructive warning;
@@ -141,4 +141,54 @@ Verification after stage 4:
 
 ### Stage 5 — consistency and final verification
 
-Status: in progress.
+Status: complete.
+
+- Removed the redundant bottom margin from the active streaming response; Markdown spacing plus the
+  composer's own separator now provide one calmer transition instead of stacked blank space.
+- Existing `You`, `Assistant`, and `Tool` markers, stream buffer, waiting animation, active-tool content,
+  focus ownership, command behaviour, and approval semantics were retained.
+- Added full chat render coverage at 24 columns and tool -> approval -> paused composer coverage at 30
+  columns. History, live response, interactive surfaces, help, and metadata remain within width.
+- Confirmed `src/App.tsx` remains the unchanged 80-line orchestrator. No controller, engine, durable event,
+  reducer, stream-buffer, navigation, or command-effect file changed.
+
+Final changed production components:
+
+- `components/Interactive.tsx` (new small shared primitives);
+- `input/Composer.tsx`;
+- `input/CommandMenu.tsx`;
+- `components/SelectionScreen.tsx`;
+- `screens/ModelScreen.tsx`;
+- `screens/ResumeScreen.tsx`;
+- `approval/ApprovalView.tsx`;
+- `chat/ChatScreen.tsx` (dropdown placement only);
+- `chat/LiveTurn.tsx` (one spacing adjustment).
+
+Final verification:
+
+- `bun run format:check`: pass, 128 files;
+- `bun run typecheck`: pass;
+- `bun test`: **191 pass, 0 fail**, 394 assertions across 40 files;
+- forced Biome JavaScript lint over `src/App.tsx` and `src/presentation`: pass. The two informational
+  bracket-access suggestions predate this polish and are required by TypeScript's
+  `noPropertyAccessFromIndexSignature`; Markdown AST index-key warnings remain explicitly skipped;
+- `bun run build`: pass for Linux and Windows artifacts;
+- `bun run smoke:build`: pass;
+- `git diff --check`: pass;
+- narrow renders: chat 24, composer/dropdown 28, approval 28, selection screen 30 columns — pass;
+- interactive slash menu -> model screen -> Escape -> preserved chat — pass.
+
+Terminal-dependent limitations:
+
+- Inverse video and named ANSI colours follow the user's terminal palette, intentionally avoiding a
+  hardcoded dark theme. On monochrome/limited palettes, markers, one-sided edges, filled/empty decision
+  glyphs, and bold text still carry state.
+- Background colour is deliberately limited to selected controls and the compact approval label. It does
+  not form artificial full-width rectangles, so resize cannot leave a padded colour block behind.
+- Unicode line/marker glyph appearance depends on the terminal font. Windows Terminal and contemporary
+  Linux terminals support the used characters; an older font may substitute visually equivalent glyphs.
+- No screenshot asset was available for pixel-by-pixel comparison; verification used real Ink rendering,
+  interactive input streams, and bounded terminal widths.
+
+All five visual-polish stages and acceptance criteria are complete. Architecture and behaviour remain
+intact.

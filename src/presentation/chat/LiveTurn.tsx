@@ -27,7 +27,7 @@ export const LiveTurn = ({ activeTools, status, stream }: LiveTurnProps) => {
 
 			{status === 'waiting' ? <WaitingIndicator /> : null}
 			{status === 'streaming' && content.length > 0 ? (
-				<Box flexDirection="column" marginBottom={1}>
+				<Box flexDirection="column">
 					<Text bold color="green">
 						◆ Assistant · streaming
 					</Text>
