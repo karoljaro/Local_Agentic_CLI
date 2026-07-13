@@ -199,24 +199,38 @@ The follow-up request intentionally changes only the composer, its hints/metadat
 
 - Input and command autocomplete now share one full-width work surface inside the composer. Focused input
   uses `#30363d`; paused/unfocused input uses the quieter `#24272b`.
-- The input keeps its cyan focus edge and marker. Non-empty focused input text is explicitly white for
-  predictable contrast on the controlled surface.
-- Dropdown inherits the same surface and continues the cyan left edge, making it visually attached to the
-  input instead of a neighbouring terminal block.
-- Active command uses cyan background + black text + `›` marker + bold name. The optional accent variant
-  was added to `SelectionRow`; model/resume retain their existing inverse variant unchanged.
-- Dropdown help uses dimmed white on the surface. Composer action hints and labelled model/cwd/session
-  metadata sit outside the surface in dim gray, preserving three distinct priorities.
+- The input keeps its cyan focus edge and marker. Non-empty focused input text uses explicit `#f0f6fc`,
+  while the placeholder uses `#c9d1d9`, for predictable contrast on the controlled surface.
+- Dropdown inherits the same surface without continuing the input's cyan focus edge. Its list and hints
+  use regular horizontal padding, so the shared background—not a frame fragment—connects it to the input.
+- Active command uses cyan background across its complete row, including the `›` marker, with black
+  marker/name/description text. Only the name is bold; the description explicitly disables bold and no
+  nested active text uses `dimColor`. The optional accent variant was added to `SelectionRow`;
+  model/resume retain their existing inverse variant unchanged.
+- Dropdown command names use `#f0f6fc`; inactive descriptions and dropdown help use `#b1bac4`.
+  Composer action hints use `#8b949e`, and labelled model/cwd/session metadata uses `#7d8590` outside
+  the surface. None of these levels relies on `dimColor` for contrast.
+- The input has its own native Ink surface with `height={3}` and `alignItems="center"`. Its marker,
+  cursor, and text stay in the middle row, with one full-background breathing row above and below;
+  no padding is added to the input value.
+- Empty focused input renders one presentation-only cell between its inverse cursor cell and placeholder
+  (`› █ Ask about this workspace…`). Entered values are rendered unchanged.
+- Expanded autocomplete adds one internal bottom-padding row after its keyboard hints. Because the
+  padding belongs to `CommandMenu`, the closed composer keeps its previous height.
 - The surface uses real Ink width/background layout rather than padding with manual spaces, so resize and
   dropdown close redraw cleanly.
 
 Follow-up verification:
 
+- empty focused input and entered text cursor rendering: pass;
+- active and inactive slash-command contrast paths: pass;
+- identical three-row input surface when the dropdown is closed or open at 60 and 28 columns: pass;
+- input-only vertical focus edge with an unframed dropdown at 60 and 28 columns: pass;
 - targeted composer, chat-flow, App interaction, and selection-screen regressions: pass;
 - narrow composer/dropdown at 28 columns: pass;
 - `bun run format:check`: pass, 128 files;
 - `bun run typecheck`: pass;
-- `bun test`: **191 pass, 0 fail**, 394 assertions;
+- `bun test`: **195 pass, 0 fail**, 431 assertions;
 - forced Biome lint over the four touched composer files: pass;
 - `bun run build` and `bun run smoke:build`: pass.
 

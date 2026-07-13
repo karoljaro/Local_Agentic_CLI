@@ -1,6 +1,16 @@
 import { Fragment, type ReactNode } from 'react';
 import { Box, Text } from 'ink';
 
+export const INTERACTIVE_COLORS = {
+	composerSurface: '#30363d',
+	composerSurfaceInactive: '#24272b',
+	inputText: '#f0f6fc',
+	placeholderText: '#c9d1d9',
+	surfaceSecondaryText: '#b1bac4',
+	secondaryText: '#8b949e',
+	metadataText: '#7d8590',
+} as const;
+
 type InputSurfaceProps = {
 	ariaLabel: string;
 	children: ReactNode;
@@ -33,16 +43,8 @@ export type KeyHint = {
 	label: string;
 };
 
-export const KeyHints = ({
-	dim = false,
-	hints,
-	onSurface = false,
-}: {
-	dim?: boolean;
-	hints: KeyHint[];
-	onSurface?: boolean;
-}) => (
-	<Text color={onSurface ? 'white' : 'gray'} dimColor={dim || onSurface} wrap="wrap">
+export const KeyHints = ({ color = 'gray', hints }: { color?: string; hints: KeyHint[] }) => (
+	<Text color={color} wrap="wrap">
 		{hints.map((hint, index) => (
 			<Fragment key={`${hint.key}:${hint.label}`}>
 				{index === 0 ? '' : '  ·  '}
@@ -59,14 +61,16 @@ type SelectionRowProps = {
 };
 
 export const SelectionRow = ({ children, selected, variant = 'inverse' }: SelectionRowProps) => (
-	<Box aria-role="option" aria-state={{ selected }}>
-		<Text bold color={selected ? 'cyan' : 'gray'}>
+	<Box
+		aria-role="option"
+		aria-state={{ selected }}
+		backgroundColor={selected && variant === 'accent' ? 'cyan' : undefined}
+	>
+		<Text bold color={selected && variant === 'accent' ? 'black' : selected ? 'cyan' : 'gray'}>
 			{selected ? '›' : ' '}{' '}
 		</Text>
 		{selected && variant === 'accent' ? (
-			<Text backgroundColor="cyan" bold color="black">
-				{children}
-			</Text>
+			<Text color="black">{children}</Text>
 		) : (
 			<Text bold={selected} inverse={selected}>
 				{children}

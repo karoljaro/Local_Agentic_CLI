@@ -1,6 +1,6 @@
 import { Box, Text, useWindowSize } from 'ink';
 
-import { KeyHints, SelectionRow } from '../components/Interactive';
+import { INTERACTIVE_COLORS, KeyHints, SelectionRow } from '../components/Interactive';
 import type { CommandMenuState } from '../hooks/useComposer';
 
 export const CommandMenu = ({ menu }: { menu: CommandMenuState }) => {
@@ -14,26 +14,22 @@ export const CommandMenu = ({ menu }: { menu: CommandMenuState }) => {
 		<Box
 			aria-label="Commands"
 			aria-role="menu"
-			borderBottom={false}
-			borderColor="cyan"
-			borderLeft
-			borderRight={false}
-			borderStyle="single"
-			borderTop={false}
 			flexDirection="column"
-			paddingLeft={1}
+			paddingBottom={1}
+			paddingX={1}
 		>
 			{menu.items.length === 0 ? (
-				<Text color="white" dimColor>
-					· No matching commands
-				</Text>
+				<Text color={INTERACTIVE_COLORS.surfaceSecondaryText}>· No matching commands</Text>
 			) : null}
 			{menu.items.map((command, index) => {
 				const selected = index === menu.selectedIndex;
 				return (
 					<SelectionRow key={command.name} selected={selected} variant="accent">
-						<Text {...(selected ? {} : { color: 'white' })} bold>{` ${command.usage} `}</Text>
-						<Text {...(selected ? { dimColor: true } : { color: 'white', dimColor: true })}>
+						<Text
+							bold
+							color={selected ? 'black' : INTERACTIVE_COLORS.inputText}
+						>{` ${command.usage} `}</Text>
+						<Text bold={false} color={selected ? 'black' : INTERACTIVE_COLORS.surfaceSecondaryText}>
 							{isNarrow ? `\n    ${command.description} ` : `  ${command.description} `}
 						</Text>
 					</SelectionRow>
@@ -41,13 +37,13 @@ export const CommandMenu = ({ menu }: { menu: CommandMenuState }) => {
 			})}
 			<Box marginTop={menu.items.length === 0 ? 0 : 1}>
 				<KeyHints
+					color={INTERACTIVE_COLORS.surfaceSecondaryText}
 					hints={[
 						{ key: '↑↓', label: 'choose' },
 						{ key: 'Enter', label: 'open' },
 						{ key: 'Tab', label: 'complete' },
 						{ key: 'Esc', label: 'close' },
 					]}
-					onSurface
 				/>
 			</Box>
 		</Box>
