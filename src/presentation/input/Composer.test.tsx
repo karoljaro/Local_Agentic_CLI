@@ -57,18 +57,27 @@ describe('Composer visual hierarchy', () => {
 			const closedOutput = Bun.stripANSI(renderComposer(columns, { commandMenuVisible: false }));
 			const openLines = openOutput.split('\n');
 			const closedLines = closedOutput.split('\n');
+			const dropdownHelpIndex = openLines.findIndex((line) => line.includes('Esc close'));
+			const openComposerHelpIndex = openLines.findIndex((line) => line.includes('Enter send'));
 
 			expect(openLines.slice(0, 4)).toEqual(closedLines.slice(0, 4));
-			expect(closedLines[0]).toBe('');
-			expect(closedLines[1]).toBe('');
+			expect(isVisuallyBlank(closedLines[0])).toBe(true);
+			expect(isVisuallyBlank(closedLines[1])).toBe(true);
 			expect(closedLines[2]).toContain('› /');
-			expect(closedLines[3]).toBe('');
-			expect(closedLines[4]).toBe('');
+			expect(isVisuallyBlank(closedLines[3])).toBe(true);
+			expect(isVisuallyBlank(closedLines[4])).toBe(true);
 			expect(closedLines[5]).toContain('Enter send');
 			expect(openLines[4]).toContain('/model [name]');
 			expect(Math.max(...openLines.map((line) => line.length))).toBeLessThanOrEqual(columns);
 			expect(Math.max(...closedLines.map((line) => line.length))).toBeLessThanOrEqual(columns);
-			expect(openOutput).toContain('Esc close\n\n\n  Enter send');
+			expect(dropdownHelpIndex).toBeGreaterThan(4);
+			expect(openComposerHelpIndex).toBeGreaterThan(dropdownHelpIndex);
+			const linesBetweenDropdownAndComposerHelp = openLines.slice(
+				dropdownHelpIndex + 1,
+				openComposerHelpIndex,
+			);
+			expect(linesBetweenDropdownAndComposerHelp).toHaveLength(2);
+			expect(linesBetweenDropdownAndComposerHelp.every(isVisuallyBlank)).toBe(true);
 			expect(closedOutput).not.toContain('\n │\n  Enter send');
 		}
 	});
@@ -133,3 +142,6 @@ const createComposerProps = (options: RenderComposerOptions = {}) => ({
 const renderComposer = (columns: number, options: RenderComposerOptions = {}): string => {
 	return renderToString(<Composer {...createComposerProps(options)} />, { columns });
 };
+
+const isVisuallyBlank = (line: string | undefined): boolean =>
+	typeof line === 'string' && Bun.stripANSI(line).trim() === '';

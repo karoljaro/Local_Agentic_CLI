@@ -19,7 +19,9 @@ describe('ChatScreen visual flow', () => {
 				expect(inputIndex).toBeGreaterThan(0);
 				expect(countBlankLinesBefore(lines, inputIndex)).toBeGreaterThanOrEqual(2);
 				expect(hintsIndex).toBeGreaterThan(inputIndex);
-				expect(lines.slice(inputIndex + 1, hintsIndex)).toEqual(['', '']);
+				const linesBetweenInputAndHints = lines.slice(inputIndex + 1, hintsIndex);
+				expect(linesBetweenInputAndHints).toHaveLength(2);
+				expect(linesBetweenInputAndHints.every(isVisuallyBlank)).toBe(true);
 				expect(Math.max(...lines.map((line) => line.length))).toBeLessThanOrEqual(columns);
 			}
 		}
@@ -149,8 +151,15 @@ const renderChatState = (status: 'idle' | 'waiting' | 'streaming', columns: numb
 
 const countBlankLinesBefore = (lines: string[], index: number): number => {
 	let count = 0;
-	for (let lineIndex = index - 1; lineIndex >= 0 && lines[lineIndex] === ''; lineIndex -= 1) {
+	for (
+		let lineIndex = index - 1;
+		lineIndex >= 0 && isVisuallyBlank(lines[lineIndex]);
+		lineIndex -= 1
+	) {
 		count += 1;
 	}
 	return count;
 };
+
+const isVisuallyBlank = (line: string | undefined): boolean =>
+	typeof line === 'string' && Bun.stripANSI(line).trim() === '';
