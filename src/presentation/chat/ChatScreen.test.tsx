@@ -6,6 +6,25 @@ import { StreamBuffer } from '../state/StreamBuffer';
 import { ChatScreen } from './ChatScreen';
 
 describe('ChatScreen visual flow', () => {
+	test('keeps external breathing room around the composer while idle, waiting, and streaming', () => {
+		for (const columns of [60, 28]) {
+			for (const status of ['idle', 'waiting', 'streaming'] as const) {
+				const output = renderChatState(status, columns);
+				const lines = output.split('\n');
+				const inputIndex = lines.findIndex((line) => line.includes('│ ›'));
+				const hintsIndex = lines.findIndex((line) =>
+					line.includes(status === 'idle' ? 'Enter send' : 'Type keep drafting'),
+				);
+
+				expect(inputIndex).toBeGreaterThan(0);
+				expect(countBlankLinesBefore(lines, inputIndex)).toBeGreaterThanOrEqual(2);
+				expect(hintsIndex).toBeGreaterThan(inputIndex);
+				expect(lines.slice(inputIndex + 1, hintsIndex)).toEqual(['', '']);
+				expect(Math.max(...lines.map((line) => line.length))).toBeLessThanOrEqual(columns);
+			}
+		}
+	});
+
 	test('keeps history, active stream, and composer readable at 24 columns', () => {
 		const stream = new StreamBuffer(10_000);
 		stream.start();
@@ -93,3 +112,45 @@ describe('ChatScreen visual flow', () => {
 		stream.dispose();
 	});
 });
+
+const renderChatState = (status: 'idle' | 'waiting' | 'streaming', columns: number): string => {
+	const stream = new StreamBuffer(10_000);
+	if (status === 'streaming') {
+		stream.start();
+		stream.push('Partial response.');
+		stream.flush();
+	}
+	const output = Bun.stripANSI(
+		renderToString(
+			<ChatScreen
+				chat={{
+					sessionId: asSessionId('session-1'),
+					history: [{ id: 'assistant', kind: 'assistant', content: 'Previous response.' }],
+					activeTools: [],
+					loadStatus: 'ready',
+					turnStatus: status,
+				}}
+				commandMenu={{ isVisible: false, items: [], selectedIndex: 0 }}
+				composer={{ value: 'draft', cursorIndex: 2 }}
+				isComposerFocused
+				modelName="current-model"
+				onResolveApproval={() => undefined}
+				pendingApproval={null}
+				sessionId={asSessionId('session-1')}
+				stream={stream}
+				workspacePath="/workspace"
+			/>,
+			{ columns },
+		),
+	);
+	stream.dispose();
+	return output;
+};
+
+const countBlankLinesBefore = (lines: string[], index: number): number => {
+	let count = 0;
+	for (let lineIndex = index - 1; lineIndex >= 0 && lines[lineIndex] === ''; lineIndex -= 1) {
+		count += 1;
+	}
+	return count;
+};

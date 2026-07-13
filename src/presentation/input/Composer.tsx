@@ -35,7 +35,7 @@ export const Composer = ({
 	value,
 	workspacePath,
 }: ComposerProps) => (
-	<Box flexDirection="column">
+	<Box alignSelf="stretch" flexDirection="column" marginTop={1} width="100%">
 		<Box
 			backgroundColor={
 				isFocused ? INTERACTIVE_COLORS.composerSurface : INTERACTIVE_COLORS.composerSurfaceInactive
@@ -52,7 +52,7 @@ export const Composer = ({
 				<CommandMenu menu={commandMenu} />
 			</Box>
 		</Box>
-		<Box paddingLeft={2}>
+		<Box marginTop={1} paddingLeft={2}>
 			<KeyHints
 				color={INTERACTIVE_COLORS.secondaryText}
 				hints={getComposerHints(canSubmit, turnStatus)}

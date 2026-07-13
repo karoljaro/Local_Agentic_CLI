@@ -1,11 +1,26 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToString } from 'ink';
+import { Children, type ReactElement, type ReactNode } from 'react';
 
 import { asSessionId } from '@/domain/Ids';
 import { COMMANDS } from '../commands/commands';
 import { Composer } from './Composer';
 
 describe('Composer visual hierarchy', () => {
+	test('stretches its root, input surface, and dropdown surface to the available width', () => {
+		const composer = Composer(createComposerProps()) as ReactElement<LayoutProps>;
+		const surface = Children.toArray(composer.props.children)[0] as ReactElement<LayoutProps>;
+		const [inputSurface, dropdownSurface] = Children.toArray(
+			surface.props.children,
+		) as ReactElement<LayoutProps>[];
+
+		expect(composer.props.alignSelf).toBe('stretch');
+		expect(composer.props.width).toBe('100%');
+		expect(surface.props.width).toBe('100%');
+		expect(inputSurface?.props.width).toBe('100%');
+		expect(dropdownSurface?.props.width).toBe('100%');
+	});
+
 	test('keeps one presentation-only cell between the empty cursor and placeholder', () => {
 		const output = Bun.stripANSI(
 			renderComposer(60, { commandMenuVisible: false, cursorIndex: 0, value: '' }),
@@ -43,15 +58,17 @@ describe('Composer visual hierarchy', () => {
 			const openLines = openOutput.split('\n');
 			const closedLines = closedOutput.split('\n');
 
-			expect(openLines.slice(0, 3)).toEqual(closedLines.slice(0, 3));
+			expect(openLines.slice(0, 4)).toEqual(closedLines.slice(0, 4));
 			expect(closedLines[0]).toBe('');
-			expect(closedLines[1]).toContain('› /');
-			expect(closedLines[2]).toBe('');
-			expect(closedLines[3]).toContain('Enter send');
-			expect(openLines[3]).toContain('/model [name]');
+			expect(closedLines[1]).toBe('');
+			expect(closedLines[2]).toContain('› /');
+			expect(closedLines[3]).toBe('');
+			expect(closedLines[4]).toBe('');
+			expect(closedLines[5]).toContain('Enter send');
+			expect(openLines[4]).toContain('/model [name]');
 			expect(Math.max(...openLines.map((line) => line.length))).toBeLessThanOrEqual(columns);
 			expect(Math.max(...closedLines.map((line) => line.length))).toBeLessThanOrEqual(columns);
-			expect(openOutput).toContain('Esc close\n\n  Enter send');
+			expect(openOutput).toContain('Esc close\n\n\n  Enter send');
 			expect(closedOutput).not.toContain('\n │\n  Enter send');
 		}
 	});
@@ -61,9 +78,9 @@ describe('Composer visual hierarchy', () => {
 			const lines = Bun.stripANSI(renderComposer(columns)).split('\n');
 			const composerHelpIndex = lines.findIndex((line) => line.includes('Enter send'));
 
-			expect(lines[1]).toContain('│');
-			expect(composerHelpIndex).toBeGreaterThan(3);
-			expect(lines.slice(3, composerHelpIndex).every((line) => !line.includes('│'))).toBe(true);
+			expect(lines[2]).toContain('│');
+			expect(composerHelpIndex).toBeGreaterThan(4);
+			expect(lines.slice(4, composerHelpIndex).every((line) => !line.includes('│'))).toBe(true);
 		}
 	});
 
@@ -91,23 +108,28 @@ type RenderComposerOptions = {
 	value?: string;
 };
 
+type LayoutProps = {
+	alignSelf?: string;
+	children?: ReactNode;
+	width?: number | string;
+};
+
+const createComposerProps = (options: RenderComposerOptions = {}) => ({
+	canSubmit: true,
+	commandMenu: {
+		isVisible: options.commandMenuVisible ?? true,
+		items: [...COMMANDS],
+		selectedIndex: options.selectedIndex ?? 0,
+	},
+	cursorIndex: options.cursorIndex ?? 1,
+	isFocused: true,
+	modelName: 'current-model',
+	sessionId: asSessionId('session-1'),
+	turnStatus: 'idle' as const,
+	value: options.value ?? '/',
+	workspacePath: '/workspace',
+});
+
 const renderComposer = (columns: number, options: RenderComposerOptions = {}): string => {
-	return renderToString(
-		<Composer
-			canSubmit
-			commandMenu={{
-				isVisible: options.commandMenuVisible ?? true,
-				items: [...COMMANDS],
-				selectedIndex: options.selectedIndex ?? 0,
-			}}
-			cursorIndex={options.cursorIndex ?? 1}
-			isFocused
-			modelName="current-model"
-			sessionId={asSessionId('session-1')}
-			turnStatus="idle"
-			value={options.value ?? '/'}
-			workspacePath="/workspace"
-		/>,
-		{ columns },
-	);
+	return renderToString(<Composer {...createComposerProps(options)} />, { columns });
 };
