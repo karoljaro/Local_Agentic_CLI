@@ -21,6 +21,8 @@ import { BunUuidV7IdGenerator } from '@/infrastructure/runtime/BunUuidV7IdGenera
 import { PerformanceMonotonicClock } from '@/infrastructure/runtime/PerformanceMonotonicClock';
 import { TemporalClock } from '@/infrastructure/runtime/TemporalClock';
 import type { SessionId } from '@/domain/Ids';
+import type { AgentEvent } from '@/domain/AgentEvent';
+import { PublishingSessionStore } from './PublishingSessionStore';
 
 export type { RuntimeListModelsOptions } from '@/composition/model/OllamaModelRuntime';
 export type { AgentMetricsSnapshot } from '@/application/services/InMemoryAgentMetrics';
@@ -37,10 +39,12 @@ export type Runtime = {
 	unloadCurrentModel: (input?: UnloadModelInput) => Promise<void>;
 	switchModel: (modelName: string) => string;
 	setToolApprovalHandler: (handler: ToolApprovalHandler) => () => void;
+	subscribeSessionEvents: (listener: (event: AgentEvent) => void) => () => void;
 };
 
 export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
-	const sessionStore = new SessionStateCache(new JsonlSessionStore());
+	const publishingSessionStore = new PublishingSessionStore(new JsonlSessionStore());
+	const sessionStore = new SessionStateCache(publishingSessionStore);
 	const modelRuntime = new OllamaModelRuntime(config);
 	const idGenerator = new BunUuidV7IdGenerator();
 	const clock = new TemporalClock();
@@ -72,6 +76,7 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 		listModels: (options) => modelRuntime.listModels(options),
 		unloadCurrentModel: (input) => modelRuntime.unload(input),
 		switchModel: (modelName) => modelRuntime.switchModel(modelName),
+		subscribeSessionEvents: (listener) => publishingSessionStore.subscribe(listener),
 		setToolApprovalHandler: (handler) => {
 			currentToolApprovalHandler = handler;
 

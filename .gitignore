@@ -38,3 +38,4 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .docs/
 
 .git_ignore_folder
+ui_old/

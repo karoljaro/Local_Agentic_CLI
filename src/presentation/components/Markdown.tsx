@@ -1,559 +1,189 @@
-import { Fragment, useMemo } from 'react';
-import { Box, Text, Transform, useWindowSize } from 'ink';
+import { Fragment, useMemo, type ReactNode } from 'react';
+import { Box, Text, Transform } from 'ink';
 import { marked, type Token, type Tokens } from 'marked';
-
-import { displayLength } from '@/presentation/formatters/displayLength';
-
-const MIN_RENDER_WIDTH = 10;
-const CODE_BACKGROUND = '#1f1f1f';
-const TABLE_CELL_PADDING_X = 1;
 
 type MarkdownProps = {
 	children: string;
-	/** Maksymalna szerokość bloków takich jak tabela, kod i separator. */
-	maxWidth?: number;
-	/** Czy dopisywać adres po tekście linku. */
-	showLinkUrls?: boolean;
-	/** Sposób obsługi zbyt długich linii kodu. */
-	codeWrap?: 'wrap' | 'truncate-end';
-	/** Poziomy padding dla zwykłych bloków tekstu. Bloki kodu zostają bez paddingu. */
-	textPaddingX?: number;
-};
-
-type BlockTokenProps = {
-	token: Token;
-	width: number;
-	showLinkUrls: boolean;
-	codeWrap: 'wrap' | 'truncate-end';
-	textPaddingX: number;
 	compact?: boolean;
 };
 
-type InlineTokensProps = {
-	tokens: Token[];
-	showLinkUrls: boolean;
+type BlockProps = {
+	token: Token;
+	compact: boolean;
 };
 
-export function Markdown({
-	children,
-	maxWidth,
-	showLinkUrls = true,
-	codeWrap = 'truncate-end',
-	textPaddingX = 0,
-}: MarkdownProps) {
-	const { columns } = useWindowSize();
-	const terminalWidth = Math.max(MIN_RENDER_WIDTH, columns);
-	const width = Math.max(MIN_RENDER_WIDTH, Math.min(maxWidth ?? terminalWidth - 2, terminalWidth));
-
-	const tokens = useMemo(
-		() =>
-			marked.lexer(children, {
-				gfm: true,
-				breaks: true,
-			}),
-		[children],
-	);
+export const Markdown = ({ children, compact = false }: MarkdownProps) => {
+	const tokens = useMemo(() => marked.lexer(children, { gfm: true, breaks: true }), [children]);
 
 	return (
 		<Box flexDirection="column">
 			{tokens.map((token, index) => (
-				<BlockToken
-					key={`${token.type}-${index}`}
-					token={token}
-					width={width}
-					showLinkUrls={showLinkUrls}
-					codeWrap={codeWrap}
-					textPaddingX={textPaddingX}
-				/>
+				<Block key={`${token.type}:${index}`} token={token} compact={compact} />
 			))}
 		</Box>
 	);
-}
+};
 
-function InlineTokens({ tokens, showLinkUrls }: InlineTokensProps) {
-	return (
-		<>
-			{tokens.map((token, index) => (
-				<InlineToken key={`${token.type}-${index}`} token={token} showLinkUrls={showLinkUrls} />
-			))}
-		</>
-	);
-}
-
-function InlineToken({ token, showLinkUrls }: { token: Token; showLinkUrls: boolean }) {
-	switch (token.type) {
-		case 'text': {
-			const value = token as Tokens.Text;
-
-			return value.tokens?.length ? (
-				<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
-			) : (
-				value.text
-			);
-		}
-
-		case 'escape':
-			return (token as Tokens.Escape).text;
-
-		case 'strong': {
-			const value = token as Tokens.Strong;
-			return (
-				<Text bold>
-					<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
-				</Text>
-			);
-		}
-
-		case 'em': {
-			const value = token as Tokens.Em;
-			return (
-				<Text italic>
-					<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
-				</Text>
-			);
-		}
-
-		case 'del': {
-			const value = token as Tokens.Del;
-			return (
-				<Text strikethrough>
-					<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
-				</Text>
-			);
-		}
-
-		case 'codespan':
-			return <Text inverse>{` ${(token as Tokens.Codespan).text} `}</Text>;
-
-		case 'link': {
-			const value = token as Tokens.Link;
-			const label = inlinePlainText(value.tokens).trim();
-			const shouldShowUrl = showLinkUrls && normaliseUrl(label) !== normaliseUrl(value.href);
-
-			return (
-				<>
-					<Text underline>
-						<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
-					</Text>
-					{shouldShowUrl ? <Text dimColor>{` (${value.href})`}</Text> : null}
-				</>
-			);
-		}
-
-		case 'image': {
-			const value = token as Tokens.Image;
-			return <Text dimColor>{`[image: ${value.text || value.href}]`}</Text>;
-		}
-
-		case 'br':
-			return '\n';
-
-		case 'html':
-			// Surowy HTML celowo nie jest wykonywany ani wyświetlany w terminalu.
-			return null;
-
-		default: {
-			const value = token as Tokens.Generic;
-
-			if (value.tokens?.length) {
-				return <InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />;
-			}
-
-			return typeof value['text'] === 'string' ? value['text'] : null;
-		}
-	}
-}
-
-function BlockToken({
-	token,
-	width,
-	showLinkUrls,
-	codeWrap,
-	textPaddingX,
-	compact = false,
-}: BlockTokenProps) {
+const Block = ({ token, compact }: BlockProps): ReactNode => {
 	switch (token.type) {
 		case 'space':
 		case 'def':
 		case 'html':
 			return null;
-
 		case 'heading': {
-			const value = token as Tokens.Heading;
-
+			const heading = token as Tokens.Heading;
 			return (
-				<Box
-					marginTop={value.depth === 1 ? 1 : 0}
-					marginBottom={value.depth <= 2 ? 1 : 0}
-					paddingX={textPaddingX}
-				>
-					<Text bold underline={value.depth === 1} dimColor={value.depth >= 4}>
-						<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
+				<Box marginBottom={compact || heading.depth > 2 ? 0 : 1}>
+					<Text bold dimColor={heading.depth > 3} underline={heading.depth === 1}>
+						<Inline tokens={heading.tokens} />
 					</Text>
 				</Box>
 			);
 		}
-
 		case 'paragraph': {
-			const value = token as Tokens.Paragraph;
-
+			const paragraph = token as Tokens.Paragraph;
 			return (
-				<Box marginBottom={compact ? 0 : 1} paddingX={textPaddingX}>
+				<Box marginBottom={compact ? 0 : 1}>
 					<Text wrap="wrap">
-						<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
+						<Inline tokens={paragraph.tokens} />
 					</Text>
 				</Box>
 			);
 		}
-
 		case 'text': {
-			const value = token as Tokens.Text;
-
-			return (
-				<Box paddingX={textPaddingX}>
-					<Text wrap="wrap">
-						{value.tokens?.length ? (
-							<InlineTokens tokens={value.tokens} showLinkUrls={showLinkUrls} />
-						) : (
-							value.text
-						)}
-					</Text>
-				</Box>
-			);
+			const text = token as Tokens.Text;
+			return <Text wrap="wrap">{text.tokens ? <Inline tokens={text.tokens} /> : text.text}</Text>;
 		}
-
 		case 'code': {
-			const value = token as Tokens.Code;
-			const lines = value.text.split('\n');
-
+			const code = token as Tokens.Code;
 			return (
-				<Box
-					backgroundColor={CODE_BACKGROUND}
-					flexDirection="column"
-					marginBottom={compact ? 0 : 1}
-					paddingX={0}
-					width={width}
-				>
-					{value.lang ? <Text dimColor>{value.lang}</Text> : null}
-					{lines.map((line, index) => (
-						<Transform key={index} transform={normaliseTerminalLine}>
-							<Text wrap={codeWrap}>{line}</Text>
+				<Box flexDirection="column" marginBottom={compact ? 0 : 1}>
+					{code.lang ? <Text color="gray">{code.lang}</Text> : null}
+					{code.text.split('\n').map((line, index) => (
+						<Transform key={index} transform={normalizeTerminalLine}>
+							<Text wrap="wrap">{line.length === 0 ? ' ' : line}</Text>
 						</Transform>
 					))}
 				</Box>
 			);
 		}
-
-		case 'blockquote': {
-			const value = token as Tokens.Blockquote;
-
+		case 'list': {
+			const list = token as Tokens.List;
+			const start = list.start === '' ? 1 : list.start;
 			return (
 				<Box flexDirection="column" marginBottom={compact ? 0 : 1}>
-					<Box paddingX={textPaddingX}>
-						<Text color="gray">quote</Text>
-					</Box>
-					{value.tokens.map((child, index) => (
-						<BlockToken
-							key={`${child.type}-${index}`}
-							token={child}
-							width={Math.max(MIN_RENDER_WIDTH, width)}
-							showLinkUrls={showLinkUrls}
-							codeWrap={codeWrap}
-							textPaddingX={textPaddingX}
-							compact
-						/>
-					))}
-				</Box>
-			);
-		}
-
-		case 'list': {
-			const value = token as Tokens.List;
-
-			if (value.items.length === 0) {
-				return null;
-			}
-
-			const start = value.start === '' ? 1 : value.start;
-			const labels = value.items.map((item, index) => {
-				if (item.task) {
-					return item.checked ? '[x]' : '[ ]';
-				}
-
-				return value.ordered ? `${start + index}.` : '•';
-			});
-			const markerWidth = Math.max(...labels.map((label) => label.length));
-
-			return (
-				<Box flexDirection="column" marginBottom={compact ? 0 : 1} paddingX={textPaddingX}>
-					{value.items.map((item, index) => (
-						<Box key={index} alignItems="flex-start">
-							<Text>{`${(labels[index] ?? '').padStart(markerWidth)} `}</Text>
-							<Box flexDirection="column" flexGrow={1}>
-								{item.tokens.map((child, childIndex) => (
-									<BlockToken
-										key={`${child.type}-${childIndex}`}
-										token={child}
-										width={Math.max(MIN_RENDER_WIDTH, width - markerWidth - 1)}
-										showLinkUrls={showLinkUrls}
-										codeWrap={codeWrap}
-										textPaddingX={textPaddingX}
-										compact={!value.loose}
-									/>
-								))}
+					{list.items.map((item, index) => {
+						const marker = item.task
+							? item.checked
+								? '[x]'
+								: '[ ]'
+							: list.ordered
+								? `${start + index}.`
+								: '•';
+						return (
+							<Box alignItems="flex-start" key={index}>
+								<Text>{marker} </Text>
+								<Box flexDirection="column" flexGrow={1}>
+									{item.tokens.map((child, childIndex) => (
+										<Block
+											compact={!list.loose}
+											key={`${child.type}:${childIndex}`}
+											token={child}
+										/>
+									))}
+								</Box>
 							</Box>
-						</Box>
+						);
+					})}
+				</Box>
+			);
+		}
+		case 'blockquote': {
+			const quote = token as Tokens.Blockquote;
+			return (
+				<Box flexDirection="column" marginBottom={compact ? 0 : 1}>
+					<Text color="gray">quote</Text>
+					{quote.tokens.map((child, index) => (
+						<Block compact key={`${child.type}:${index}`} token={child} />
 					))}
 				</Box>
 			);
 		}
-
-		case 'table':
-			return (
-				<TableBlock
-					table={token as Tokens.Table}
-					width={width}
-					showLinkUrls={showLinkUrls}
-					textPaddingX={textPaddingX}
-					compact={compact}
-				/>
-			);
-
 		case 'hr':
-			return (
-				<Box marginBottom={compact ? 0 : 1} paddingX={textPaddingX}>
-					<Text dimColor>{'─'.repeat(Math.max(3, Math.min(width, 40)))}</Text>
-				</Box>
-			);
-
+			return <Text color="gray">────────────────────────</Text>;
 		default: {
-			const value = token as Tokens.Generic;
-
-			if (value.tokens?.length) {
-				return (
-					<Box flexDirection="column">
-						{value.tokens.map((child, index) => (
-							<BlockToken
-								key={`${child.type}-${index}`}
-								token={child}
-								width={width}
-								showLinkUrls={showLinkUrls}
-								codeWrap={codeWrap}
-								textPaddingX={textPaddingX}
-								compact={compact}
-							/>
-						))}
-					</Box>
-				);
-			}
-
-			return null;
+			const generic = token as Tokens.Generic;
+			return generic.tokens?.map((child, index) => (
+				<Block compact={compact} key={`${child.type}:${index}`} token={child} />
+			));
 		}
 	}
-}
+};
 
-function TableBlock({
-	table,
-	width,
-	showLinkUrls,
-	textPaddingX,
-	compact,
-}: {
-	table: Tokens.Table;
-	width: number;
-	showLinkUrls: boolean;
-	textPaddingX: number;
-	compact: boolean;
-}) {
-	const columnCount = table.header.length;
-
-	if (columnCount === 0) {
-		return null;
-	}
-
-	const preferredWidths = table.header.map((header, columnIndex) => {
-		const cellWidths = [
-			displayLength(inlineDisplayText(header.tokens, showLinkUrls)),
-			...table.rows.map((row) =>
-				displayLength(inlineDisplayText(row[columnIndex]?.tokens ?? [], showLinkUrls)),
-			),
-		];
-
-		return Math.max(3, ...cellWidths);
-	});
-
-	// 1 znak lewego obramowania + dla każdej kolumny: 2 spacje i prawy separator.
-	const borderOverhead = 1 + columnCount * 3;
-	const availableForContent = Math.max(columnCount, width - borderOverhead);
-	const preferredContentWidth = preferredWidths.reduce((sum, cellWidth) => sum + cellWidth, 0);
-	const tableContentWidth = Math.min(availableForContent, preferredContentWidth);
-	const columnWidths = allocateColumnWidths(preferredWidths, tableContentWidth);
-
-	const topBorder = `┌${columnWidths.map((cellWidth) => '─'.repeat(cellWidth + 2)).join('┬')}┐`;
-	const headerBorder = `├${columnWidths.map((cellWidth) => '─'.repeat(cellWidth + 2)).join('┼')}┤`;
-	const bottomBorder = `└${columnWidths.map((cellWidth) => '─'.repeat(cellWidth + 2)).join('┴')}┘`;
-
+const Inline = ({ tokens }: { tokens: Token[] }) => {
 	return (
-		<Box flexDirection="column" marginBottom={compact ? 0 : 1} paddingX={textPaddingX}>
-			<Text dimColor>{topBorder}</Text>
-			<TableRow
-				cells={table.header}
-				columnWidths={columnWidths}
-				showLinkUrls={showLinkUrls}
-				header
-			/>
-			<Text dimColor>{headerBorder}</Text>
-			{table.rows.map((row, index) => (
-				<Fragment key={index}>
-					<TableRow cells={row} columnWidths={columnWidths} showLinkUrls={showLinkUrls} />
-				</Fragment>
+		<>
+			{tokens.map((token, index) => (
+				<Fragment key={`${token.type}:${index}`}>{renderInline(token)}</Fragment>
 			))}
-			<Text dimColor>{bottomBorder}</Text>
-		</Box>
+		</>
 	);
-}
+};
 
-function TableRow({
-	cells,
-	columnWidths,
-	showLinkUrls,
-	header = false,
-}: {
-	cells: Tokens.TableCell[];
-	columnWidths: number[];
-	showLinkUrls: boolean;
-	header?: boolean;
-}) {
-	return (
-		<Box>
-			<Text dimColor>│</Text>
-			{columnWidths.map((columnWidth, index) => {
-				const cell = cells[index];
-				const alignment = cell?.align ?? 'left';
-
-				return (
-					<Fragment key={index}>
-						<Box
-							width={columnWidth + 2}
-							paddingX={TABLE_CELL_PADDING_X}
-							justifyContent={
-								alignment === 'right'
-									? 'flex-end'
-									: alignment === 'center'
-										? 'center'
-										: 'flex-start'
-							}
-						>
-							<Text bold={header} wrap="truncate-end">
-								{cell ? <InlineTokens tokens={cell.tokens} showLinkUrls={showLinkUrls} /> : null}
-							</Text>
-						</Box>
-						<Text dimColor>│</Text>
-					</Fragment>
-				);
-			})}
-		</Box>
-	);
-}
-
-function allocateColumnWidths(preferredWidths: number[], totalWidth: number): number[] {
-	if (preferredWidths.length === 0) {
-		return [];
-	}
-
-	const minimumWidth: number = totalWidth >= preferredWidths.length * 3 ? 3 : 1;
-	const widths: number[] = preferredWidths.map(() => minimumWidth);
-	const targets: number[] = preferredWidths.map((width) => Math.max(minimumWidth, width));
-	let remaining = Math.max(0, totalWidth - minimumWidth * preferredWidths.length);
-
-	while (remaining > 0) {
-		const growable = widths
-			.map((width, index) => ({ width, index }))
-			.filter(({ width, index }) => {
-				const target = targets[index];
-				return target !== undefined && width < target;
-			});
-
-		if (growable.length === 0) {
-			for (let index = 0; remaining > 0; index = (index + 1) % widths.length) {
-				widths[index] = (widths[index] ?? 0) + 1;
-				remaining -= 1;
-			}
-			break;
-		}
-
-		for (const { index } of growable) {
-			widths[index] = (widths[index] ?? 0) + 1;
-			remaining -= 1;
-
-			if (remaining === 0) {
-				break;
-			}
-		}
-	}
-
-	return widths;
-}
-
-function inlinePlainText(tokens: Token[]): string {
-	return tokens.map(tokenPlainText).join('');
-}
-
-function tokenPlainText(token: Token): string {
+const renderInline = (token: Token): ReactNode => {
 	switch (token.type) {
-		case 'br':
-			return ' ';
-		case 'image':
-			return (token as Tokens.Image).text;
-		case 'codespan':
-			return (token as Tokens.Codespan).text;
+		case 'text': {
+			const text = token as Tokens.Text;
+			return text.tokens ? <Inline tokens={text.tokens} /> : text.text;
+		}
 		case 'escape':
 			return (token as Tokens.Escape).text;
-		case 'text': {
-			const value = token as Tokens.Text;
-			return value.tokens?.length ? inlinePlainText(value.tokens) : value.text;
-		}
 		case 'strong':
-		case 'em':
-		case 'del':
-		case 'link':
-			return inlinePlainText(
-				(token as Tokens.Strong | Tokens.Em | Tokens.Del | Tokens.Link).tokens,
+			return (
+				<Text bold>
+					<Inline tokens={(token as Tokens.Strong).tokens} />
+				</Text>
 			);
+		case 'em':
+			return (
+				<Text italic>
+					<Inline tokens={(token as Tokens.Em).tokens} />
+				</Text>
+			);
+		case 'del':
+			return (
+				<Text strikethrough>
+					<Inline tokens={(token as Tokens.Del).tokens} />
+				</Text>
+			);
+		case 'codespan':
+			return <Text inverse>{` ${(token as Tokens.Codespan).text} `}</Text>;
+		case 'link': {
+			const link = token as Tokens.Link;
+			return (
+				<>
+					<Text underline>
+						<Inline tokens={link.tokens} />
+					</Text>
+					<Text color="gray"> {link.href}</Text>
+				</>
+			);
+		}
+		case 'image': {
+			const image = token as Tokens.Image;
+			return <Text color="gray">[image: {image.text || image.href}]</Text>;
+		}
+		case 'br':
+			return '\n';
+		case 'html':
+			return null;
 		default: {
-			const value = token as Tokens.Generic;
-			return value.tokens?.length
-				? inlinePlainText(value.tokens)
-				: typeof value['text'] === 'string'
-					? value['text']
-					: '';
+			const generic = token as Tokens.Generic;
+			return generic.tokens ? <Inline tokens={generic.tokens} /> : generic['text'];
 		}
 	}
-}
+};
 
-function inlineDisplayText(tokens: Token[], showLinkUrls: boolean): string {
-	return tokens
-		.map((token) => {
-			if (token.type !== 'link') {
-				return tokenPlainText(token);
-			}
-
-			const link = token as Tokens.Link;
-			const label = inlinePlainText(link.tokens);
-			const shouldShowUrl = showLinkUrls && normaliseUrl(label) !== normaliseUrl(link.href);
-
-			return shouldShowUrl ? `${label} (${link.href})` : label;
-		})
-		.join('');
-}
-
-function normaliseUrl(value: string): string {
-	return value
-		.trim()
-		.replace(/^https?:\/\//, '')
-		.replace(/\/$/, '');
-}
-
-const normaliseTerminalLine = (line: string): string => {
+const normalizeTerminalLine = (line: string): string => {
 	return line.replaceAll('\r', '').replaceAll('\t', '  ');
 };

@@ -18,10 +18,14 @@ This project is intentionally small. The current goal is a practical local agent
 Implemented:
 
 - Ink-based terminal UI
-- Ollama chat integration with streaming final responses
+- Ollama chat integration with batched real-time streaming across model/tool rounds
+- stable, readable conversation history with Markdown rendering
+- slash-command menu with keyboard filtering and selection
 - model picker with `/model` and direct switching with `/model <name>`
-- current model and workspace path shown under the input
-- resume session picker with `New chat`
+- separate model and resume screens that preserve chat and draft state
+- current model, workspace path, and session shown under the input
+- `Ctrl+C` cancels an active response and exits the CLI when no response is running
+- resume session picker with `New chat`, last activity, and prompt preview
 - persisted sessions in `.agent/sessions/<session-id>/events.jsonl`
 - loading previous chat messages when continuing a session
 - tool calling through Ollama
@@ -36,16 +40,15 @@ Implemented:
   - `create_file`
   - `edit_file`
 - approval prompt before mutating tools
+- concise live tool status and persisted tool success/failure rows
 - path safety checks for file tools
 - tests for config, sessions, runtime, Ollama adapter, tools, and agent turn flow
 
 Not implemented yet:
 
 - command execution tool
-- visible tool event timeline in the UI
 - diff preview before edit approval
 - settings screen or persistent model configuration
-- final UI polish
 
 ## Agent Loop
 
@@ -122,7 +125,8 @@ Replaces exact text in a UTF-8 file:
 
 The edit is applied only when `oldText` appears exactly once. `oldText` and `newText` are used exactly as decoded from the model's JSON arguments; literal sequences such as `\\n` are not converted into line breaks.
 
-`edit_file` requires interactive approval. Press `y` to approve, `n` or `Esc` to deny.
+`edit_file` requires interactive approval. Use the arrow keys and Enter, press `y` to approve,
+or press `n`/`Esc` to deny. Press `d` to toggle concise technical details.
 
 ## Architecture
 
@@ -147,7 +151,8 @@ Persisted events include:
 - `tool.call.failed`
 - `agent.error`
 
-The chat UI currently restores user and assistant messages. Tool events are persisted, but they are not yet shown as a dedicated timeline in the UI.
+The chat UI restores user, assistant, error, and concise tool lifecycle information. Large raw tool
+inputs and outputs remain in the durable event log but are not printed into the default transcript.
 
 JSONL remains the source of truth. During one process, each active session is read and validated once; successful appends update an in-memory incremental state after the durable write completes. Restarting the CLI rebuilds that state from JSONL.
 
