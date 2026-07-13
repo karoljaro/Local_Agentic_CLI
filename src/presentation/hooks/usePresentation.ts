@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useInput } from 'ink';
+import { useApp, useInput } from 'ink';
 
 import type { ListedModel } from '@/application/ports/ModelCatalogPort';
 import type { ToolApprovalRequest } from '@/application/use-cases/RunAgentTurn';
@@ -16,6 +16,7 @@ const EMPTY_MODEL_SELECTION: ModelSelectionState = { status: 'idle', items: [] }
 const EMPTY_SESSION_SELECTION: SessionSelectionState = { status: 'idle', items: [] };
 
 export const usePresentation = (controller: PresentationController, initialMode: StartupMode) => {
+	const { exit } = useApp();
 	const [screen, setScreen] = useState<AppScreen>(() =>
 		initialMode === 'resume' ? 'resume' : 'chat',
 	);
@@ -234,17 +235,24 @@ export const usePresentation = (controller: PresentationController, initialMode:
 			setScreen('chat');
 		}
 	}, [hasChat]);
+	const canCancelTurn =
+		screen === 'chat' && pendingApproval === null && chat.state.turnStatus !== 'idle';
 
-	useInput(
-		(_value, key) => {
-			if (key.escape) {
+	useInput((value, key) => {
+		if (key.ctrl && value.toLowerCase() === 'c') {
+			if (canCancelTurn) {
 				chat.abortTurn();
+				return;
 			}
-		},
-		{
-			isActive: screen === 'chat' && pendingApproval === null && chat.state.turnStatus !== 'idle',
-		},
-	);
+
+			exit();
+			return;
+		}
+
+		if (key.escape && canCancelTurn) {
+			chat.abortTurn();
+		}
+	});
 
 	return {
 		canCancelScreen: hasChat,

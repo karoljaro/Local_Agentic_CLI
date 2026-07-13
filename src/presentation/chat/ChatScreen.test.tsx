@@ -38,6 +38,7 @@ describe('ChatScreen visual flow', () => {
 		expect(output).toContain('Assistant ·');
 		expect(output).toContain('streaming');
 		expect(output).toContain('keep drafting');
+		expect(output).toContain('Esc/Ctrl+C');
 		expect(output).toContain('model current-model');
 		expect(Math.max(...output.split('\n').map((line) => line.length))).toBeLessThanOrEqual(24);
 		stream.dispose();

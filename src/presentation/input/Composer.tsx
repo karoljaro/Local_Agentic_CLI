@@ -80,7 +80,7 @@ const getComposerHints = (canSubmit: boolean, turnStatus: TurnStatus): KeyHint[]
 		? [{ key: 'Input', label: 'paused' }]
 		: [
 				{ key: 'Type', label: 'keep drafting' },
-				{ key: 'Esc', label: 'cancel response' },
+				{ key: 'Esc/Ctrl+C', label: 'cancel response' },
 			];
 };
 

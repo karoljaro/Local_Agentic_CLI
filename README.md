@@ -24,6 +24,7 @@ Implemented:
 - model picker with `/model` and direct switching with `/model <name>`
 - separate model and resume screens that preserve chat and draft state
 - current model, workspace path, and session shown under the input
+- `Ctrl+C` cancels an active response and exits the CLI when no response is running
 - resume session picker with `New chat`, last activity, and prompt preview
 - persisted sessions in `.agent/sessions/<session-id>/events.jsonl`
 - loading previous chat messages when continuing a session
