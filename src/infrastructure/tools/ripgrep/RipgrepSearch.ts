@@ -1,5 +1,9 @@
 import type { WorkspaceExecutionOptions } from '@/application/ports/WorkspaceFilePort';
 import { abortError, isAbortError, throwIfAborted } from '@/application/services/cancellation';
+import {
+	PROTECTED_DIRECTORIES,
+	SAFE_ENV_BASENAMES,
+} from '@/infrastructure/file-system/workspacePolicy';
 import { existsSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -60,87 +64,83 @@ type BoundedSearchResult = {
 	truncated: boolean;
 };
 
-const EXCLUDED_GLOBS = ['!**/node_modules/**', '!**/.git/**', '!**/.agent/**'];
-const SAFE_ENV_GLOBS = ['**/.env.development', '**/.env.dev', '**/.env.example'];
+const EXCLUDED_GLOBS = PROTECTED_DIRECTORIES.map((name) => `!**/${name}/**`);
+const SAFE_ENV_GLOBS = SAFE_ENV_BASENAMES.map((name) => `**/${name}`);
 const MAX_STDERR_LENGTH = 1000;
 const rgPath = resolveRipgrepPath();
 
 export class RipgrepSearch implements WorkspaceSearchPort {
 	constructor(private readonly options: RipgrepSearchOptions) {}
 
-	search(
+	async search(
 		input: SearchWorkspaceInput,
 		executionOptions: WorkspaceExecutionOptions = {},
 	): Promise<SearchWorkspaceOutput> {
-		return searchWithRipgrep(input.query, this.options, executionOptions);
+		const {
+			workspaceRoot,
+			timeoutMs,
+			maxMatches,
+			maxMatchTextLength,
+			runCommand = runRipgrepCommand,
+		} = this.options;
+		const { signal } = executionOptions;
+		const { query } = input;
+		throwIfAborted(signal);
+		const alternatives = query
+			.split('|')
+			.map((part) => part.trim())
+			.filter(Boolean);
+		const patterns = [...new Set(alternatives.length > 0 ? alternatives : [query])];
+		const commonInput = {
+			patterns,
+			workspaceRoot,
+			timeoutMs,
+			maxMatches,
+			maxMatchTextLength,
+			runCommand,
+			...(signal === undefined ? {} : { signal }),
+		};
+
+		const settledResults = await Promise.allSettled([
+			runRipgrep({
+				...commonInput,
+				globs: ['!**/.env*', ...EXCLUDED_GLOBS],
+			}),
+			runRipgrep({
+				...commonInput,
+				globs: [...SAFE_ENV_GLOBS, ...EXCLUDED_GLOBS],
+			}),
+		]);
+		const failures = settledResults.filter(
+			(result): result is PromiseRejectedResult => result.status === 'rejected',
+		);
+		const failedResult = failures.find((result) => !isAbortError(result.reason)) ?? failures[0];
+
+		if (failedResult !== undefined) {
+			throw failedResult.reason;
+		}
+
+		throwIfAborted(signal);
+		const results = settledResults
+			.filter(
+				(result): result is PromiseFulfilledResult<BoundedSearchResult> =>
+					result.status === 'fulfilled',
+			)
+			.map((result) => result.value);
+
+		const matches = results.flatMap((result) => result.matches).sort(compareMatches);
+		const visibleMatches = matches.slice(0, maxMatches);
+		const returnedFiles = new Set(visibleMatches.map((match) => match.path)).size;
+
+		return {
+			returnedMatches: visibleMatches.length,
+			returnedFiles,
+			matches: visibleMatches,
+			truncated:
+				results.some((result) => result.truncated) || matches.length > visibleMatches.length,
+		};
 	}
 }
-
-const searchWithRipgrep = async (
-	query: string,
-	{
-		workspaceRoot,
-		timeoutMs,
-		maxMatches,
-		maxMatchTextLength,
-		runCommand = runRipgrepCommand,
-	}: RipgrepSearchOptions,
-	{ signal }: WorkspaceExecutionOptions,
-): Promise<SearchWorkspaceOutput> => {
-	throwIfAborted(signal);
-	const alternatives = query
-		.split('|')
-		.map((part) => part.trim())
-		.filter(Boolean);
-	const patterns = [...new Set(alternatives.length > 0 ? alternatives : [query])];
-	const commonInput = {
-		patterns,
-		workspaceRoot,
-		timeoutMs,
-		maxMatches,
-		maxMatchTextLength,
-		runCommand,
-		...(signal === undefined ? {} : { signal }),
-	};
-
-	const settledResults = await Promise.allSettled([
-		runRipgrep({
-			...commonInput,
-			globs: ['!**/.env*', ...EXCLUDED_GLOBS],
-		}),
-		runRipgrep({
-			...commonInput,
-			globs: [...SAFE_ENV_GLOBS, ...EXCLUDED_GLOBS],
-		}),
-	]);
-	const failures = settledResults.filter(
-		(result): result is PromiseRejectedResult => result.status === 'rejected',
-	);
-	const failedResult = failures.find((result) => !isAbortError(result.reason)) ?? failures[0];
-
-	if (failedResult !== undefined) {
-		throw failedResult.reason;
-	}
-
-	throwIfAborted(signal);
-	const results = settledResults
-		.filter(
-			(result): result is PromiseFulfilledResult<BoundedSearchResult> =>
-				result.status === 'fulfilled',
-		)
-		.map((result) => result.value);
-
-	const matches = results.flatMap((result) => result.matches).sort(compareMatches);
-	const visibleMatches = matches.slice(0, maxMatches);
-	const returnedFiles = new Set(visibleMatches.map((match) => match.path)).size;
-
-	return {
-		returnedMatches: visibleMatches.length,
-		returnedFiles,
-		matches: visibleMatches,
-		truncated: results.some((result) => result.truncated) || matches.length > visibleMatches.length,
-	};
-};
 
 const runRipgrep = async ({
 	patterns,

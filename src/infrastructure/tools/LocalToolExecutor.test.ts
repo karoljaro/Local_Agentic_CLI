@@ -12,7 +12,7 @@ import { createFileTool } from './providers/CreateFileProvider';
 import { editFileTool } from './providers/EditFileProvider';
 import { z } from 'zod';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { describe, expect, spyOn, test } from 'bun:test';
 
@@ -946,6 +946,63 @@ describe('LocalToolRegistry', () => {
 							text: 'SECRET_TOKEN=example',
 						},
 					],
+					truncated: false,
+				},
+			});
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('search_file preserves exact env and nested directory policy with real ripgrep', async () => {
+		const { directory, cleanup } = await createTempWorkspace();
+		const marker = 'PHASE9_WORKSPACE_POLICY_MARKER';
+		const allowedPaths = [
+			'.env.dev',
+			'.env.development',
+			'.env.example',
+			'nested/.env.dev',
+			'nested/.env.development',
+			'nested/.env.example',
+			'src/visible.ts',
+		];
+		const protectedPaths = ['project/node_modules', 'nested/.git', 'foo/bar/.agent'].flatMap(
+			(path) => [
+				`${path}/hidden.ts`,
+				`${path}/.env.dev`,
+				`${path}/.env.development`,
+				`${path}/.env.example`,
+			],
+		);
+		const secretPaths = ['', 'nested/'].flatMap((prefix) =>
+			[
+				'.env',
+				'.env.local',
+				'.env.production',
+				'.env.secret',
+				'.env.private',
+				'.env.dev.secret',
+				'.env.development.local',
+				'.env.example.backup',
+			].map((basename) => `${prefix}${basename}`),
+		);
+		try {
+			for (const path of [...allowedPaths, ...protectedPaths, ...secretPaths]) {
+				await mkdir(dirname(join(directory, path)), { recursive: true });
+				await writeFile(join(directory, path), `${marker}:${path}\n`);
+			}
+			const executor = createLocalToolExecutor({ workspaceRoot: directory });
+			await expect(
+				executor.execute({
+					toolName: 'search_file',
+					toolInput: { query: marker },
+				}),
+			).resolves.toEqual({
+				toolName: 'search_file',
+				output: {
+					returnedMatches: 7,
+					returnedFiles: 7,
+					matches: allowedPaths.map((path) => ({ path, line: 1, text: `${marker}:${path}` })),
 					truncated: false,
 				},
 			});

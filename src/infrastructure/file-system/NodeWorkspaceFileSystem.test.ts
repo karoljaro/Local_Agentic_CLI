@@ -1,12 +1,13 @@
 import * as fsPromises from 'node:fs/promises';
 import { createDeferred } from '@/test-support/createDeferred';
 import { mkdir, readdir, readFile, symlink, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { describe, expect, test, spyOn } from 'bun:test';
 
 import { createTempDirectory } from '@/test-support/createTempDirectory';
 import { NodeWorkspaceFileSystem } from './NodeWorkspaceFileSystem';
+import { PROTECTED_DIRECTORIES, SAFE_ENV_BASENAMES } from './workspacePolicy';
 
 const MAX_FILE_BYTES = 1024;
 
@@ -415,6 +416,165 @@ describe('NodeWorkspaceFileSystem', () => {
 			}
 		});
 	});
+});
+
+describe('NodeWorkspaceFileSystem workspace policy', () => {
+	test('shares exact readonly policy tuples while derived Sets remain independent', () => {
+		// A mutable array declaration makes these assignments fail typecheck.
+		const protectedValuesAreReadonly: typeof PROTECTED_DIRECTORIES extends string[] ? false : true =
+			true;
+		const envValuesAreReadonly: typeof SAFE_ENV_BASENAMES extends string[] ? false : true = true;
+		expect(protectedValuesAreReadonly).toBe(true);
+		expect(envValuesAreReadonly).toBe(true);
+		expect(PROTECTED_DIRECTORIES).toEqual(['node_modules', '.git', '.agent']);
+		expect(SAFE_ENV_BASENAMES).toEqual(['.env.development', '.env.dev', '.env.example']);
+		const localDirectories = new Set<string>(PROTECTED_DIRECTORIES);
+		const localEnvFiles = new Set<string>(SAFE_ENV_BASENAMES);
+		localDirectories.clear();
+		localEnvFiles.add('.env.secret');
+		expect(new Set(PROTECTED_DIRECTORIES).size).toBe(3);
+		expect(new Set<string>(SAFE_ENV_BASENAMES).has('.env.secret')).toBe(false);
+	});
+
+	const expectProtectedFile = async (
+		fileSystem: NodeWorkspaceFileSystem,
+		path: string,
+		newPath = path,
+	): Promise<void> => {
+		await expect(fileSystem.readFile({ path, maxFileBytes: MAX_FILE_BYTES })).rejects.toThrow(
+			'Cannot access protected file',
+		);
+		await expect(
+			fileSystem.writeFile({ path, content: 'changed', maxFileBytes: MAX_FILE_BYTES }),
+		).rejects.toThrow('Cannot access protected file');
+		await expect(
+			fileSystem.createFile({ path: newPath, content: 'created', maxFileBytes: MAX_FILE_BYTES }),
+		).rejects.toThrow('Cannot access protected file');
+		await expect(fileSystem.listFiles({ path, maxEntries: 10 })).resolves.toEqual({
+			files: [],
+			truncated: false,
+		});
+	};
+
+	for (const directoryPath of ['project/node_modules', 'nested/.git', 'foo/bar/.agent']) {
+		test(`blocks read/write/create and skips nested ${directoryPath}`, async () => {
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
+			try {
+				await mkdir(join(directory, directoryPath), { recursive: true });
+				const path = `${directoryPath}/.env.example`;
+				await writeFile(join(directory, path), 'original');
+				await writeFile(join(directory, 'visible.ts'), 'visible');
+				// Normalization and a safe basename cannot bypass a protected directory segment.
+				await expectProtectedFile(fileSystem, path.replace('/', '/./'), `${directoryPath}/new.ts`);
+				await expect(
+					fileSystem.listFiles({ path: directoryPath, maxEntries: 10 }),
+				).resolves.toEqual({
+					files: [],
+					truncated: false,
+				});
+				await expect(fileSystem.listFiles({ maxEntries: 10 })).resolves.toEqual({
+					files: ['visible.ts'],
+					truncated: false,
+				});
+				expect(await readFile(join(directory, path), 'utf8')).toBe('original');
+				expect(await readdir(join(directory, directoryPath))).toEqual(['.env.example']);
+			} finally {
+				await cleanup();
+			}
+		});
+	}
+
+	for (const prefix of ['', 'nested/']) {
+		for (const basename of ['.env.dev', '.env.development', '.env.example']) {
+			test(`allows exact safe env file ${prefix}${basename}`, async () => {
+				const { directory, fileSystem, cleanup } = await createTempWorkspace();
+				const path = `${prefix}${basename}`;
+				try {
+					await mkdir(dirname(join(directory, path)), { recursive: true });
+					await expect(
+						fileSystem.createFile({ path, content: 'original', maxFileBytes: MAX_FILE_BYTES }),
+					).resolves.toEqual({ path, content: 'original' });
+					await expect(
+						fileSystem.readFile({ path, maxFileBytes: MAX_FILE_BYTES }),
+					).resolves.toEqual({
+						path,
+						content: 'original',
+					});
+					await expect(
+						fileSystem.writeFile({
+							path,
+							content: 'updated',
+							expectedContent: 'original',
+							maxFileBytes: MAX_FILE_BYTES,
+						}),
+					).resolves.toEqual({ path, content: 'updated' });
+					for (const listedPath of ['.', path]) {
+						await expect(
+							fileSystem.listFiles({ path: listedPath, maxEntries: 10 }),
+						).resolves.toEqual({
+							files: [path],
+							truncated: false,
+						});
+					}
+					expect(await readFile(join(directory, path), 'utf8')).toBe('updated');
+				} finally {
+					await cleanup();
+				}
+			});
+		}
+
+		for (const basename of [
+			'.env',
+			'.env.local',
+			'.env.production',
+			'.env.secret',
+			'.env.private',
+		]) {
+			test(`protects secret env file ${prefix}${basename}`, async () => {
+				const { directory, fileSystem, cleanup } = await createTempWorkspace();
+				const path = `${prefix}${basename}`;
+				try {
+					await mkdir(dirname(join(directory, path)), { recursive: true });
+					await writeFile(join(directory, path), 'original');
+					await expectProtectedFile(fileSystem, path);
+					await expect(fileSystem.listFiles({ maxEntries: 10 })).resolves.toEqual({
+						files: [],
+						truncated: false,
+					});
+					expect(await readFile(join(directory, path), 'utf8')).toBe('original');
+				} finally {
+					await cleanup();
+				}
+			});
+		}
+	}
+
+	for (const basename of ['.env', '.env.local', '.env.dev', '.env.development', '.env.example']) {
+		test(`protects .env path segments even when directory basename is ${basename}`, async () => {
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
+			const directoryPath = `nested/${basename}`;
+			try {
+				await mkdir(join(directory, directoryPath), { recursive: true });
+				const path = `${directoryPath}/.env.example`;
+				await writeFile(join(directory, path), 'original');
+				await expectProtectedFile(fileSystem, path, `${directoryPath}/new.ts`);
+				await expect(
+					fileSystem.listFiles({ path: directoryPath, maxEntries: 10 }),
+				).resolves.toEqual({
+					files: [],
+					truncated: false,
+				});
+				await expect(fileSystem.listFiles({ maxEntries: 10 })).resolves.toEqual({
+					files: [],
+					truncated: false,
+				});
+				expect(await readFile(join(directory, path), 'utf8')).toBe('original');
+				expect(await readdir(join(directory, directoryPath))).toEqual(['.env.example']);
+			} finally {
+				await cleanup();
+			}
+		});
+	}
 });
 
 describe('NodeWorkspaceFileSystem cooperative cancellation', () => {

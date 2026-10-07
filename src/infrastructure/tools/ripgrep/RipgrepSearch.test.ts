@@ -1,7 +1,12 @@
 import { createDeferred } from '@/test-support/createDeferred';
 import { describe, expect, test, spyOn } from 'bun:test';
 
-import { RipgrepSearch, runRipgrepCommand, type RipgrepCommandRunner } from './RipgrepSearch';
+import {
+	RipgrepSearch,
+	runRipgrepCommand,
+	type RipgrepCommandInput,
+	type RipgrepCommandRunner,
+} from './RipgrepSearch';
 
 type CommandFixture = {
 	stdout: string;
@@ -70,6 +75,113 @@ const successful = (stdout: string): CommandFixture => ({
 const noMatches = (): CommandFixture => ({ stdout: '', stderr: '', exitCode: 1 });
 
 describe('RipgrepSearch', () => {
+	test('generates the exact normal and safe-env commands in existing branch order', async () => {
+		const commands: RipgrepCommandInput[] = [];
+		const controller = new AbortController();
+		const search = createSearch(
+			async (input) => {
+				commands.push(input);
+				return { stderr: '', exitCode: 1, stoppedEarly: false };
+			},
+			{ timeoutMs: 321 },
+		);
+		await search.search({ query: ' first | second | first || ' }, { signal: controller.signal });
+		expect(commands).toHaveLength(2);
+		const excluded = ['--glob=!**/node_modules/**', '--glob=!**/.git/**', '--glob=!**/.agent/**'];
+		const common = [
+			'--json',
+			'--fixed-strings',
+			'--hidden',
+			'--color=never',
+			'--sort=path',
+			'--max-columns=500',
+		];
+		const patterns = ['--regexp', 'first', '--regexp', 'second', '.'];
+		expect(commands[0]?.cmd.slice(1)).toEqual([
+			...common,
+			'--glob=!**/.env*',
+			...excluded,
+			...patterns,
+		]);
+		expect(commands[1]?.cmd.slice(1)).toEqual([
+			...common,
+			'--glob=**/.env.development',
+			'--glob=**/.env.dev',
+			'--glob=**/.env.example',
+			...excluded,
+			...patterns,
+		]);
+		for (const command of commands) {
+			expect(command.cwd).toBe('/workspace');
+			expect(command.timeoutMs).toBe(321);
+			expect(command.signal).toBe(controller.signal);
+		}
+		expect(commands[0]?.cmd[0]).toBe(commands[1]?.cmd[0]);
+	});
+
+	test('bounds both branches independently before sorting and applying the combined limit', async () => {
+		const firstBranch = createDeferred<void>();
+		const consumed = [0, 0];
+		let calls = 0;
+		const search = createSearch(
+			async ({ onStdoutLine }) => {
+				const branch = calls++;
+				if (branch === 0) await firstBranch.promise;
+				else firstBranch.resolve();
+				const paths =
+					branch === 0
+						? ['src/z.ts', 'src/a.ts', 'src/b.ts', 'src/unread.ts']
+						: ['.env.example', '.env.dev', '.env.development', '.env.unread'];
+				for (const path of paths) {
+					consumed[branch] = (consumed[branch] ?? 0) + 1;
+					if (!onStdoutLine(matchLine(path, 1, 'needle-long'))) {
+						return { stderr: '', exitCode: 143, stoppedEarly: true };
+					}
+				}
+				return { stderr: '', exitCode: 0, stoppedEarly: false };
+			},
+			{ maxMatches: 2, maxMatchTextLength: 6 },
+		);
+		await expect(search.search({ query: 'needle' })).resolves.toEqual({
+			returnedMatches: 2,
+			returnedFiles: 2,
+			matches: [
+				{ path: '.env.dev', line: 1, text: 'needle...' },
+				{ path: '.env.example', line: 1, text: 'needle...' },
+			],
+			truncated: true,
+		});
+		expect(calls).toBe(2);
+		expect(consumed).toEqual([3, 3]);
+	});
+
+	test('combines results by path, line and text without deduplicating matches', async () => {
+		const search = createSearch(
+			createSequenceRunner([
+				successful(
+					[
+						matchLine('src/b.ts', 1, 'b'),
+						matchLine('src/a.ts', 2, 'later'),
+						matchLine('src/a.ts', 1, 'z'),
+					].join('\n'),
+				),
+				successful([matchLine('src/a.ts', 1, 'a'), matchLine('src/a.ts', 1, 'a')].join('\n')),
+			]),
+		);
+		await expect(search.search({ query: 'needle' })).resolves.toEqual({
+			returnedMatches: 5,
+			returnedFiles: 2,
+			matches: [
+				{ path: 'src/a.ts', line: 1, text: 'a' },
+				{ path: 'src/a.ts', line: 1, text: 'a' },
+				{ path: 'src/a.ts', line: 1, text: 'z' },
+				{ path: 'src/a.ts', line: 2, text: 'later' },
+				{ path: 'src/b.ts', line: 1, text: 'b' },
+			],
+			truncated: false,
+		});
+	});
+
 	test('returns empty output when rg exits with code 1', async () => {
 		const search = createSearch(createSequenceRunner([noMatches(), noMatches()]));
 

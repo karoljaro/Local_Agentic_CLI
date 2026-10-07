@@ -22,6 +22,7 @@ import {
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 
 import { isPathInside } from './isPathInside';
+import { PROTECTED_DIRECTORIES, SAFE_ENV_BASENAMES } from './workspacePolicy';
 
 type ResolvedWorkspaceFile = {
 	realTargetPath: string;
@@ -47,8 +48,8 @@ type CollectFilesInput = {
 	signal?: AbortSignal;
 };
 
-const EXCLUDED_DIRECTORIES = new Set(['node_modules', '.git', '.agent']);
-const SAFE_ENV_FILES = new Set(['.env.dev', '.env.development', '.env.example']);
+const EXCLUDED_DIRECTORIES = new Set<string>(PROTECTED_DIRECTORIES);
+const SAFE_ENV_FILES = new Set<string>(SAFE_ENV_BASENAMES);
 
 export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 	private readonly workspaceRoot: string;
