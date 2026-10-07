@@ -127,6 +127,7 @@ describe('ContextBuilder', () => {
 		const state = createInitialAgentState(asSessionId('session-1'));
 		const builder = new ContextBuilder({
 			systemPrompt: 'You are a local coding agent.',
+			maxContextCharacters: 120_000,
 		});
 
 		const context = builder.build(state);
@@ -164,6 +165,7 @@ describe('ContextBuilder', () => {
 
 		const builder = new ContextBuilder({
 			systemPrompt: 'You are a local coding agent.',
+			maxContextCharacters: 120_000,
 		});
 
 		const context = builder.build(state);
@@ -266,7 +268,7 @@ describe('ContextBuilder', () => {
 
 describe('ContextBuilder exact sizing', () => {
 	test('fits empty history and system-only builds without assuming one system', () => {
-		const builder = new ContextBuilder({ systemPrompt: '' });
+		const builder = new ContextBuilder({ systemPrompt: '', maxContextCharacters: 120_000 });
 		expect(builder.fit([])).toEqual([]);
 		expect(JSON.stringify(builder.fit([])).length).toBe(2);
 		expect(builder.fit(systems)).toEqual(systems);
@@ -490,7 +492,7 @@ describe('ContextBuilder serialization count', () => {
 	test('serializes every candidate message once while growing through several whole turns', () => {
 		const messages = [...systems, ...shortTurn, ...escapedTurn, ...toolTurn, current];
 		const { observed, counts } = observeSerialization(messages);
-		const builder = new ContextBuilder({ systemPrompt: '' });
+		const builder = new ContextBuilder({ systemPrompt: '', maxContextCharacters: 120_000 });
 		const selected = builder.fit(observed);
 		expect([...counts]).toEqual(messages.map(() => 1));
 		expect(selected).toEqual(messages);

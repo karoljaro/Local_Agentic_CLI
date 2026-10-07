@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 
 import { SessionService } from '@/application/services/SessionService';
+import { ContextBudgetExceededError } from '@/application/services/ContextBuilder';
 import type { ToolApprovalHandler } from '@/application/use-cases/RunAgentTurn';
 import { JsonlSessionStore } from '@/infrastructure/persistence/JsonlSessionStore';
 import { BunUuidV7IdGenerator } from '@/infrastructure/runtime/BunUuidV7IdGenerator';
@@ -11,6 +12,7 @@ import { promptSubmittedEvent } from '@/test-support/AgentEventFixtures';
 import { createDeferred } from '@/test-support/createDeferred';
 import { withMockedFetch } from '@/test-support/withMockedFetch';
 import { createRuntime, type Runtime } from './createRuntime';
+import { readConfig, type AppConfig } from './config';
 
 const config = {
 	OLLAMA_BASE_URL: 'http://localhost:11434',
@@ -22,6 +24,7 @@ const config = {
 const id = asSessionId('selected');
 const withMemoryRuntime = async (
 	run: (runtime: Runtime, events: AgentEvent[]) => Promise<void>,
+	runtimeConfig: AppConfig = config,
 ) => {
 	const events: AgentEvent[] = [];
 	const read = spyOn(JsonlSessionStore.prototype, 'readSessionEvents').mockImplementation(
@@ -36,7 +39,7 @@ const withMemoryRuntime = async (
 		{ sessionId: id },
 	]);
 	try {
-		await run(createRuntime(config), events);
+		await run(createRuntime(runtimeConfig), events);
 	} finally {
 		read.mockRestore();
 		append.mockRestore();
@@ -58,6 +61,95 @@ const run = async (runtime: Runtime, signal?: AbortSignal) => {
 };
 
 describe('createRuntime direct API', () => {
+	for (const [name, env, expected] of [
+		[
+			'unset env',
+			{},
+			{
+				baseUrl: 'http://localhost:11434',
+				model: 'gemma4:12b-it-qat',
+				systemPrompt: 'You are a local coding agent.',
+				budget: 120_000,
+				keepAlive: 0,
+			},
+		],
+		[
+			'blank env',
+			{
+				OLLAMA_BASE_URL: ' ',
+				OLLAMA_MODEL: '\t',
+				SYSTEM_PROMPT: '\n',
+				MAX_CONTEXT_CHARACTERS: ' ',
+				OLLAMA_KEEP_ALIVE: ' ',
+			},
+			{
+				baseUrl: 'http://localhost:11434',
+				model: 'gemma4:12b-it-qat',
+				systemPrompt: 'You are a local coding agent.',
+				budget: 120_000,
+				keepAlive: 0,
+			},
+		],
+		[
+			'explicit env',
+			{
+				OLLAMA_BASE_URL: ' http://127.0.0.1:22123/ ',
+				OLLAMA_MODEL: ' fixture-model ',
+				SYSTEM_PROMPT: ' fixture prompt ',
+				MAX_CONTEXT_CHARACTERS: ' 240 ',
+				OLLAMA_KEEP_ALIVE: ' 2m ',
+			},
+			{
+				baseUrl: 'http://127.0.0.1:22123',
+				model: 'fixture-model',
+				systemPrompt: 'fixture prompt',
+				budget: 240,
+				keepAlive: '2m',
+			},
+		],
+	] as const) {
+		test(`resolved ${name} reaches model, catalog, and context without constructor defaults`, async () => {
+			const urls: string[] = [];
+			await withMockedFetch(
+				async (url, init) => {
+					urls.push(String(url));
+					if (String(url).endsWith('/api/tags')) {
+						return new Response(JSON.stringify({ models: [] }));
+					}
+					expect(JSON.parse(String(init?.body))).toMatchObject({
+						model: expected.model,
+						keep_alive: expected.keepAlive,
+						messages: [
+							{ role: 'system', content: expected.systemPrompt },
+							{ role: 'user', content: 'hello' },
+						],
+					});
+					return response();
+				},
+				async () =>
+					withMemoryRuntime(async (runtime, events) => {
+						expect(runtime.getModelName()).toBe(expected.model);
+						expect(await runtime.listModels()).toEqual([]);
+						expect(await run(runtime)).toEqual([{ contentDelta: 'answer' }]);
+						const committed = [...events];
+						await expect(
+							(async () => {
+								for await (const _delta of runtime.runTurn({
+									sessionId: id,
+									prompt: 'x'.repeat(expected.budget),
+									modelName: runtime.getModelName(),
+								})) {
+									// Oversized prompts must reject before streaming or persistence.
+								}
+							})(),
+						).rejects.toBeInstanceOf(ContextBudgetExceededError);
+						expect(events).toEqual(committed);
+						expect(urls).toEqual([`${expected.baseUrl}/api/tags`, `${expected.baseUrl}/api/chat`]);
+					}, readConfig(env)),
+			);
+		});
+	}
+
 	test('one session service owns activation, preview, listing, turn state and committed subscriptions', async () => {
 		const owners = new Set<SessionService>();
 		const activate = SessionService.prototype.activateSession;

@@ -17,7 +17,7 @@ type GetInput = {
 export class OllamaHttpClient {
 	private readonly baseUrl: string;
 
-	constructor(baseUrl: string = 'http://localhost:11434') {
+	constructor(baseUrl: string) {
 		this.baseUrl = normalizeOllamaBaseUrl(baseUrl);
 	}
 

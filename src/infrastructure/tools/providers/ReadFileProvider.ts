@@ -2,7 +2,7 @@ import type { WorkspaceFilePort } from '@/application/ports/WorkspaceFilePort';
 import { z } from 'zod';
 import { defineLocalTool, type LocalTool } from '../LocalTool';
 
-export const READ_FILE_TOOL_NAME = 'read_file';
+const READ_FILE_TOOL_NAME = 'read_file';
 
 type ReadFileProviderOptions = {
 	maxFileBytes: number;

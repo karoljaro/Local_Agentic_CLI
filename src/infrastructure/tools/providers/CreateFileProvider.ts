@@ -2,7 +2,7 @@ import type { WorkspaceFilePort } from '@/application/ports/WorkspaceFilePort';
 import { z } from 'zod';
 import { defineLocalTool, type LocalTool } from '../LocalTool';
 
-export const CREATE_FILE_TOOL_NAME = 'create_file';
+const CREATE_FILE_TOOL_NAME = 'create_file';
 
 type CreateFileProviderOptions = {
 	maxFileBytes: number;

@@ -1,7 +1,7 @@
 import type { Runtime } from '@/composition/createRuntime';
 import type { ListedModel } from '@/application/ports/ModelCatalogPort';
 import type { ToolApprovalRequest } from '@/application/use-cases/RunAgentTurn';
-import type { EventId, SessionId, ToolCallId } from '@/domain/Ids';
+import type { SessionId, ToolCallId } from '@/domain/Ids';
 
 export type StartupMode = 'new' | 'resume';
 
@@ -48,11 +48,6 @@ export type ModelSelectionState = SelectionState<ListedModel>;
 export type SessionSelectionState = SelectionState<SessionOption>;
 
 export type PendingApproval = ToolApprovalRequest;
-
-export type CompletedAssistant = {
-	eventId: EventId;
-	content: string;
-};
 
 // Presentation consumes the real composition contract without a parallel method surface.
 export type PresentationRuntime = Pick<

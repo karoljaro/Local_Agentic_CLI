@@ -13,6 +13,38 @@ describe('readConfig', () => {
 		});
 	});
 
+	for (const blank of ['', ' \t\n ']) {
+		test(`uses the same defaults when every env value is blank: ${JSON.stringify(blank)}`, () => {
+			expect(
+				readConfig({
+					OLLAMA_BASE_URL: blank,
+					OLLAMA_MODEL: blank,
+					OLLAMA_KEEP_ALIVE: blank,
+					SYSTEM_PROMPT: blank,
+					MAX_CONTEXT_CHARACTERS: blank,
+				}),
+			).toEqual(readConfig({}));
+		});
+	}
+
+	test('explicit env values override every production default', () => {
+		expect(
+			readConfig({
+				OLLAMA_BASE_URL: ' http://127.0.0.1:22123/ ',
+				OLLAMA_MODEL: ' fixture-model ',
+				OLLAMA_KEEP_ALIVE: ' -1 ',
+				SYSTEM_PROMPT: ' fixture prompt ',
+				MAX_CONTEXT_CHARACTERS: ' 240 ',
+			}),
+		).toEqual({
+			OLLAMA_BASE_URL: 'http://127.0.0.1:22123/',
+			OLLAMA_MODEL: 'fixture-model',
+			OLLAMA_KEEP_ALIVE: '-1',
+			SYSTEM_PROMPT: 'fixture prompt',
+			MAX_CONTEXT_CHARACTERS: 240,
+		});
+	});
+
 	test('trims values and treats empty strings as missing', () => {
 		expect(
 			readConfig({

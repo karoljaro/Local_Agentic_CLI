@@ -8,6 +8,33 @@ import { withMockedFetch } from '@/test-support/withMockedFetch';
 import { OllamaModelAdapter } from './OllamaModelAdapter';
 
 describe('OllamaModelAdapter', () => {
+	for (const [keepAlive, expected] of [
+		[' \t ', undefined],
+		[' 2m ', '2m'],
+	] as const) {
+		test(`preserves optional keep-alive normalization for ${JSON.stringify(keepAlive)}`, async () => {
+			await withMockedFetch(
+				async (_url, init) => {
+					const body = JSON.parse(String(init?.body));
+					if (expected === undefined) {
+						expect(body).not.toHaveProperty('keep_alive');
+					} else {
+						expect(body.keep_alive).toBe(expected);
+					}
+					return new Response('{"message":{"content":"Done"},"done":true}\n');
+				},
+				async () => {
+					const adapter = new OllamaModelAdapter(
+						'http://localhost:11434',
+						'fixture-model',
+						keepAlive,
+					);
+					await collectAsyncIterable(adapter.streamChat({ messages: [] }));
+				},
+			);
+		});
+	}
+
 	test('posts assistant tool calls and tool messages', async () => {
 		let requestBody: unknown;
 
@@ -18,7 +45,7 @@ describe('OllamaModelAdapter', () => {
 				return new Response('{"message":{"content":"Done"},"done":true}\n');
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter();
+				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
 
 				await collectAsyncIterable(
 					adapter.streamChat({
@@ -190,7 +217,7 @@ describe('OllamaModelAdapter', () => {
 				return new Response('{"done":true}\n', { status: 200 });
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter();
+				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
 
 				await collectAsyncIterable(
 					adapter.streamChat({
@@ -214,7 +241,7 @@ describe('OllamaModelAdapter', () => {
 				return new Response('{"done":true}\n', { status: 200 });
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter();
+				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
 
 				await collectAsyncIterable(adapter.streamChat({ messages: [] }));
 
@@ -236,7 +263,7 @@ describe('OllamaModelAdapter', () => {
 				);
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter();
+				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
 				const tool = {
 					name: 'read_file',
 					description: 'Read a file',
@@ -297,7 +324,7 @@ describe('OllamaModelAdapter', () => {
 				});
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter();
+				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
 
 				const chunks = await collectAsyncIterable(adapter.streamChat({ messages: [] }));
 
@@ -319,7 +346,7 @@ describe('OllamaModelAdapter', () => {
 				);
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter();
+				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
 
 				const chunks = await collectAsyncIterable(adapter.streamChat({ messages: [] }));
 
@@ -351,7 +378,7 @@ describe('OllamaModelAdapter', () => {
 		await withMockedFetch(
 			async () => new Response('model not found', { status: 404 }),
 			async () => {
-				const adapter = new OllamaModelAdapter();
+				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
 
 				await expect(collectAsyncIterable(adapter.streamChat({ messages: [] }))).rejects.toThrow(
 					'Ollama request failed with status 404',
@@ -378,7 +405,7 @@ describe('OllamaModelAdapter', () => {
 				);
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter();
+				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
 
 				await expect(collectAsyncIterable(adapter.streamChat({ messages: [] }))).rejects.toThrow(
 					'Invalid Ollama stream JSON',
@@ -408,7 +435,7 @@ describe('OllamaModelAdapter', () => {
 				);
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter();
+				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
 				const iterator = adapter.streamChat({ messages: [] })[Symbol.asyncIterator]();
 
 				await expect(iterator.next()).resolves.toEqual({
@@ -450,7 +477,7 @@ describe('OllamaModelAdapter', () => {
 				return response;
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter();
+				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
 				const iterator = adapter
 					.streamChat({ messages: [], signal: abortController.signal })
 					[Symbol.asyncIterator]();
@@ -469,7 +496,7 @@ describe('OllamaModelAdapter', () => {
 		await withMockedFetch(
 			async () => new Response('{"error":"model failed"}\n', { status: 200 }),
 			async () => {
-				const adapter = new OllamaModelAdapter();
+				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
 
 				await expect(collectAsyncIterable(adapter.streamChat({ messages: [] }))).rejects.toThrow(
 					'Ollama stream failed: model failed',
@@ -487,7 +514,7 @@ describe('OllamaModelAdapter', () => {
 				);
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter();
+				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
 
 				await expect(collectAsyncIterable(adapter.streamChat({ messages: [] }))).rejects.toThrow(
 					'Ollama stream failed: model failed',
@@ -505,7 +532,7 @@ describe('OllamaModelAdapter', () => {
 				);
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter();
+				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
 
 				await expect(collectAsyncIterable(adapter.streamChat({ messages: [] }))).rejects.toThrow(
 					'Ollama stream ended before completion.',
@@ -523,7 +550,7 @@ describe('OllamaModelAdapter', () => {
 				);
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter();
+				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
 
 				await expect(collectAsyncIterable(adapter.streamChat({ messages: [] }))).rejects.toThrow(
 					'Invalid Ollama tool arguments for read_file',

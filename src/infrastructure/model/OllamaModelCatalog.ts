@@ -9,7 +9,7 @@ import { OllamaHttpClient } from './ollama/OllamaHttpClient';
 export class OllamaModelCatalog implements ModelCatalogPort {
 	private readonly client: OllamaHttpClient;
 
-	constructor(baseUrl: string = 'http://localhost:11434') {
+	constructor(baseUrl: string) {
 		this.client = new OllamaHttpClient(baseUrl);
 	}
 

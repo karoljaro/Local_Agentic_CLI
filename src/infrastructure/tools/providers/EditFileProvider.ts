@@ -2,7 +2,7 @@ import type { EditWorkspaceFile } from '@/application/use-cases/file-operations/
 import { z } from 'zod';
 import { defineLocalTool, type LocalTool } from '../LocalTool';
 
-export const EDIT_FILE_TOOL_NAME = 'edit_file';
+const EDIT_FILE_TOOL_NAME = 'edit_file';
 
 type EditFileProviderOptions = {
 	maxFileBytes: number;

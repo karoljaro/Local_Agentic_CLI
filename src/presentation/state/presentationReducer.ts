@@ -5,7 +5,6 @@ import type { ActiveTool, ChatState, HistoryEntry } from '../types';
 
 export type ChatAction =
 	| { type: 'session.changed'; sessionId: SessionId }
-	| { type: 'session.load-started' }
 	| { type: 'session.loaded'; events: AgentEvent[] }
 	| { type: 'session.load-failed'; message: string }
 	| { type: 'engine.event'; event: AgentEvent }
@@ -27,8 +26,6 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
 	switch (action.type) {
 		case 'session.changed':
 			return createChatState(action.sessionId);
-		case 'session.load-started':
-			return { ...state, history: [], activeTools: [], loadStatus: 'loading', turnStatus: 'idle' };
 		case 'session.loaded': {
 			const loaded = reduceSessionEvents(state.sessionId, action.events);
 			return { ...loaded, activeTools: [], loadStatus: 'ready', turnStatus: 'idle' };

@@ -732,7 +732,7 @@ class StorageFailurePresentationRuntime extends FakePresentationRuntime {
 			sessionStore: this.sessionService,
 			model: this.model,
 			toolExecutor: this.executor,
-			contextBuilder: new ContextBuilder({ systemPrompt: 'test' }),
+			contextBuilder: new ContextBuilder({ systemPrompt: 'test', maxContextCharacters: 120_000 }),
 			clock: { now: () => asISODateTime('2026-10-07T12:00:00Z') },
 			idGenerator: {
 				nextEventId: () => asEventId(`event-${id++}`),

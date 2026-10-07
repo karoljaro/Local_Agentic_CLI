@@ -350,7 +350,7 @@ const createRunAgentTurnHarness = ({
 	const sessions = new SessionService(sessionStore);
 	const contextOptions = {
 		systemPrompt: 'You are a local coding agent.',
-		...(maxContextCharacters === undefined ? {} : { maxContextCharacters }),
+		maxContextCharacters: maxContextCharacters ?? 120_000,
 	};
 	const contextBuilder = new ContextBuilder(contextOptions);
 	const boundaryChecks = checkRequestBoundaries(
@@ -1690,7 +1690,10 @@ describe('RunAgentTurn lifecycle regressions', () => {
 					toolExecutor: executor,
 					clock: new FixedClock(),
 					idGenerator: new SequenceIdGenerator(),
-					contextBuilder: new ContextBuilder({ systemPrompt: 'test' }),
+					contextBuilder: new ContextBuilder({
+						systemPrompt: 'test',
+						maxContextCharacters: 120_000,
+					}),
 					approveToolCall: async (_request, options) => {
 						expect(options.signal).toBe(controller.signal);
 						return true;
@@ -1870,7 +1873,7 @@ test('failure-event storage failure stops subsequent tools and model rounds with
 		toolExecutor: executor,
 		clock: new FixedClock(),
 		idGenerator: new SequenceIdGenerator(),
-		contextBuilder: new ContextBuilder({ systemPrompt: 'test' }),
+		contextBuilder: new ContextBuilder({ systemPrompt: 'test', maxContextCharacters: 120_000 }),
 	});
 	expect(
 		await collectAsyncIterable(
@@ -1913,7 +1916,7 @@ test('cancellation during activation prevents prompt persistence and model work'
 		model,
 		clock: new FixedClock(),
 		idGenerator: new SequenceIdGenerator(),
-		contextBuilder: new ContextBuilder({ systemPrompt: 'test' }),
+		contextBuilder: new ContextBuilder({ systemPrompt: 'test', maxContextCharacters: 120_000 }),
 	});
 	const outcome = collectAsyncIterable(
 		loop.run({
@@ -1970,7 +1973,10 @@ test('normalized prepared input is approved, persisted, deduplicated and execute
 			await append(event);
 		};
 		const sessions = new SessionService(durable);
-		const contextBuilder = new ContextBuilder({ systemPrompt: 'test' });
+		const contextBuilder = new ContextBuilder({
+			systemPrompt: 'test',
+			maxContextCharacters: 120_000,
+		});
 		const model = new ScriptedModel([
 			toolCallResponse([
 				toolCall('normalized', { query: ' needle ' }),
@@ -1983,7 +1989,7 @@ test('normalized prepared input is approved, persisted, deduplicated and execute
 			model,
 			sessionId,
 			() => new JsonlSessionStore(directory).readSessionEvents(sessionId),
-			{ systemPrompt: 'test' },
+			{ systemPrompt: 'test', maxContextCharacters: 120_000 },
 			() => new SessionService(new JsonlSessionStore(directory)),
 		);
 		const approvals: ToolApprovalRequest[] = [];
@@ -2202,14 +2208,14 @@ describe('Phase 7 canonical request boundaries', () => {
 				model,
 				sessionId,
 				() => new JsonlSessionStore(directory).readSessionEvents(sessionId),
-				{ systemPrompt: 'test' },
+				{ systemPrompt: 'test', maxContextCharacters: 120_000 },
 				() => new SessionService(new JsonlSessionStore(directory)),
 			);
 			const executor = createReadToolExecutor();
 			const loop = new RunAgentTurn({
 				sessionStore: sessions,
 				model: checked.model,
-				contextBuilder: new ContextBuilder({ systemPrompt: 'test' }),
+				contextBuilder: new ContextBuilder({ systemPrompt: 'test', maxContextCharacters: 120_000 }),
 				toolExecutor: executor,
 				clock: new FixedClock(),
 				idGenerator: new SequenceIdGenerator(),

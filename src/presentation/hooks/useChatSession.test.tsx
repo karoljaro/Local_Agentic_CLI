@@ -562,7 +562,7 @@ for (const aborted of [false, true]) {
 		const loop = new RunAgentTurn({
 			sessionStore: service,
 			model,
-			contextBuilder: new ContextBuilder({ systemPrompt: 'test' }),
+			contextBuilder: new ContextBuilder({ systemPrompt: 'test', maxContextCharacters: 120_000 }),
 			clock: { now: () => asISODateTime('2026-10-07T12:00:00Z') },
 			idGenerator: {
 				nextEventId: () => asEventId(`event-${index++}`),
@@ -619,7 +619,7 @@ test('real model failure commits agent.error once and keeps the streamed partial
 				error: new Error('real model failure'),
 			},
 		]),
-		contextBuilder: new ContextBuilder({ systemPrompt: 'test' }),
+		contextBuilder: new ContextBuilder({ systemPrompt: 'test', maxContextCharacters: 120_000 }),
 		clock: { now: () => asISODateTime('2026-10-07T12:00:00Z') },
 		idGenerator: {
 			nextEventId: () => asEventId(`event-${index++}`),

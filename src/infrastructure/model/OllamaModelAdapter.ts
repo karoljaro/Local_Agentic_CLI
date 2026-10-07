@@ -19,11 +19,7 @@ export class OllamaModelAdapter implements ModelPort, ModelMemoryPort {
 	private readonly modelName: string;
 	private readonly keepAlive: OllamaKeepAlive | undefined;
 
-	constructor(
-		baseUrl: string = 'http://localhost:11434',
-		modelName: string = 'gemma4:12b-it-qat',
-		keepAlive?: string | undefined,
-	) {
+	constructor(baseUrl: string, modelName: string, keepAlive?: string | undefined) {
 		this.client = new OllamaHttpClient(baseUrl);
 		this.modelName = normalizeOllamaModelName(modelName);
 		this.keepAlive = normalizeOllamaKeepAlive(keepAlive);

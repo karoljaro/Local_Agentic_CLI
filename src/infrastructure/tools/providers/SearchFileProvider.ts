@@ -2,7 +2,7 @@ import type { WorkspaceSearchPort } from '@/application/ports/WorkspaceSearchPor
 import { z } from 'zod';
 import { defineLocalTool, type LocalTool } from '../LocalTool';
 
-export const SEARCH_FILE_TOOL_NAME = 'search_file';
+const SEARCH_FILE_TOOL_NAME = 'search_file';
 
 export const searchFileTool = (workspaceSearch: WorkspaceSearchPort): LocalTool =>
 	defineLocalTool({

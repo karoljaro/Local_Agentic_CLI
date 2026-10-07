@@ -2,7 +2,7 @@ import type { WorkspaceFilePort } from '@/application/ports/WorkspaceFilePort';
 import { z } from 'zod';
 import { defineLocalTool, type LocalTool } from '../LocalTool';
 
-export const LIST_FILES_TOOL_NAME = 'list_files';
+const LIST_FILES_TOOL_NAME = 'list_files';
 
 type ListFilesProviderOptions = {
 	maxEntries: number;

@@ -10,10 +10,6 @@ import {
 	type ToolCallId,
 } from '@/domain/Ids';
 
-type BunWithUuidV7 = typeof Bun & {
-	randomUUIDv7(): string;
-};
-
 export class BunUuidV7IdGenerator implements IdGeneratorPort {
 	nextEventId(): EventId {
 		return asEventId(this.nextId());
@@ -32,6 +28,6 @@ export class BunUuidV7IdGenerator implements IdGeneratorPort {
 	}
 
 	private nextId(): string {
-		return (Bun as BunWithUuidV7).randomUUIDv7();
+		return Bun.randomUUIDv7();
 	}
 }

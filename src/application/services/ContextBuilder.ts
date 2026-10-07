@@ -4,7 +4,7 @@ import type { ModelMessage } from '@/domain/ModelMessage';
 
 type ContextBuilderOptions = {
 	systemPrompt: string;
-	maxContextCharacters?: number;
+	maxContextCharacters: number;
 };
 
 type BuildContextResult = {
@@ -15,8 +15,6 @@ type MessageGroupSize = {
 	serializedCharacters: number;
 	messageCount: number;
 };
-
-const DEFAULT_MAX_CONTEXT_CHARACTERS = 120_000;
 
 export class ContextBudgetExceededError extends Error {
 	constructor(maxContextCharacters: number) {
@@ -30,7 +28,7 @@ export class ContextBuilder {
 	private readonly maxContextCharacters: number;
 
 	constructor(options: ContextBuilderOptions) {
-		this.maxContextCharacters = options.maxContextCharacters ?? DEFAULT_MAX_CONTEXT_CHARACTERS;
+		this.maxContextCharacters = options.maxContextCharacters;
 
 		if (!Number.isInteger(this.maxContextCharacters) || this.maxContextCharacters <= 0) {
 			throw new Error('Model context character budget must be a positive integer.');

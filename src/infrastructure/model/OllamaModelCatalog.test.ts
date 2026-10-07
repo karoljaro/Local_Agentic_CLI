@@ -58,7 +58,7 @@ describe('OllamaModelCatalog', () => {
 				return new Response(JSON.stringify({ models: [{ name: 'llama3.1:8b' }] }));
 			},
 			async () => {
-				const catalog = new OllamaModelCatalog();
+				const catalog = new OllamaModelCatalog('http://localhost:11434');
 
 				await expect(catalog.listModels({ signal: controller.signal })).resolves.toEqual({
 					models: [{ name: 'llama3.1:8b' }],
@@ -72,7 +72,7 @@ describe('OllamaModelCatalog', () => {
 		await withMockedFetch(
 			async () => new Response('not running', { status: 500 }),
 			async () => {
-				const catalog = new OllamaModelCatalog();
+				const catalog = new OllamaModelCatalog('http://localhost:11434');
 
 				await expect(catalog.listModels()).rejects.toThrow(
 					'Ollama model list failed with status 500: not running',
@@ -85,7 +85,7 @@ describe('OllamaModelCatalog', () => {
 		await withMockedFetch(
 			async () => new Response('{"models":[{}]}'),
 			async () => {
-				const catalog = new OllamaModelCatalog();
+				const catalog = new OllamaModelCatalog('http://localhost:11434');
 
 				await expect(catalog.listModels()).rejects.toThrow(
 					'Invalid Ollama model list response: model entry is missing name.',
