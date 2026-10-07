@@ -270,9 +270,20 @@ describe('createRuntime direct API', () => {
 			signals.push(options.signal);
 			return true;
 		};
-		const execute = spyOn(LocalToolRegistry.prototype, 'execute').mockResolvedValue({
-			toolName: 'create_file',
-			output: { created: true },
+		let executions = 0;
+		const prepare = LocalToolRegistry.prototype.prepare;
+		const prepared = spyOn(LocalToolRegistry.prototype, 'prepare').mockImplementation(function (
+			this: LocalToolRegistry,
+			request,
+		) {
+			const execution = prepare.call(this, request);
+			return {
+				...execution,
+				execute: async () => {
+					executions++;
+					return { toolName: execution.toolName, output: { created: true } };
+				},
+			};
 		});
 		try {
 			await withMockedFetch(
@@ -285,20 +296,20 @@ describe('createRuntime direct API', () => {
 						const signal = new AbortController().signal;
 						await run(runtime, signal);
 						expect(signals).toEqual([signal]);
-						expect(execute).toHaveBeenCalledTimes(1);
+						expect(executions).toBe(1);
 						disposeCurrent();
 						await run(runtime);
-						expect(execute).toHaveBeenCalledTimes(1);
+						expect(executions).toBe(1);
 						const disposeAgain = runtime.setApprovalHandler(current);
 						disposeOld();
 						disposeAgain();
 						await run(runtime);
 						expect(signals).toHaveLength(1);
-						expect(execute).toHaveBeenCalledTimes(1);
+						expect(executions).toBe(1);
 					}),
 			);
 		} finally {
-			execute.mockRestore();
+			prepared.mockRestore();
 		}
 	});
 });

@@ -14,7 +14,7 @@ import { z } from 'zod';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 
 import { createLocalToolExecutor } from '@/composition/factories/createLocalToolExecutor';
 import { createTempDirectory } from '@/test-support/createTempDirectory';
@@ -238,7 +238,7 @@ describe('LocalToolRegistry', () => {
 				toolName: 'search_file',
 				toolInput: { query: '  needle  ' },
 			}),
-		).toEqual({
+		).toMatchObject({
 			toolName: 'search_file',
 			toolInput: { query: 'needle' },
 		});
@@ -1334,5 +1334,193 @@ describe('LocalToolRegistry execution options', () => {
 			),
 		).toHaveProperty('name', 'AbortError');
 		expect(executions).toBe(0);
+	});
+});
+
+describe('LocalToolRegistry prepared execution', () => {
+	test('raw execution parses once and executes normalized input with invocation options', async () => {
+		const schema = z.strictObject({ path: z.string().trim(), limit: z.coerce.number().default(2) });
+		const inputs: z.output<typeof schema>[] = [];
+		const receivedOptions: WorkspaceExecutionOptions[] = [];
+		const registry = new LocalToolRegistry([
+			defineLocalTool({
+				name: 'normalized',
+				description: 'Normalized',
+				inputSchema: schema,
+				execute: async (input, options) => {
+					inputs.push(input);
+					receivedOptions.push(options);
+					return input;
+				},
+			}),
+		]);
+		const parse = spyOn(schema, 'parse');
+		try {
+			const options = { signal: new AbortController().signal };
+			const result = await registry.execute(
+				{ toolName: 'normalized', toolInput: { path: ' file ', limit: '3' } },
+				options,
+			);
+			expect(parse).toHaveBeenCalledTimes(1);
+			expect(inputs).toEqual([{ path: 'file', limit: 3 }]);
+			expect(result.output).toBe(inputs[0]);
+			expect(receivedOptions).toEqual([options]);
+			expect(receivedOptions[0]).toBe(options);
+		} finally {
+			parse.mockRestore();
+		}
+	});
+
+	test('preparing all workspace tools performs zero workspace IO', () => {
+		let io = 0;
+		const files: WorkspaceFilePort = {
+			listFiles: async () => {
+				io++;
+				return { files: [], truncated: false };
+			},
+			readFile: async (input) => {
+				io++;
+				return { path: input.path, content: 'target' };
+			},
+			writeFile: async (input) => {
+				io++;
+				return { path: input.path, content: input.content };
+			},
+			createFile: async (input) => {
+				io++;
+				return { path: input.path, content: input.content };
+			},
+		};
+		const registry = new LocalToolRegistry([
+			listFilesTool(files, { maxEntries: 10 }),
+			readFileTool(files, { maxFileBytes: 1024, maxCharacters: 100, maxLines: 10 }),
+			searchFileTool({
+				search: async () => {
+					io++;
+					return { returnedMatches: 0, returnedFiles: 0, matches: [], truncated: false };
+				},
+			}),
+			createFileTool(files, { maxFileBytes: 1024 }),
+			editFileTool(new EditWorkspaceFile(files), { maxFileBytes: 1024 }),
+		]);
+		const prepared = [
+			{ toolName: 'list_files', toolInput: {} },
+			{ toolName: 'read_file', toolInput: { path: 'file' } },
+			{ toolName: 'search_file', toolInput: { query: ' target ' } },
+			{ toolName: 'create_file', toolInput: { path: 'new', content: 'created' } },
+			{ toolName: 'edit_file', toolInput: { path: 'file', oldText: 'target', newText: '$&' } },
+		].map((request) => registry.prepare(request));
+		expect(io).toBe(0);
+		expect(prepared.map((execution) => execution.requiresApproval)).toEqual([
+			false,
+			false,
+			false,
+			true,
+			true,
+		]);
+		expect(prepared.map((execution) => execution.deduplicate)).toEqual([
+			true,
+			false,
+			true,
+			false,
+			false,
+		]);
+		expect(prepared.map((execution) => execution.invalidatesWorkspaceCache)).toEqual([
+			false,
+			false,
+			false,
+			true,
+			true,
+		]);
+		for (const execution of prepared) expect(execution.execute).toBeFunction();
+	});
+
+	test('unknown and invalid raw requests and preparation reject before provider execution', async () => {
+		let executions = 0;
+		const registry = new LocalToolRegistry([
+			defineLocalTool({
+				name: 'known',
+				description: '',
+				inputSchema: z.strictObject({ path: z.string() }),
+				execute: async () => {
+					executions++;
+					return {};
+				},
+			}),
+		]);
+		for (const [request, message] of [
+			[{ toolName: 'missing', toolInput: {} }, 'Unknown tool requested by model: missing'],
+			[{ toolName: 'known', toolInput: { path: 42 } }, 'Invalid arguments for tool known'],
+		] as const) {
+			expect(() => registry.prepare(request)).toThrow(message);
+			await expect(registry.execute(request)).rejects.toThrow(message);
+		}
+		expect(executions).toBe(0);
+	});
+
+	test('prepared execution receives a current signal and rejects abort after preparation', async () => {
+		let executions = 0;
+		const received: WorkspaceExecutionOptions[] = [];
+		const registry = new LocalToolRegistry([
+			defineLocalTool({
+				name: 'known',
+				description: '',
+				inputSchema: z.strictObject({}),
+				execute: async (_input, options) => {
+					executions++;
+					received.push(options);
+					return {};
+				},
+			}),
+		]);
+		const first = registry.prepare({ toolName: 'known', toolInput: {} });
+		const second = registry.prepare({ toolName: 'known', toolInput: {} });
+		const options = { signal: new AbortController().signal };
+		await first.execute(options);
+		const aborted = new AbortController();
+		aborted.abort('after prepare');
+		await expect(second.execute({ signal: aborted.signal })).rejects.toHaveProperty(
+			'name',
+			'AbortError',
+		);
+		expect(executions).toBe(1);
+		expect(received[0]).toBe(options);
+		expect(first.toolInput).toEqual({});
+	});
+
+	test('definitions are generated once and nested caller mutations cannot corrupt the cache', () => {
+		let schemaReads = 0;
+		const tool = defineLocalTool({
+			name: 'known',
+			description: 'Stable description',
+			inputSchema: z.strictObject({ path: z.string() }),
+			execute: async (input) => input,
+		});
+		const tools = [
+			{
+				...tool,
+				get inputSchema() {
+					schemaReads++;
+					return tool.inputSchema;
+				},
+			},
+		];
+		const registry = new LocalToolRegistry(tools);
+		expect(schemaReads).toBe(1);
+		const before = registry.listTools();
+		const returned = registry.listTools();
+		returned[0]!.name = 'corrupt';
+		returned[0]!.description = 'corrupt';
+		const properties = returned[0]!.parameters['properties'] as Record<string, { type: string }>;
+		properties['path']!.type = 'number';
+		(returned[0]!.parameters['required'] as string[]).push('corrupt');
+		returned.length = 0;
+		tools.length = 0;
+		expect(registry.listTools()).toEqual(before);
+		expect(registry.listTools()).not.toBe(before);
+		expect(schemaReads).toBe(1);
+		expect(registry.prepare({ toolName: 'known', toolInput: { path: 'file' } }).toolName).toBe(
+			'known',
+		);
 	});
 });

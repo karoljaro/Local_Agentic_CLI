@@ -1,5 +1,6 @@
 import { throwIfAborted } from '@/application/services/cancellation';
 import type {
+	PreparedToolExecution,
 	ToolExecutionOptions,
 	ToolExecutionRequest,
 	ToolExecutionResult,
@@ -11,8 +12,9 @@ import type { LocalTool } from './LocalTool';
 
 export class LocalToolRegistry implements ToolExecutorPort {
 	private readonly toolsByName: ReadonlyMap<string, LocalTool>;
+	private readonly modelDefinitions: ToolDefinition[];
 
-	constructor(private readonly tools: readonly LocalTool[]) {
+	constructor(tools: readonly LocalTool[]) {
 		const toolsByName = new Map<string, LocalTool>();
 
 		for (const tool of tools) {
@@ -24,20 +26,19 @@ export class LocalToolRegistry implements ToolExecutorPort {
 		}
 
 		this.toolsByName = toolsByName;
+		this.modelDefinitions = tools.map(toToolDefinition);
 	}
 
 	listTools(): ToolDefinition[] {
-		return this.tools.map((tool) => toToolDefinition(tool));
+		// Copy nested schemas too; model callers cannot mutate cached descriptions.
+		return structuredClone(this.modelDefinitions);
 	}
 
-	prepare(request: ToolExecutionRequest): ToolExecutionRequest {
+	prepare(request: ToolExecutionRequest): PreparedToolExecution {
 		const tool = this.getTool(request.toolName);
 
 		try {
-			return {
-				toolName: tool.name,
-				toolInput: tool.parse(request.toolInput),
-			};
+			return tool.prepare(request.toolInput);
 		} catch (caughtError) {
 			if (caughtError instanceof z.ZodError) {
 				throw new Error(`Invalid arguments for tool ${tool.name}: ${z.prettifyError(caughtError)}`);
@@ -53,13 +54,7 @@ export class LocalToolRegistry implements ToolExecutorPort {
 	): Promise<ToolExecutionResult> {
 		throwIfAborted(options.signal);
 		const prepared = this.prepare(request);
-		throwIfAborted(options.signal);
-		const tool = this.getTool(prepared.toolName);
-
-		return {
-			toolName: tool.name,
-			output: await tool.execute(prepared.toolInput, options),
-		};
+		return prepared.execute(options);
 	}
 
 	private getTool(toolName: string): LocalTool {

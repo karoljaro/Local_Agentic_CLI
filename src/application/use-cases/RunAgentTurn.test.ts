@@ -5,6 +5,11 @@ import { createLocalToolExecutor } from '@/composition/factories/createLocalTool
 import { createTempDirectory } from '@/test-support/createTempDirectory';
 import { createDeferred } from '@/test-support/createDeferred';
 import { describe, expect, test } from 'bun:test';
+import { z } from 'zod';
+import { defineLocalTool } from '@/infrastructure/tools/LocalTool';
+import { LocalToolRegistry } from '@/infrastructure/tools/LocalToolExecutor';
+import { JsonlSessionStore } from '@/infrastructure/persistence/JsonlSessionStore';
+import type { AgentEvent } from '@/domain/AgentEvent';
 
 import {
 	asEventId,
@@ -1604,7 +1609,9 @@ describe('RunAgentTurn lifecycle regressions', () => {
 				const local = createLocalToolExecutor({ workspaceRoot: directory });
 				const executor = new RecordingToolExecutor(
 					local.listTools(),
-					(request, _requests, options) => local.execute(request, options),
+					() => {
+						throw new Error('Expected bound prepared execution');
+					},
 					(request) => local.prepare(request),
 				);
 				const model = new ScriptedModel([
@@ -1639,6 +1646,8 @@ describe('RunAgentTurn lifecycle regressions', () => {
 				expect(error).toBe(cause);
 				expect(await readFile(join(directory, 'created.txt'), 'utf8')).toBe('durable side effect');
 				expect(executor.receivedRequests).toHaveLength(1);
+				expect(executor.preparationRequests).toHaveLength(2);
+				expect(executor.preparedExecutions).toHaveLength(2);
 				expect(executor.receivedOptions[0]?.signal).toBe(controller.signal);
 				expect(model.receivedInputs).toHaveLength(1);
 				expect(model.receivedInputs[0]?.signal).toBe(controller.signal);
@@ -1858,4 +1867,118 @@ test('cancellation during activation prevents prompt persistence and model work'
 	expect(model.receivedInputs).toEqual([]);
 	await service.activateSession(asSessionId('session-1'));
 	expect(store.readCount).toBe(1);
+});
+
+test('normalized prepared input is approved, persisted, deduplicated and executed identically with fresh JSONL replay', async () => {
+	const { directory, cleanup } = await createTempDirectory('phase-6-projection-');
+	try {
+		const schema = z.strictObject({
+			query: z.string().trim(),
+			limit: z.coerce.number().default(2),
+		});
+		const providerInputs: z.output<typeof schema>[] = [];
+		const signal = new AbortController().signal;
+		const registry = new LocalToolRegistry([
+			defineLocalTool({
+				name: 'normalized',
+				description: 'Normalized fixture',
+				inputSchema: schema,
+				requiresApproval: true,
+				deduplicate: true,
+				execute: async (input, options) => {
+					expect(options.signal).toBe(signal);
+					providerInputs.push(input);
+					return { query: input.query, limit: input.limit, matches: ['result'] };
+				},
+			}),
+		]);
+		const executor = new RecordingToolExecutor(
+			registry.listTools(),
+			() => {
+				throw new Error('Expected prepared delegate');
+			},
+			(request) => registry.prepare(request),
+		);
+		const durable = new JsonlSessionStore(directory);
+		const originalEvents: AgentEvent[] = [];
+		const append = durable.appendSessionEvent.bind(durable);
+		durable.appendSessionEvent = async (event) => {
+			originalEvents.push(event);
+			await append(event);
+		};
+		const sessions = new SessionService(durable);
+		const contextBuilder = new ContextBuilder({ systemPrompt: 'test' });
+		const model = new ScriptedModel([
+			toolCallResponse([
+				toolCall('normalized', { query: ' needle ' }),
+				toolCall('normalized', { query: 'needle', limit: '2' }),
+			]),
+			textResponse('Done.'),
+		]);
+		const approvals: ToolApprovalRequest[] = [];
+		const loop = new RunAgentTurn({
+			sessionStore: sessions,
+			model,
+			toolExecutor: executor,
+			contextBuilder,
+			clock: new FixedClock(),
+			idGenerator: new SequenceIdGenerator(),
+			approveToolCall: async (request, options) => {
+				expect(options.signal).toBe(signal);
+				approvals.push(request);
+				return true;
+			},
+		});
+		const sessionId = asSessionId('session-1');
+		await collectAsyncIterable(loop.run({ sessionId, prompt: 'Normalize and search', signal }));
+		expect(executor.preparationRequests).toHaveLength(2);
+		expect(executor.preparedExecutions).toHaveLength(2);
+		expect(executor.receivedRequests).toHaveLength(1);
+		expect(providerInputs).toEqual([{ query: 'needle', limit: 2 }]);
+		expect(approvals.map((request) => request.toolInput)).toEqual([
+			{ query: 'needle', limit: 2 },
+			{ query: 'needle', limit: 2 },
+		]);
+		const batch = originalEvents.find((event) => event.type === 'assistant.tool_calls.completed');
+		if (batch?.type !== 'assistant.tool_calls.completed')
+			throw new Error('Expected persisted batch');
+		for (const [index, call] of batch.toolCalls.entries()) {
+			expect(Object.keys(call).sort()).toEqual(['arguments', 'id', 'name']);
+			expect(call.arguments).toBe(executor.preparedExecutions[index]!.toolInput);
+			expect(approvals[index]!.toolInput).toBe(call.arguments);
+			expect(executor.preparedExecutions[index]!.execute).toBeFunction();
+			expect(call.arguments).not.toHaveProperty('signal');
+		}
+		expect(batch.toolCalls[0]!.arguments).toBe(providerInputs[0]);
+		const completed = originalEvents.filter((event) => event.type === 'tool.call.completed');
+		expect(completed).toHaveLength(2);
+		expect(completed[0]!.output).toEqual({ query: 'needle', limit: 2, matches: ['result'] });
+		expect(completed[1]!.output).toMatchObject({
+			cached: true,
+			sourceToolCallId: batch.toolCalls[0]!.id,
+		});
+		expect(JSON.parse(JSON.stringify(originalEvents))).toEqual(originalEvents);
+		const jsonl = await readFile(join(directory, sessionId, 'events.jsonl'), 'utf8');
+		for (const runtimeKey of [
+			'execution',
+			'execute',
+			'signal',
+			'requiresApproval',
+			'deduplicate',
+			'invalidatesWorkspaceCache',
+			'toolInputSchema',
+		])
+			expect(jsonl).not.toContain(`"${runtimeKey}"`);
+		const freshStore = new JsonlSessionStore(directory);
+		const persisted = await freshStore.readSessionEvents(sessionId);
+		expect(persisted).toEqual(originalEvents);
+		const replay = reduceAgentState(sessionId, persisted);
+		expect(await new SessionService(freshStore).readSessionState(sessionId)).toEqual(replay);
+		expect(await sessions.readSessionState(sessionId)).toEqual(replay);
+		expect(model.receivedInputs[1]!.messages).toEqual(
+			contextBuilder.build(reduceAgentState(sessionId, persisted.slice(0, -1))).messages,
+		);
+	} finally {
+		await cleanup();
+	}
 });

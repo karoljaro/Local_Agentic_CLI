@@ -14,9 +14,19 @@ export type ToolExecutionOptions = {
 	signal?: AbortSignal;
 };
 
+// Runtime-only: persist the normalized call projection, never this bound execution.
+export type PreparedToolExecution = {
+	readonly toolName: string;
+	readonly toolInput: unknown;
+	readonly requiresApproval: boolean;
+	readonly deduplicate: boolean;
+	readonly invalidatesWorkspaceCache: boolean;
+	readonly execute: (options?: ToolExecutionOptions) => Promise<ToolExecutionResult>;
+};
+
 export interface ToolExecutorPort {
 	listTools(): ToolDefinition[];
-	prepare(request: ToolExecutionRequest): ToolExecutionRequest;
+	prepare(request: ToolExecutionRequest): PreparedToolExecution;
 	execute(
 		request: ToolExecutionRequest,
 		options?: ToolExecutionOptions,

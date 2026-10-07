@@ -19,6 +19,7 @@ import { ContextBudgetExceededError, type ContextBuilder } from '../services/Con
 import {
 	ToolRunner,
 	type PersistedModelToolCall,
+	type PreparedModelToolCall,
 	type ToolApprovalHandler,
 } from '../services/ToolRunner';
 
@@ -176,10 +177,10 @@ export class AgentLoop {
 				return;
 			}
 
-			let persistedToolCalls: PersistedModelToolCall[];
+			let preparedToolCalls: PreparedModelToolCall[];
 
 			try {
-				persistedToolCalls = toolRunner.prepareToolCalls(result.toolCalls);
+				preparedToolCalls = toolRunner.prepareToolCalls(result.toolCalls);
 			} catch (caughtError) {
 				const error = toError(caughtError);
 
@@ -188,6 +189,7 @@ export class AgentLoop {
 			}
 
 			throwIfAborted(signal);
+			const persistedToolCalls = preparedToolCalls.map((record) => record.call);
 			const persistedAssistantMessage = await this.appendAssistantToolCallsCompleted(
 				sessionId,
 				toContent(result),
@@ -196,7 +198,7 @@ export class AgentLoop {
 			throwIfAborted(signal);
 			const { toolMessages, terminalMessage } = await toolRunner.executeToolCalls(
 				sessionId,
-				persistedToolCalls,
+				preparedToolCalls,
 				signal === undefined ? {} : { signal },
 			);
 			throwIfAborted(signal);

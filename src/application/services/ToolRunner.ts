@@ -13,6 +13,7 @@ import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
 import type { MonotonicClockPort } from '../ports/MonotonicClockPort';
 import type { SessionServicePort } from '../ports/SessionServicePort';
 import type {
+	PreparedToolExecution,
 	ToolExecutionOptions,
 	ToolExecutionResult,
 	ToolExecutorPort,
@@ -32,7 +33,12 @@ export type ToolApprovalHandler = (
 	options: ToolExecutionOptions,
 ) => Promise<boolean>;
 
-export type PersistedModelToolCall = ModelToolCall & { id: ToolCallId };
+export type PersistedModelToolCall = Readonly<ModelToolCall & { id: ToolCallId }>;
+
+export type PreparedModelToolCall = {
+	readonly call: PersistedModelToolCall;
+	readonly execution: PreparedToolExecution;
+};
 
 export type ToolExecutionBatchResult = {
 	toolMessages: ModelMessage[];
@@ -65,38 +71,36 @@ export class ToolRunner {
 		return this.tools;
 	}
 
-	prepareToolCalls(toolCalls: ModelToolCall[]): PersistedModelToolCall[] {
-		const preparedToolCalls = toolCalls.map((toolCall) => {
-			const prepared = this.dependencies.toolExecutor.prepare({
+	prepareToolCalls(toolCalls: readonly ModelToolCall[]): PreparedModelToolCall[] {
+		const executions = toolCalls.map((toolCall) =>
+			this.dependencies.toolExecutor.prepare({
 				toolName: toolCall.name,
 				toolInput: toolCall.arguments,
-			});
+			}),
+		);
 
-			return {
-				...toolCall,
-				name: prepared.toolName,
-				arguments: prepared.toolInput,
-			};
-		});
-
-		return preparedToolCalls.map((toolCall) => ({
-			id: this.dependencies.idGenerator.nextToolCallId(),
-			name: toolCall.name,
-			arguments: toolCall.arguments,
+		return executions.map((execution) => ({
+			call: {
+				id: this.dependencies.idGenerator.nextToolCallId(),
+				name: execution.toolName,
+				arguments: execution.toolInput,
+			},
+			execution,
 		}));
 	}
 
 	async executeToolCalls(
 		sessionId: SessionId,
-		toolCalls: PersistedModelToolCall[],
+		toolCalls: readonly PreparedModelToolCall[],
 		options: ToolExecutionOptions = {},
 	): Promise<ToolExecutionBatchResult> {
 		const toolMessages: ModelMessage[] = [];
 
-		for (const [toolCallIndex, toolCall] of toolCalls.entries()) {
+		for (const [toolCallIndex, record] of toolCalls.entries()) {
 			throwIfAborted(options.signal);
+			const { call: toolCall, execution } = record;
 			const { id: toolCallId, name: toolName } = toolCall;
-			const requestedEvent = await this.appendToolCallRequested(sessionId, toolCall);
+			const requestedEvent = await this.appendToolCallRequested(sessionId, record);
 
 			throwIfAborted(options.signal);
 
@@ -128,9 +132,9 @@ export class ToolRunner {
 						await this.appendToolCallRequested(sessionId, cancelledToolCall);
 						await this.appendToolCallFailed({
 							sessionId,
-							toolCallId: cancelledToolCall.id,
-							toolName: cancelledToolCall.name,
-							message: `Tool call was cancelled after approval denial: ${cancelledToolCall.name}`,
+							toolCallId: cancelledToolCall.call.id,
+							toolName: cancelledToolCall.call.name,
+							message: `Tool call was cancelled after approval denial: ${cancelledToolCall.call.name}`,
 							code: 'TOOL_BATCH_CANCELLED',
 						});
 					}
@@ -142,11 +146,9 @@ export class ToolRunner {
 				}
 			}
 
-			const toolDefinition = getToolDefinition(toolName, this.tools);
-			const cacheKey =
-				toolDefinition.deduplicate === true
-					? JSON.stringify([toolName, toolCall.arguments])
-					: undefined;
+			const cacheKey = execution.deduplicate
+				? JSON.stringify([toolName, toolCall.arguments])
+				: undefined;
 			const previousResult =
 				cacheKey === undefined ? undefined : this.toolResultReferences.get(cacheKey);
 			await this.appendToolCallStarted(sessionId, toolCallId, toolName);
@@ -158,13 +160,7 @@ export class ToolRunner {
 
 			if (previousResult === undefined) {
 				try {
-					result = await this.dependencies.toolExecutor.execute(
-						{
-							toolName,
-							toolInput: toolCall.arguments,
-						},
-						options,
-					);
+					result = await execution.execute(options);
 				} catch (caughtError) {
 					if (isAbortError(caughtError)) throw caughtError;
 					executionFailure = { error: toError(caughtError) };
@@ -197,7 +193,7 @@ export class ToolRunner {
 				if (cacheKey !== undefined && previousResult === undefined) {
 					this.toolResultReferences.set(cacheKey, { sourceToolCallId: toolCallId });
 				}
-				if (toolDefinition.invalidatesWorkspaceCache === true) this.toolResultReferences.clear();
+				if (execution.invalidatesWorkspaceCache) this.toolResultReferences.clear();
 				this.recordToolExecution(
 					toolName,
 					executionStartedAt,
@@ -257,7 +253,7 @@ export class ToolRunner {
 
 	private async appendToolCallRequested(
 		sessionId: SessionId,
-		toolCall: PersistedModelToolCall,
+		{ call: toolCall, execution }: PreparedModelToolCall,
 	): Promise<ToolCallRequested> {
 		const event: ToolCallRequested = {
 			id: this.dependencies.idGenerator.nextEventId(),
@@ -267,7 +263,7 @@ export class ToolRunner {
 			toolCallId: toolCall.id,
 			toolName: toolCall.name,
 			toolInput: toolCall.arguments,
-			approvalRequired: getToolDefinition(toolCall.name, this.tools).requiresApproval === true,
+			approvalRequired: execution.requiresApproval,
 		};
 
 		await this.dependencies.sessionStore.appendSessionEvent(event);
@@ -395,16 +391,6 @@ const createCachedToolOutput = (sourceToolCallId: ToolCallId): Record<string, un
 	sourceToolCallId,
 	message: `Result reused from tool call ${sourceToolCallId}.`,
 });
-
-const getToolDefinition = (toolName: string, tools: ToolDefinition[]): ToolDefinition => {
-	const tool = tools.find((candidate) => candidate.name === toolName);
-
-	if (tool === undefined) {
-		throw new Error(`Unknown tool requested by model: ${toolName}`);
-	}
-
-	return tool;
-};
 
 const toError = (caughtError: unknown): Error =>
 	caughtError instanceof Error ? caughtError : new Error(String(caughtError));

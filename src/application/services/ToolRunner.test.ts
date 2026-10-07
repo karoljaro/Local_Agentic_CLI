@@ -1,5 +1,10 @@
 import { SessionService } from './SessionService';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
+import { z } from 'zod';
+import { defineLocalTool, type LocalTool } from '@/infrastructure/tools/LocalTool';
+import { LocalToolRegistry } from '@/infrastructure/tools/LocalToolExecutor';
+import { listFilesTool } from '@/infrastructure/tools/providers/ListFilesProvider';
+import type { WorkspaceFilePort } from '../ports/WorkspaceFilePort';
 
 import type { ClockPort } from '@/application/ports/ClockPort';
 import type { IdGeneratorPort } from '@/application/ports/IdGeneratorPort';
@@ -60,8 +65,46 @@ const searchTool: ToolDefinition = {
 };
 
 describe('ToolRunner', () => {
+	test('parses and selects a provider exactly once through runner execution', async () => {
+		const schema = z.strictObject({ query: z.string().trim() });
+		let executions = 0;
+		const executor = new LocalToolRegistry([
+			defineLocalTool({
+				name: 'search',
+				description: 'Search',
+				inputSchema: schema,
+				execute: async (input) => {
+					executions++;
+					return input;
+				},
+			}),
+		]);
+		const parse = spyOn(schema, 'parse');
+		const providers = (executor as unknown as { toolsByName: Map<string, LocalTool> }).toolsByName;
+		const select = spyOn(providers, 'get');
+		try {
+			const runner = new ToolRunner({
+				sessionStore: new SessionService(new InMemorySessionStore()),
+				clock: new FixedClock(),
+				idGenerator: new RecordingIdGenerator(),
+				toolExecutor: executor,
+			});
+			const records = runner.prepareToolCalls([
+				{ name: 'search', arguments: { query: ' needle ' } },
+			]);
+			await runner.executeToolCalls(asSessionId('session-1'), records);
+			expect(executions).toBe(1);
+			expect(parse).toHaveBeenCalledTimes(1);
+			expect(select).toHaveBeenCalledTimes(1);
+		} finally {
+			parse.mockRestore();
+			select.mockRestore();
+		}
+	});
 	test('prepares the complete batch before assigning tool call ids', () => {
 		const idGenerator = new RecordingIdGenerator();
+		const store = new InMemorySessionStore();
+		let approvals = 0;
 		const toolExecutor = new RecordingToolExecutor(
 			[searchTool],
 			(request) => ({ toolName: request.toolName, output: {} }),
@@ -79,10 +122,14 @@ describe('ToolRunner', () => {
 			},
 		);
 		const runner = new ToolRunner({
-			sessionStore: new SessionService(new InMemorySessionStore()),
+			sessionStore: new SessionService(store),
 			clock: new FixedClock(),
 			idGenerator,
 			toolExecutor,
+			approveToolCall: async () => {
+				approvals++;
+				return true;
+			},
 		});
 
 		expect(() =>
@@ -92,6 +139,10 @@ describe('ToolRunner', () => {
 			]),
 		).toThrow('invalid search input');
 		expect(idGenerator.toolCallCount).toBe(0);
+		expect(toolExecutor.preparationRequests).toHaveLength(2);
+		expect(toolExecutor.receivedRequests).toHaveLength(0);
+		expect(store.events).toEqual([]);
+		expect(approvals).toBe(0);
 	});
 
 	test('scopes deduplicated results to one runner instance', async () => {
@@ -160,6 +211,7 @@ const harness = (overrides: Partial<ToolRunnerDependencies> = {}, denyByDefault 
 		(request) => ({ toolName: request.toolName, output: { changed: true } }),
 	);
 	let id = 0;
+	let toolId = 0;
 	const runner = new ToolRunner({
 		sessionStore: new SessionService(store),
 		toolExecutor: executor,
@@ -168,12 +220,12 @@ const harness = (overrides: Partial<ToolRunnerDependencies> = {}, denyByDefault 
 			nextEventId: () => asEventId(`event-${id++}`),
 			nextMessageId: () => asMessageId(`message-${id++}`),
 			nextSessionId: () => sessionId,
-			nextToolCallId: () => asToolCallId(`call-${id++}`),
+			nextToolCallId: () => calls[toolId++]!.id,
 		},
 		...(denyByDefault ? {} : { approveToolCall: async () => true }),
 		...overrides,
 	});
-	return { runner, store, executor };
+	return { runner, store, executor, calls: runner.prepareToolCalls(calls) };
 };
 
 describe('ToolRunner lifecycle', () => {
@@ -181,12 +233,13 @@ describe('ToolRunner lifecycle', () => {
 		const approval = createDeferred<boolean>();
 		const waiting = createDeferred<void>();
 		const controller = new AbortController();
-		const { runner, store, executor } = harness({
+		const { runner, store, executor, calls } = harness({
 			approveToolCall: () => {
 				waiting.resolve();
 				return approval.promise;
 			},
 		});
+		const executions = calls.map((record) => spyOn(record.execution, 'execute'));
 		const outcome = runner.executeToolCalls(sessionId, calls, { signal: controller.signal }).then(
 			() => undefined,
 			(error: unknown) => error,
@@ -196,6 +249,8 @@ describe('ToolRunner lifecycle', () => {
 		approval.resolve(true);
 		const error = await outcome;
 		expect(executor.receivedRequests.length).toBe(0);
+		for (const execute of executions) expect(execute).toHaveBeenCalledTimes(0);
+		expect(executor.preparationRequests).toHaveLength(2);
 		expect(error).toHaveProperty('name', 'AbortError');
 		expect(store.events.map((event) => event.type)).toEqual([
 			'assistant.tool_calls.completed',
@@ -214,7 +269,7 @@ describe('ToolRunner lifecycle', () => {
 				return { toolName: request.toolName, output: { changed: true } };
 			},
 		);
-		const { runner, store } = harness({ toolExecutor: executor });
+		const { runner, store, calls } = harness({ toolExecutor: executor });
 		store.onAppend = (event) => {
 			if (event.type === 'tool.call.completed') throw storageError;
 		};
@@ -246,7 +301,7 @@ const expectIncomplete = (store: InMemorySessionStore) => {
 describe('ToolRunner cancellation and failure boundaries', () => {
 	test('already aborted does not request approval or start work', async () => {
 		let approvals = 0;
-		const { runner, store, executor } = harness({
+		const { runner, store, executor, calls } = harness({
 			approveToolCall: async () => {
 				approvals++;
 				return true;
@@ -290,7 +345,7 @@ describe('ToolRunner cancellation and failure boundaries', () => {
 			if (listener) removed.push(listener);
 			remove(type, listener, options);
 		};
-		const { runner, store, executor } = harness({
+		const { runner, store, executor, calls } = harness({
 			approveToolCall: (_request, options) => {
 				expect(options.signal).toBe(controller.signal);
 				waiting.resolve();
@@ -318,7 +373,7 @@ describe('ToolRunner cancellation and failure boundaries', () => {
 		test(`approval and abort in the same callback cannot execute (abort first: ${abortFirst})`, async () => {
 			const controller = new AbortController();
 			const approval = createDeferred<boolean>();
-			const { runner, executor, store } = harness({
+			const { runner, executor, store, calls } = harness({
 				approveToolCall: () => {
 					if (abortFirst) controller.abort();
 					approval.resolve(true);
@@ -337,7 +392,7 @@ describe('ToolRunner cancellation and failure boundaries', () => {
 	for (const reportingFails of [false, true]) {
 		test(`approval failure retains its original cause (reporting fails: ${reportingFails})`, async () => {
 			const cause = new Error('approval handler failed');
-			const { runner, store, executor } = harness({
+			const { runner, store, executor, calls } = harness({
 				approveToolCall: async () => {
 					throw cause;
 				},
@@ -359,7 +414,7 @@ describe('ToolRunner cancellation and failure boundaries', () => {
 
 	for (const handler of [undefined, async () => false]) {
 		test(`explicit/default denial closes the batch without execution (default: ${handler === undefined})`, async () => {
-			const { runner, store, executor } = harness(
+			const { runner, store, executor, calls } = harness(
 				handler === undefined ? {} : { approveToolCall: handler },
 				handler === undefined,
 			);
@@ -384,7 +439,7 @@ describe('ToolRunner cancellation and failure boundaries', () => {
 
 	test('abort after started append prevents executor invocation', async () => {
 		const controller = new AbortController();
-		const { runner, store, executor } = harness();
+		const { runner, store, executor, calls } = harness();
 		store.onAppend = (event) => {
 			if (event.type === 'tool.call.started') controller.abort();
 		};
@@ -402,7 +457,8 @@ describe('ToolRunner cancellation and failure boundaries', () => {
 
 	test('abort between calls preserves the first completion and never starts the second', async () => {
 		const controller = new AbortController();
-		const { runner, store, executor } = harness();
+		const { runner, store, executor, calls } = harness();
+		const executions = calls.map((record) => spyOn(record.execution, 'execute'));
 		store.onAppend = (event) => {
 			if (event.type === 'tool.call.completed') controller.abort();
 		};
@@ -410,6 +466,8 @@ describe('ToolRunner cancellation and failure boundaries', () => {
 			await rejection(runner.executeToolCalls(sessionId, calls, { signal: controller.signal })),
 		).toHaveProperty('name', 'AbortError');
 		expect(executor.receivedRequests).toHaveLength(1);
+		expect(executions[0]!).toHaveBeenCalledTimes(1);
+		expect(executions[1]!).toHaveBeenCalledTimes(0);
 		expect(executor.receivedOptions[0]?.signal).toBe(controller.signal);
 		expect(store.events.map((event) => event.type)).toEqual([
 			'assistant.tool_calls.completed',
@@ -432,7 +490,7 @@ describe('ToolRunner cancellation and failure boundaries', () => {
 				return { toolName: request.toolName, output: { changed: true } };
 			},
 		);
-		const { runner, store } = harness({ toolExecutor: executor });
+		const { runner, store, calls } = harness({ toolExecutor: executor });
 		let settled = false;
 		const outcome = rejection(
 			runner.executeToolCalls(sessionId, calls, { signal: controller.signal }),
@@ -457,7 +515,7 @@ describe('ToolRunner cancellation and failure boundaries', () => {
 	test('storage failure after successful mutation wins over pending cancellation', async () => {
 		const cause = new Error('storage unavailable');
 		const controller = new AbortController();
-		const { runner, store, executor } = harness();
+		const { runner, store, executor, calls } = harness();
 		store.onAppend = (event) => {
 			if (event.type === 'tool.call.completed') {
 				controller.abort();
@@ -483,7 +541,7 @@ describe('ToolRunner cancellation and failure boundaries', () => {
 					throw new Error('executor failed');
 				},
 			);
-			const { runner, store } = harness({ toolExecutor: executor });
+			const { runner, store, calls } = harness({ toolExecutor: executor });
 			store.onAppend = (event) => {
 				if (storageFails && event.type === 'tool.call.failed') throw cause;
 			};
@@ -511,7 +569,7 @@ describe('ToolRunner cancellation and failure boundaries', () => {
 				throw cause;
 			},
 		);
-		const { runner, store } = harness({ toolExecutor: executor });
+		const { runner, store, calls } = harness({ toolExecutor: executor });
 		expect(await rejection(runner.executeToolCalls(sessionId, calls))).toBe(cause);
 		expect(store.events).toHaveLength(3);
 		expectIncomplete(store);
@@ -525,7 +583,7 @@ describe('ToolRunner cancellation and failure boundaries', () => {
 				throw new Error('executor failed');
 			},
 		);
-		const { runner, store } = harness({ toolExecutor: executor });
+		const { runner, store, calls } = harness({ toolExecutor: executor });
 		store.onAppend = (event) => {
 			if (event.type === 'tool.call.failed') throw cause;
 		};
@@ -535,7 +593,7 @@ describe('ToolRunner cancellation and failure boundaries', () => {
 	});
 
 	test('diagnostic clocks and metrics cannot change successful execution', async () => {
-		const { runner, store, executor } = harness({
+		const { runner, store, executor, calls } = harness({
 			monotonicClock: {
 				nowMilliseconds: () => {
 					throw new Error('diagnostic clock');
@@ -576,7 +634,7 @@ describe('ToolRunner cancellation and failure boundaries', () => {
 					};
 				},
 			);
-			const { runner, store } = harness({
+			const { runner, store, calls } = harness({
 				toolExecutor: executor,
 				...(operation === 'clock'
 					? {
@@ -623,7 +681,7 @@ test('diagnostic output sizing failure alone cannot change a successful result',
 		[{ name: 'mutate', description: '', parameters: {} }],
 		(request) => ({ toolName: request.toolName, output }),
 	);
-	const { runner, store } = harness({
+	const { runner, store, calls } = harness({
 		toolExecutor: executor,
 		turnMetrics: {
 			recordToolExecution: () => {
@@ -638,4 +696,248 @@ test('diagnostic output sizing failure alone cannot change a successful result',
 	expect(store.events.at(-1)).toMatchObject({ type: 'tool.call.completed' });
 	expect(store.events.filter((event) => event.type === 'tool.call.failed')).toEqual([]);
 	expect(metrics).toBe(0);
+});
+
+describe('ToolRunner prepared metadata', () => {
+	for (const outcome of ['success', 'failure', 'denial', 'cancellation'] as const) {
+		test(`prepared policies drive deduplication and mutation invalidation after ${outcome}`, async () => {
+			let searches = 0;
+			let mutations = 0;
+			let approvals = 0;
+			const controller = new AbortController();
+			const registry = new LocalToolRegistry([
+				defineLocalTool({
+					name: 'search_file',
+					description: '',
+					deduplicate: true,
+					inputSchema: z.strictObject({ query: z.string().trim() }),
+					execute: async () => ({ version: ++searches }),
+				}),
+				defineLocalTool({
+					name: 'mutate',
+					description: '',
+					requiresApproval: true,
+					invalidatesWorkspaceCache: true,
+					inputSchema: z.strictObject({}),
+					execute: async () => {
+						mutations++;
+						if (outcome === 'failure') throw new Error('mutation failed');
+						return { changed: true };
+					},
+				}),
+			]);
+			// Deliberately incorrect model definitions: runtime policy must come from preparation.
+			const definitions = spyOn(registry, 'listTools').mockReturnValue([]);
+			const raw = spyOn(registry, 'execute').mockImplementation(async () => {
+				throw new Error('raw execution must not be used');
+			});
+			try {
+				const store = new InMemorySessionStore();
+				const runner = new ToolRunner({
+					sessionStore: new SessionService(store),
+					clock: new FixedClock(),
+					idGenerator: new RecordingIdGenerator(),
+					toolExecutor: registry,
+					approveToolCall: async () => {
+						approvals++;
+						if (outcome === 'cancellation') controller.abort();
+						return outcome !== 'denial';
+					},
+				});
+				const first = runner.prepareToolCalls([
+					{ name: 'search_file', arguments: { query: ' needle ' } },
+				]);
+				await runner.executeToolCalls(sessionId, first);
+				const next = runner.prepareToolCalls([
+					{ name: 'mutate', arguments: {} },
+					{ name: 'search_file', arguments: { query: 'needle' } },
+				]);
+				const result = await runner
+					.executeToolCalls(sessionId, next, { signal: controller.signal })
+					.catch((error: unknown) => error);
+				expect(approvals).toBe(1);
+				expect(mutations).toBe(outcome === 'success' || outcome === 'failure' ? 1 : 0);
+				expect(searches).toBe(outcome === 'success' ? 2 : 1);
+				expect(raw).toHaveBeenCalledTimes(0);
+				expect(definitions).toHaveBeenCalledTimes(1);
+				expect(
+					store.events.filter(
+						(event) => event.type === 'tool.call.requested' && event.toolName === 'mutate',
+					),
+				).toMatchObject([{ approvalRequired: true }]);
+				const cache = (
+					runner as unknown as {
+						toolResultReferences: Map<string, { sourceToolCallId: ToolCallId }>;
+					}
+				).toolResultReferences;
+				expect(cache.size).toBe(1);
+				if (outcome === 'success') {
+					expect([...cache.values()][0]?.sourceToolCallId).toBe(next[1]!.call.id);
+				} else {
+					expect([...cache.values()][0]?.sourceToolCallId).toBe(first[0]!.call.id);
+				}
+				if (outcome === 'failure') {
+					expect(
+						store.events.filter((event) => event.type === 'tool.call.completed').at(-1),
+					).toMatchObject({ output: { cached: true, sourceToolCallId: first[0]!.call.id } });
+					expect(store.events.find((event) => event.type === 'tool.call.failed')).toMatchObject({
+						error: { code: 'TOOL_FAILED', message: 'mutation failed' },
+					});
+				}
+				if (outcome === 'cancellation') expect(result).toHaveProperty('name', 'AbortError');
+				if (outcome === 'denial')
+					expect(result).toHaveProperty('terminalMessage', 'Tool call was not approved: mutate');
+			} finally {
+				definitions.mockRestore();
+				raw.mockRestore();
+			}
+		});
+	}
+
+	test('read_file preparation remains non-deduplicated and reads are automatic', async () => {
+		let reads = 0;
+		let approvals = 0;
+		const registry = new LocalToolRegistry([
+			defineLocalTool({
+				name: 'read_file',
+				description: '',
+				inputSchema: z.strictObject({ path: z.string() }),
+				execute: async () => ({ content: `version-${++reads}` }),
+			}),
+		]);
+		const runner = new ToolRunner({
+			sessionStore: new SessionService(new InMemorySessionStore()),
+			clock: new FixedClock(),
+			idGenerator: new RecordingIdGenerator(),
+			toolExecutor: registry,
+			approveToolCall: async () => {
+				approvals++;
+				return true;
+			},
+		});
+		const records = runner.prepareToolCalls(
+			[1, 2].map(() => ({ name: 'read_file', arguments: { path: 'file' } })),
+		);
+		const result = await runner.executeToolCalls(sessionId, records);
+		expect(reads).toBe(2);
+		expect(approvals).toBe(0);
+		expect(result.toolMessages.map((message) => message.content)).toEqual([
+			'{"content":"version-1"}',
+			'{"content":"version-2"}',
+		]);
+	});
+
+	for (const later of [
+		{ name: 'known', arguments: { path: 42 } },
+		{ name: 'missing', arguments: {} },
+	]) {
+		test(`a later ${later.name === 'missing' ? 'unknown tool' : 'invalid input'} prevents IDs and all observable batch work`, () => {
+			let executions = 0;
+			let approvals = 0;
+			const registry = new LocalToolRegistry([
+				defineLocalTool({
+					name: 'known',
+					description: '',
+					requiresApproval: true,
+					inputSchema: z.strictObject({ path: z.string() }),
+					execute: async () => {
+						executions++;
+						return {};
+					},
+				}),
+			]);
+			const ids = new RecordingIdGenerator();
+			const store = new InMemorySessionStore();
+			const runner = new ToolRunner({
+				sessionStore: new SessionService(store),
+				clock: new FixedClock(),
+				idGenerator: ids,
+				toolExecutor: registry,
+				approveToolCall: async () => {
+					approvals++;
+					return true;
+				},
+			});
+			expect(() =>
+				runner.prepareToolCalls([{ name: 'known', arguments: { path: 'valid' } }, later]),
+			).toThrow();
+			expect(ids.toolCallCount).toBe(0);
+			expect(executions).toBe(0);
+			expect(approvals).toBe(0);
+			expect(store.events).toEqual([]);
+		});
+	}
+});
+
+test('valid batch preparation performs no execution, approval or session lifecycle work', () => {
+	const store = new InMemorySessionStore();
+	let approvals = 0;
+	const executor = new RecordingToolExecutor(
+		[{ name: 'mutate', description: '', parameters: {}, requiresApproval: true }],
+		(request) => ({ toolName: request.toolName, output: {} }),
+	);
+	const runner = new ToolRunner({
+		sessionStore: new SessionService(store),
+		clock: new FixedClock(),
+		idGenerator: new RecordingIdGenerator(),
+		toolExecutor: executor,
+		approveToolCall: async () => {
+			approvals++;
+			return true;
+		},
+	});
+	const records = runner.prepareToolCalls([{ name: 'mutate', arguments: { path: 'file' } }]);
+	expect(executor.preparationRequests).toHaveLength(1);
+	expect(executor.preparedExecutions).toHaveLength(1);
+	expect(records[0]!.execution.requiresApproval).toBe(true);
+	expect(executor.receivedRequests).toHaveLength(0);
+	expect(executor.receivedOptions).toHaveLength(0);
+	expect(approvals).toBe(0);
+	expect(store.events).toEqual([]);
+});
+
+test('repeated normalized list_files calls reference the original result in order', async () => {
+	let listings = 0;
+	const files: WorkspaceFilePort = {
+		listFiles: async () => {
+			listings++;
+			return { files: ['src/file.ts'], truncated: false };
+		},
+		readFile: async () => {
+			throw new Error('unexpected read');
+		},
+		writeFile: async () => {
+			throw new Error('unexpected write');
+		},
+		createFile: async () => {
+			throw new Error('unexpected create');
+		},
+	};
+	const registry = new LocalToolRegistry([listFilesTool(files, { maxEntries: 10 })]);
+	const store = new InMemorySessionStore();
+	const runner = new ToolRunner({
+		sessionStore: new SessionService(store),
+		clock: new FixedClock(),
+		idGenerator: new RecordingIdGenerator(),
+		toolExecutor: registry,
+	});
+	const records = runner.prepareToolCalls([
+		{ name: 'list_files', arguments: { path: ' src ' } },
+		{ name: 'list_files', arguments: { path: 'src' } },
+		{ name: 'list_files', arguments: { path: 'src' } },
+	]);
+	const result = await runner.executeToolCalls(sessionId, records);
+	expect(listings).toBe(1);
+	const completed = store.events.filter((event) => event.type === 'tool.call.completed');
+	expect(completed.map((event) => event.toolCallId)).toEqual(
+		records.map((record) => record.call.id),
+	);
+	expect(completed[0]!.output).toEqual({ files: ['src/file.ts'], truncated: false });
+	for (const event of completed.slice(1))
+		expect(event.output).toMatchObject({ cached: true, sourceToolCallId: records[0]!.call.id });
+	expect(
+		result.toolMessages.map((message) =>
+			message.role === 'tool' ? message.toolCallId : undefined,
+		),
+	).toEqual(records.map((record) => record.call.id));
 });
