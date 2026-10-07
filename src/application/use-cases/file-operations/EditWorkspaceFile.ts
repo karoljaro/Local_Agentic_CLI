@@ -33,7 +33,7 @@ export class EditWorkspaceFile {
 
 		const writtenFile = await this.workspaceFiles.writeFile({
 			path: file.path,
-			content: file.content.replace(input.oldText, input.newText),
+			content: file.content.replace(input.oldText, () => input.newText),
 			maxFileBytes: input.maxFileBytes,
 			expectedContent: file.content,
 		});
