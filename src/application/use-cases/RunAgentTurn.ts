@@ -95,84 +95,37 @@ export class AgentLoop {
 		await this.dependencies.sessionStore.appendSessionEvent(promptEvent);
 		throwIfAborted(signal);
 
-		const state = await this.dependencies.sessionStore.readSessionState(sessionId);
-		throwIfAborted(signal);
-		const { messages } = this.dependencies.contextBuilder.build(state);
-
-		if (this.dependencies.toolExecutor === undefined) {
-			yield* this.runStreamingModelTurn(sessionId, messages, signal, turnMetrics);
-			return;
-		}
-
-		yield* this.runWithTools(
-			sessionId,
-			messages,
-			signal,
-			this.dependencies.toolExecutor,
-			turnMetrics,
-		);
-	}
-
-	private async *runStreamingModelTurn(
-		sessionId: SessionId,
-		messages: ModelMessage[],
-		signal: AbortSignal | undefined,
-		turnMetrics: AgentTurnMetricsPort | undefined,
-	): AsyncIterable<AgentTurnChunk> {
-		const result = yield* this.readModelResponse(
-			sessionId,
-			withSignal({ messages }, signal),
-			true,
-			turnMetrics,
-		);
-
-		throwIfAborted(signal);
-		await this.appendAssistantCompleted(sessionId, toContent(result));
-	}
-
-	private async *runWithTools(
-		sessionId: SessionId,
-		messages: ModelMessage[],
-		signal: AbortSignal | undefined,
-		toolExecutor: ToolExecutorPort,
-		turnMetrics: AgentTurnMetricsPort | undefined,
-	): AsyncIterable<AgentTurnChunk> {
-		const toolRunner = new ToolRunner({
-			sessionStore: this.dependencies.sessionStore,
-			clock: this.dependencies.clock,
-			idGenerator: this.dependencies.idGenerator,
-			toolExecutor,
-			...(this.dependencies.approveToolCall === undefined
-				? {}
-				: { approveToolCall: this.dependencies.approveToolCall }),
-			...(turnMetrics === undefined ? {} : { turnMetrics }),
-			...(this.dependencies.monotonicClock === undefined
-				? {}
-				: { monotonicClock: this.dependencies.monotonicClock }),
-		});
-		const tools = toolRunner.listTools();
-
-		if (tools.length === 0) {
-			yield* this.runStreamingModelTurn(sessionId, messages, signal, turnMetrics);
-			return;
-		}
-
-		let currentMessages = messages;
+		const toolRunner =
+			this.dependencies.toolExecutor === undefined
+				? undefined
+				: new ToolRunner({
+						sessionStore: this.dependencies.sessionStore,
+						clock: this.dependencies.clock,
+						idGenerator: this.dependencies.idGenerator,
+						toolExecutor: this.dependencies.toolExecutor,
+						...(this.dependencies.approveToolCall === undefined
+							? {}
+							: { approveToolCall: this.dependencies.approveToolCall }),
+						...(turnMetrics === undefined ? {} : { turnMetrics }),
+						...(this.dependencies.monotonicClock === undefined
+							? {}
+							: { monotonicClock: this.dependencies.monotonicClock }),
+					});
+		const tools = toolRunner?.listTools() ?? [];
 
 		for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
 			throwIfAborted(signal);
-			currentMessages = await this.fitModelMessages(sessionId, currentMessages);
+			const messages = await this.buildModelMessages(sessionId, signal);
 			throwIfAborted(signal);
 			const result = yield* this.readModelResponse(
 				sessionId,
-				withSignal({ messages: currentMessages, tools }, signal),
-				true,
+				withSignal({ messages, ...(tools.length === 0 ? {} : { tools }) }, signal),
 				turnMetrics,
 			);
 
 			throwIfAborted(signal);
 
-			if (result.toolCalls.length === 0) {
+			if (toolRunner === undefined || tools.length === 0 || result.toolCalls.length === 0) {
 				await this.appendAssistantCompleted(sessionId, toContent(result));
 				return;
 			}
@@ -190,13 +143,13 @@ export class AgentLoop {
 
 			throwIfAborted(signal);
 			const persistedToolCalls = preparedToolCalls.map((record) => record.call);
-			const persistedAssistantMessage = await this.appendAssistantToolCallsCompleted(
+			await this.appendAssistantToolCallsCompleted(
 				sessionId,
 				toContent(result),
 				persistedToolCalls,
 			);
 			throwIfAborted(signal);
-			const { toolMessages, terminalMessage } = await toolRunner.executeToolCalls(
+			const { terminalMessage } = await toolRunner.executeToolCalls(
 				sessionId,
 				preparedToolCalls,
 				signal === undefined ? {} : { signal },
@@ -212,17 +165,6 @@ export class AgentLoop {
 				await this.appendAssistantCompleted(sessionId, terminalMessage);
 				return;
 			}
-
-			currentMessages = [
-				...currentMessages,
-				{
-					id: persistedAssistantMessage.messageId,
-					role: 'assistant',
-					content: toContent(result),
-					toolCalls: persistedToolCalls,
-				},
-				...toolMessages,
-			];
 		}
 
 		const error = new Error('Tool iteration limit reached.');
@@ -231,12 +173,14 @@ export class AgentLoop {
 		throw error;
 	}
 
-	private async fitModelMessages(
+	private async buildModelMessages(
 		sessionId: SessionId,
-		messages: ModelMessage[],
+		signal: AbortSignal | undefined,
 	): Promise<ModelMessage[]> {
 		try {
-			return this.dependencies.contextBuilder.fit(messages);
+			const state = await this.dependencies.sessionStore.readSessionState(sessionId);
+			throwIfAborted(signal);
+			return this.dependencies.contextBuilder.build(state).messages;
 		} catch (caughtError) {
 			if (caughtError instanceof ContextBudgetExceededError) {
 				await this.tryAppendAgentError(sessionId, caughtError, 'CONTEXT_BUDGET_EXCEEDED');
@@ -249,7 +193,6 @@ export class AgentLoop {
 	private async *readModelResponse(
 		sessionId: SessionId,
 		input: ModelChatInput,
-		streamContent: boolean,
 		turnMetrics: AgentTurnMetricsPort | undefined,
 	): AsyncGenerator<AgentTurnChunk, StreamedModelResponse> {
 		const contentDeltas: string[] = [];
@@ -266,9 +209,7 @@ export class AgentLoop {
 				if (chunk.contentDelta.length > 0) {
 					contentDeltas.push(chunk.contentDelta);
 
-					if (streamContent) {
-						yield { contentDelta: chunk.contentDelta };
-					}
+					yield { contentDelta: chunk.contentDelta };
 				}
 			}
 		} catch (caughtError) {
@@ -300,7 +241,7 @@ export class AgentLoop {
 		sessionId: SessionId,
 		content: string,
 		toolCalls: PersistedModelToolCall[],
-	): Promise<AssistantToolCallsCompleted> {
+	): Promise<void> {
 		const event: AssistantToolCallsCompleted = {
 			id: this.dependencies.idGenerator.nextEventId(),
 			messageId: this.dependencies.idGenerator.nextMessageId(),
@@ -312,8 +253,6 @@ export class AgentLoop {
 		};
 
 		await this.dependencies.sessionStore.appendSessionEvent(event);
-
-		return event;
 	}
 
 	private async appendAgentError(sessionId: SessionId, error: Error, code: string): Promise<void> {

@@ -5,7 +5,6 @@ import type {
 	ToolCallStarted,
 } from '@/domain/AgentEvent';
 import type { SessionId, ToolCallId } from '@/domain/Ids';
-import type { ModelMessage } from '@/domain/ModelMessage';
 import type { ModelToolCall, ToolDefinition } from '@/domain/Tool';
 import type { AgentTurnMetricsPort } from '../ports/AgentMetricsPort';
 import type { ClockPort } from '../ports/ClockPort';
@@ -41,7 +40,6 @@ export type PreparedModelToolCall = {
 };
 
 export type ToolExecutionBatchResult = {
-	toolMessages: ModelMessage[];
 	terminalMessage?: string;
 };
 
@@ -94,8 +92,6 @@ export class ToolRunner {
 		toolCalls: readonly PreparedModelToolCall[],
 		options: ToolExecutionOptions = {},
 	): Promise<ToolExecutionBatchResult> {
-		const toolMessages: ModelMessage[] = [];
-
 		for (const [toolCallIndex, record] of toolCalls.entries()) {
 			throwIfAborted(options.signal);
 			const { call: toolCall, execution } = record;
@@ -140,7 +136,6 @@ export class ToolRunner {
 					}
 
 					return {
-						toolMessages,
 						terminalMessage: errorMessage,
 					};
 				}
@@ -169,8 +164,8 @@ export class ToolRunner {
 
 			if (executionFailure !== undefined) {
 				const { error } = executionFailure;
-				const errorOutput = { error: { message: error.message } };
-				this.recordToolExecution(toolName, executionStartedAt, errorOutput, true, false);
+				const diagnosticOutput = { error: { message: error.message } };
+				this.recordToolExecution(toolName, executionStartedAt, diagnosticOutput, true, false);
 				await this.appendToolCallFailed({
 					sessionId,
 					toolCallId,
@@ -178,12 +173,6 @@ export class ToolRunner {
 					message: error.message,
 					code: 'TOOL_FAILED',
 					details: { name: error.name },
-				});
-				toolMessages.push({
-					role: 'tool',
-					toolCallId,
-					toolName,
-					content: stringifyToolOutput(errorOutput),
 				});
 			} else {
 				const output =
@@ -201,16 +190,14 @@ export class ToolRunner {
 					false,
 					previousResult !== undefined,
 				);
-				// Serialization and persistence failures are turn failures, never executor failures.
-				const content = stringifyToolOutput(output);
+				// Persistence/reduction failures are turn failures, never executor failures.
 				await this.appendToolCallCompleted(sessionId, toolCallId, toolName, output);
-				toolMessages.push({ role: 'tool', toolCallId, toolName, content });
 			}
 			// In-flight work is awaited and recorded before honoring cancellation.
 			throwIfAborted(options.signal);
 		}
 
-		return { toolMessages };
+		return {};
 	}
 
 	private recordToolExecution(
@@ -224,7 +211,7 @@ export class ToolRunner {
 			this.dependencies.turnMetrics?.recordToolExecution({
 				toolName,
 				durationMs: this.elapsedMilliseconds(startedAt),
-				outputCharacters: stringifyToolOutput(output).length,
+				outputCharacters: measureToolOutputCharacters(output),
 				failed,
 				reused,
 			});
@@ -378,13 +365,9 @@ export class ToolRunner {
 	}
 }
 
-const stringifyToolOutput = (output: unknown): string => {
-	if (typeof output === 'string') {
-		return output;
-	}
-
-	return JSON.stringify(output) ?? String(output);
-};
+// Character sizing is diagnostic only; model history is serialized by SessionReducer.
+const measureToolOutputCharacters = (output: unknown): number =>
+	typeof output === 'string' ? output.length : (JSON.stringify(output) ?? String(output)).length;
 
 const createCachedToolOutput = (sourceToolCallId: ToolCallId): Record<string, unknown> => ({
 	cached: true,

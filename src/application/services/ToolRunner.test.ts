@@ -171,7 +171,11 @@ describe('ToolRunner', () => {
 		await firstRunner.executeToolCalls(asSessionId('session-1'), [firstCall]);
 		const repeated = await firstRunner.executeToolCalls(asSessionId('session-1'), [secondCall]);
 		expect(toolExecutor.receivedRequests).toHaveLength(1);
-		expect(repeated.toolMessages[0]?.content).toContain('"cached":true');
+		expect(repeated).toEqual({});
+		expect(sessionStore.events.at(-1)).toMatchObject({
+			type: 'tool.call.completed',
+			output: { cached: true, sourceToolCallId: firstCall.call.id },
+		});
 
 		const nextRunner = new ToolRunner(dependencies);
 		const nextCall = nextRunner.prepareToolCalls([
@@ -198,6 +202,8 @@ class LifecycleStore extends InMemorySessionStore {
 	onAppend?: (event: AgentEvent) => void | Promise<void>;
 	override async appendSessionEvent(event: AgentEvent) {
 		await this.onAppend?.(event);
+		// Match the durable JSONL serialization boundary without adding runner serialization.
+		JSON.stringify(event);
 		await super.appendSessionEvent(event);
 	}
 }
@@ -609,7 +615,8 @@ describe('ToolRunner cancellation and failure boundaries', () => {
 		});
 		const result = await runner.executeToolCalls(sessionId, calls);
 		expect(executor.receivedRequests).toHaveLength(2);
-		expect(result.toolMessages).toHaveLength(2);
+		expect(result).toEqual({});
+		expect(store.events.filter((event) => event.type === 'tool.call.completed')).toHaveLength(2);
 		expect(store.events.filter((event) => event.type === 'tool.call.failed')).toEqual([]);
 	});
 
@@ -692,7 +699,10 @@ test('diagnostic output sizing failure alone cannot change a successful result',
 		},
 	});
 	const result = await runner.executeToolCalls(sessionId, [calls[0]!]);
-	expect(result.toolMessages[0]?.content).toBe('{"changed":true}');
+	expect(result).toEqual({});
+	expect(store.events.at(-1)).toMatchObject({ type: 'tool.call.completed', output });
+	expect(serializations).toBe(2);
+	expectIncomplete(store);
 	expect(store.events.at(-1)).toMatchObject({ type: 'tool.call.completed' });
 	expect(store.events.filter((event) => event.type === 'tool.call.failed')).toEqual([]);
 	expect(metrics).toBe(0);
@@ -805,8 +815,9 @@ describe('ToolRunner prepared metadata', () => {
 				execute: async () => ({ content: `version-${++reads}` }),
 			}),
 		]);
+		const store = new InMemorySessionStore();
 		const runner = new ToolRunner({
-			sessionStore: new SessionService(new InMemorySessionStore()),
+			sessionStore: new SessionService(store),
 			clock: new FixedClock(),
 			idGenerator: new RecordingIdGenerator(),
 			toolExecutor: registry,
@@ -821,10 +832,12 @@ describe('ToolRunner prepared metadata', () => {
 		const result = await runner.executeToolCalls(sessionId, records);
 		expect(reads).toBe(2);
 		expect(approvals).toBe(0);
-		expect(result.toolMessages.map((message) => message.content)).toEqual([
-			'{"content":"version-1"}',
-			'{"content":"version-2"}',
-		]);
+		expect(result).toEqual({});
+		expect(
+			store.events
+				.filter((event) => event.type === 'tool.call.completed')
+				.map((event) => event.output),
+		).toEqual([{ content: 'version-1' }, { content: 'version-2' }]);
 	});
 
 	for (const later of [
@@ -935,9 +948,5 @@ test('repeated normalized list_files calls reference the original result in orde
 	expect(completed[0]!.output).toEqual({ files: ['src/file.ts'], truncated: false });
 	for (const event of completed.slice(1))
 		expect(event.output).toMatchObject({ cached: true, sourceToolCallId: records[0]!.call.id });
-	expect(
-		result.toolMessages.map((message) =>
-			message.role === 'tool' ? message.toolCallId : undefined,
-		),
-	).toEqual(records.map((record) => record.call.id));
+	expect(result).toEqual({});
 });

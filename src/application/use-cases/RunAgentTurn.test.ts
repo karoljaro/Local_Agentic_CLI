@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { createLocalToolExecutor } from '@/composition/factories/createLocalToolExecutor';
 import { createTempDirectory } from '@/test-support/createTempDirectory';
 import { createDeferred } from '@/test-support/createDeferred';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { z } from 'zod';
 import { defineLocalTool } from '@/infrastructure/tools/LocalTool';
 import { LocalToolRegistry } from '@/infrastructure/tools/LocalToolExecutor';
@@ -28,11 +28,19 @@ import { InMemorySessionStore } from '@/test-support/InMemorySessionStore';
 import { RecordingToolExecutor } from '@/test-support/RecordingToolExecutor';
 import { ScriptedModel } from '@/test-support/ScriptedModel';
 import { collectAsyncIterable } from '@/test-support/collectAsyncIterable';
+import {
+	assistantMessageCompletedEvent,
+	assistantToolCallsCompletedEvent,
+	promptSubmittedEvent,
+	toolCallCompletedEvent,
+	toolCallRequestedEvent,
+	toolCallStartedEvent,
+} from '@/test-support/AgentEventFixtures';
 import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
-import type { ModelStreamChunk } from '../ports/ModelPort';
+import type { ModelPort, ModelStreamChunk } from '../ports/ModelPort';
 import type { MonotonicClockPort } from '../ports/MonotonicClockPort';
-import { ContextBuilder } from '../services/ContextBuilder';
+import { ContextBudgetExceededError, ContextBuilder } from '../services/ContextBuilder';
 import { InMemoryAgentMetrics } from '../services/InMemoryAgentMetrics';
 import { reduceAgentState } from '../services/SessionReducer';
 import {
@@ -293,6 +301,31 @@ class SequenceIdGenerator implements IdGeneratorPort {
 	}
 }
 
+// Capture authority when the model is actually called, before consuming its response.
+// Every comparison creates an independent service/reducer and builder from durable data.
+const checkRequestBoundaries = (
+	model: ModelPort,
+	sessionId: SessionId,
+	readCommittedEvents: () => AgentEvent[] | Promise<AgentEvent[]>,
+	contextOptions: ConstructorParameters<typeof ContextBuilder>[0],
+	freshSessions?: () => SessionService,
+) => {
+	const prefixes: AgentEvent[][] = [];
+	const checkedModel: ModelPort = {
+		async *streamChat(input) {
+			const prefix: AgentEvent[] = JSON.parse(JSON.stringify(await readCommittedEvents()));
+			const replay =
+				freshSessions?.() ?? new SessionService(new InMemorySessionStore({ events: prefix }));
+			const state = await replay.readSessionState(sessionId);
+			expect(state).toEqual(reduceAgentState(sessionId, prefix));
+			expect(input.messages).toEqual(new ContextBuilder(contextOptions).build(state).messages);
+			prefixes.push(prefix);
+			yield* model.streamChat(input);
+		},
+	};
+	return { model: checkedModel, prefixes };
+};
+
 type RunAgentTurnHarnessOptions = {
 	model: ScriptedModel;
 	toolExecutor?: RecordingToolExecutor;
@@ -300,6 +333,7 @@ type RunAgentTurnHarnessOptions = {
 	maxContextCharacters?: number;
 	agentMetrics?: RunAgentTurnDependencies['agentMetrics'];
 	monotonicClock?: RunAgentTurnDependencies['monotonicClock'];
+	events?: AgentEvent[];
 };
 
 const createRunAgentTurnHarness = ({
@@ -309,16 +343,26 @@ const createRunAgentTurnHarness = ({
 	maxContextCharacters,
 	agentMetrics,
 	monotonicClock,
+	events = [],
 }: RunAgentTurnHarnessOptions) => {
-	const sessionStore = new InMemorySessionStore();
+	const sessionStore = new InMemorySessionStore({ events });
 	const sessionId = asSessionId('session-1');
-	const dependencies: RunAgentTurnDependencies = {
-		sessionStore: new SessionService(sessionStore),
+	const sessions = new SessionService(sessionStore);
+	const contextOptions = {
+		systemPrompt: 'You are a local coding agent.',
+		...(maxContextCharacters === undefined ? {} : { maxContextCharacters }),
+	};
+	const contextBuilder = new ContextBuilder(contextOptions);
+	const boundaryChecks = checkRequestBoundaries(
 		model,
-		contextBuilder: new ContextBuilder({
-			systemPrompt: 'You are a local coding agent.',
-			...(maxContextCharacters === undefined ? {} : { maxContextCharacters }),
-		}),
+		sessionId,
+		() => sessionStore.events,
+		contextOptions,
+	);
+	const dependencies: RunAgentTurnDependencies = {
+		sessionStore: sessions,
+		model: boundaryChecks.model,
+		contextBuilder,
 		clock: new FixedClock(),
 		idGenerator: new SequenceIdGenerator(),
 		...(toolExecutor === undefined ? {} : { toolExecutor }),
@@ -329,6 +373,9 @@ const createRunAgentTurnHarness = ({
 
 	return {
 		useCase: new RunAgentTurn(dependencies),
+		requestPrefixes: boundaryChecks.prefixes,
+		sessions,
+		contextBuilder,
 		sessionStore,
 		sessionId,
 	};
@@ -839,13 +886,14 @@ describe('RunAgentTurn', () => {
 			toolCallResponse([readFileToolCall('README.md')], 'I will inspect the file.\n'),
 			textResponse('The file contains hello.'),
 		]);
-		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
+		const { sessionStore, sessionId, useCase, requestPrefixes } = createRunAgentTurnHarness({
 			model,
 			toolExecutor: createReadToolExecutor(),
 		});
 
 		const chunks = await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Read README' }));
 
+		expect(requestPrefixes).toHaveLength(2);
 		expect(chunks).toEqual([
 			{ contentDelta: 'I will inspect the file.\n' },
 			{ contentDelta: 'The file contains hello.' },
@@ -1108,7 +1156,7 @@ describe('RunAgentTurn', () => {
 			textResponse('Both tools completed.'),
 		]);
 		const toolExecutor = createSearchReadToolExecutor();
-		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
+		const { sessionStore, sessionId, useCase, requestPrefixes } = createRunAgentTurnHarness({
 			model,
 			toolExecutor,
 		});
@@ -1117,6 +1165,7 @@ describe('RunAgentTurn', () => {
 			useCase.run({ sessionId, prompt: 'Search and read' }),
 		);
 
+		expect(requestPrefixes).toHaveLength(2);
 		expect(chunks).toEqual([{ contentDelta: 'Both tools completed.' }]);
 		expect(toolExecutor.receivedRequests).toEqual([
 			{
@@ -1185,7 +1234,7 @@ describe('RunAgentTurn', () => {
 			textResponse('Second read failed.'),
 		]);
 		const toolExecutor = createSecondReadFailingToolExecutor();
-		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
+		const { sessionStore, sessionId, useCase, requestPrefixes } = createRunAgentTurnHarness({
 			model,
 			toolExecutor,
 		});
@@ -1194,6 +1243,7 @@ describe('RunAgentTurn', () => {
 			useCase.run({ sessionId, prompt: 'Search and read missing file' }),
 		);
 
+		expect(requestPrefixes).toHaveLength(2);
 		expect(chunks).toEqual([{ contentDelta: 'Second read failed.' }]);
 		expect(toolExecutor.receivedRequests).toEqual([
 			{
@@ -1394,13 +1444,14 @@ describe('RunAgentTurn', () => {
 			toolCallResponse([searchFileToolCall('UserRepository')]),
 			textResponse('Done.'),
 		]);
-		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
+		const { sessionStore, sessionId, useCase, requestPrefixes } = createRunAgentTurnHarness({
 			model,
 			toolExecutor,
 		});
 
 		await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Search twice' }));
 
+		expect(requestPrefixes).toHaveLength(3);
 		expect(toolExecutor.receivedRequests).toHaveLength(1);
 		expect(model.receivedInputs[2]?.messages.at(-1)).toMatchObject({
 			role: 'tool',
@@ -1432,7 +1483,7 @@ describe('RunAgentTurn', () => {
 			toolCallResponse([searchFileToolCall('value')]),
 			textResponse('Done.'),
 		]);
-		const { sessionId, useCase } = createRunAgentTurnHarness({
+		const { sessionId, useCase, requestPrefixes } = createRunAgentTurnHarness({
 			model,
 			toolExecutor,
 			approveToolCall: async () => true,
@@ -1440,6 +1491,7 @@ describe('RunAgentTurn', () => {
 
 		await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Search, edit, and search' }));
 
+		expect(requestPrefixes).toHaveLength(5);
 		expect(toolExecutor.receivedRequests.map((request) => request.toolName)).toEqual([
 			'search_file',
 			'edit_file',
@@ -1544,8 +1596,9 @@ describe('RunAgentTurn', () => {
 			toolName: request.toolName,
 			output: { path: 'large.txt', content: 'x'.repeat(500) },
 		}));
+		const model = new ScriptedModel([toolCallResponse([readFileToolCall('large.txt')])]);
 		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
-			model: new ScriptedModel([toolCallResponse([readFileToolCall('large.txt')])]),
+			model,
 			toolExecutor,
 			maxContextCharacters: 400,
 		});
@@ -1554,6 +1607,16 @@ describe('RunAgentTurn', () => {
 			collectAsyncIterable(useCase.run({ sessionId, prompt: 'Read large file' })),
 		).rejects.toThrow('Current turn exceeds the model context budget');
 		expect(toolExecutor.receivedRequests).toHaveLength(1);
+		expect(model.receivedInputs).toHaveLength(1);
+		expect(sessionStore.events.filter((event) => event.type === 'prompt.submitted')).toHaveLength(
+			1,
+		);
+		expect(
+			sessionStore.events.filter((event) => event.type === 'tool.call.completed'),
+		).toHaveLength(1);
+		expect(
+			sessionStore.events.filter((event) => event.type === 'assistant.message.completed'),
+		).toHaveLength(0);
 		expect(sessionStore.events.at(-1)).toMatchObject({
 			type: 'agent.error',
 			error: { code: 'CONTEXT_BUDGET_EXCEEDED' },
@@ -1915,10 +1978,18 @@ test('normalized prepared input is approved, persisted, deduplicated and execute
 			]),
 			textResponse('Done.'),
 		]);
+		const sessionId = asSessionId('session-1');
+		const boundaryChecks = checkRequestBoundaries(
+			model,
+			sessionId,
+			() => new JsonlSessionStore(directory).readSessionEvents(sessionId),
+			{ systemPrompt: 'test' },
+			() => new SessionService(new JsonlSessionStore(directory)),
+		);
 		const approvals: ToolApprovalRequest[] = [];
 		const loop = new RunAgentTurn({
 			sessionStore: sessions,
-			model,
+			model: boundaryChecks.model,
 			toolExecutor: executor,
 			contextBuilder,
 			clock: new FixedClock(),
@@ -1929,8 +2000,9 @@ test('normalized prepared input is approved, persisted, deduplicated and execute
 				return true;
 			},
 		});
-		const sessionId = asSessionId('session-1');
 		await collectAsyncIterable(loop.run({ sessionId, prompt: 'Normalize and search', signal }));
+		expect(boundaryChecks.prefixes).toHaveLength(2);
+		expect(boundaryChecks.prefixes[1]!.at(-1)?.type).toBe('tool.call.completed');
 		expect(executor.preparationRequests).toHaveLength(2);
 		expect(executor.preparedExecutions).toHaveLength(2);
 		expect(executor.receivedRequests).toHaveLength(1);
@@ -1981,4 +2053,509 @@ test('normalized prepared input is approved, persisted, deduplicated and execute
 	} finally {
 		await cleanup();
 	}
+});
+
+describe('Phase 7 canonical request boundaries', () => {
+	test('first request rebuilds existing, legacy and orphan history with the new committed prompt', async () => {
+		const orphanId = asToolCallId('old-orphan');
+		const model = new ScriptedModel([textResponse('Follow-up')]);
+		const { useCase, sessionId, requestPrefixes, sessions, contextBuilder } =
+			createRunAgentTurnHarness({
+				model,
+				toolExecutor: createReadToolExecutor(),
+				events: [
+					promptSubmittedEvent({ prompt: 'Earlier prompt' }),
+					assistantMessageCompletedEvent({ content: 'Earlier answer' }),
+					toolCallRequestedEvent({ toolInput: { path: 'old.txt' } }),
+					toolCallCompletedEvent({ output: 'legacy output' }),
+					toolCallCompletedEvent({
+						id: asEventId('old-orphan-event'),
+						toolCallId: orphanId,
+						output: { orphan: true },
+					}),
+				],
+			});
+		const read = spyOn(sessions, 'readSessionState');
+		const build = spyOn(contextBuilder, 'build');
+		try {
+			await collectAsyncIterable(useCase.run({ sessionId, prompt: 'New prompt' }));
+			expect(requestPrefixes).toHaveLength(1);
+			expect(requestPrefixes[0]!.at(-1)).toMatchObject({
+				type: 'prompt.submitted',
+				prompt: 'New prompt',
+			});
+			expect(read).toHaveBeenCalledTimes(1);
+			expect(build).toHaveBeenCalledTimes(1);
+			expect(model.receivedInputs[0]!.messages.map((message) => message.content)).toEqual([
+				'You are a local coding agent.',
+				'Earlier prompt',
+				'Earlier answer',
+				'',
+				'legacy output',
+				'{"orphan":true}',
+				'New prompt',
+			]);
+			expect(model.receivedInputs[0]!.messages.at(-2)).toMatchObject({
+				role: 'tool',
+				toolCallId: orphanId,
+			});
+		} finally {
+			read.mockRestore();
+			build.mockRestore();
+		}
+	});
+
+	test('awaits every terminal append before reading and building the next request', async () => {
+		const terminalEntered = createDeferred<void>();
+		const releaseTerminal = createDeferred<void>();
+		const model = new ScriptedModel([
+			toolCallResponse(
+				[readFileToolCall('first.txt'), readFileToolCall('second.txt')],
+				'Inspecting both.',
+			),
+			textResponse('Done'),
+		]);
+		const { useCase, sessionId, sessionStore, sessions, contextBuilder, requestPrefixes } =
+			createRunAgentTurnHarness({ model, toolExecutor: createReadToolExecutor() });
+		const append = sessionStore.appendSessionEvent.bind(sessionStore);
+		let completions = 0;
+		sessionStore.appendSessionEvent = async (event) => {
+			if (event.type === 'tool.call.completed' && ++completions === 2) {
+				terminalEntered.resolve();
+				await releaseTerminal.promise;
+			}
+			await append(event);
+		};
+		const read = spyOn(sessions, 'readSessionState');
+		const build = spyOn(contextBuilder, 'build');
+		const turn = collectAsyncIterable(useCase.run({ sessionId, prompt: 'Read both' }));
+		try {
+			await terminalEntered.promise;
+			expect(model.receivedInputs).toHaveLength(1);
+			expect(
+				sessionStore.events.filter((event) => event.type === 'tool.call.completed'),
+			).toHaveLength(1);
+			expect(
+				reduceAgentState(sessionId, JSON.parse(JSON.stringify(sessionStore.events))).messages,
+			).toEqual([expect.objectContaining({ role: 'user', content: 'Read both' })]);
+			expect(read).toHaveBeenCalledTimes(1);
+			expect(build).toHaveBeenCalledTimes(1);
+			releaseTerminal.resolve();
+			await turn;
+			expect(read).toHaveBeenCalledTimes(2);
+			expect(build).toHaveBeenCalledTimes(2);
+			expect(requestPrefixes).toHaveLength(2);
+			const batch = requestPrefixes[1]!.find(
+				(event) => event.type === 'assistant.tool_calls.completed',
+			);
+			if (batch?.type !== 'assistant.tool_calls.completed')
+				throw new Error('Expected committed batch');
+			expect(model.receivedInputs[1]!.messages.slice(-3)).toEqual([
+				expect.objectContaining({
+					role: 'assistant',
+					content: 'Inspecting both.',
+					toolCalls: batch.toolCalls,
+				}),
+				expect.objectContaining({ role: 'tool', toolCallId: batch.toolCalls[0]!.id }),
+				expect.objectContaining({ role: 'tool', toolCallId: batch.toolCalls[1]!.id }),
+			]);
+			expect(
+				requestPrefixes[1]!
+					.filter((event) => event.type === 'tool.call.completed')
+					.map((event) => event.toolCallId),
+			).toEqual(batch.toolCalls.map((call) => call.id));
+		} finally {
+			releaseTerminal.resolve();
+			await turn;
+			read.mockRestore();
+			build.mockRestore();
+		}
+	});
+
+	test('fresh turn after an interrupted JSONL batch excludes its partial history without fabricating terminals', async () => {
+		const { directory, cleanup } = await createTempDirectory('phase-7-interrupted-');
+		try {
+			const sessionId = asSessionId('session-1');
+			const firstId = asToolCallId('interrupted-first');
+			const secondId = asToolCallId('interrupted-second');
+			const prefix = [
+				promptSubmittedEvent({ prompt: 'Interrupted prompt' }),
+				assistantToolCallsCompletedEvent({
+					content: 'Partial batch text',
+					toolCalls: [
+						{ id: firstId, name: 'read_file', arguments: { path: 'first' } },
+						{ id: secondId, name: 'read_file', arguments: { path: 'second' } },
+					],
+				}),
+				toolCallRequestedEvent({ toolCallId: firstId }),
+				toolCallStartedEvent({ toolCallId: firstId }),
+				toolCallCompletedEvent({ toolCallId: firstId, output: 'partial result' }),
+				toolCallRequestedEvent({ id: asEventId('second-request'), toolCallId: secondId }),
+				toolCallStartedEvent({ id: asEventId('second-start'), toolCallId: secondId }),
+			];
+			const originalStore = new JsonlSessionStore(directory);
+			for (const event of prefix) await originalStore.appendSessionEvent(event);
+			const durable = new JsonlSessionStore(directory);
+			const sessions = new SessionService(durable);
+			const model = new ScriptedModel([textResponse('Resumed')]);
+			const checked = checkRequestBoundaries(
+				model,
+				sessionId,
+				() => new JsonlSessionStore(directory).readSessionEvents(sessionId),
+				{ systemPrompt: 'test' },
+				() => new SessionService(new JsonlSessionStore(directory)),
+			);
+			const executor = createReadToolExecutor();
+			const loop = new RunAgentTurn({
+				sessionStore: sessions,
+				model: checked.model,
+				contextBuilder: new ContextBuilder({ systemPrompt: 'test' }),
+				toolExecutor: executor,
+				clock: new FixedClock(),
+				idGenerator: new SequenceIdGenerator(),
+			});
+			await collectAsyncIterable(loop.run({ sessionId, prompt: 'Fresh prompt' }));
+			expect(checked.prefixes).toHaveLength(1);
+			expect(model.receivedInputs[0]!.messages.map((message) => message.content)).toEqual([
+				'test',
+				'Interrupted prompt',
+				'Fresh prompt',
+			]);
+			expect(
+				model.receivedInputs[0]!.messages.some(
+					(message) =>
+						message.role === 'tool' ||
+						(message.role === 'assistant' && message.toolCalls !== undefined),
+				),
+			).toBe(false);
+			expect(executor.receivedRequests).toHaveLength(0);
+			const persisted = await new JsonlSessionStore(directory).readSessionEvents(sessionId);
+			expect(persisted.slice(0, prefix.length)).toEqual(prefix);
+			expect(persisted.slice(prefix.length).map((event) => event.type)).toEqual([
+				'prompt.submitted',
+				'assistant.message.completed',
+			]);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	test('whole-turn truncation is identical at the first and post-tool request', async () => {
+		const old = 'o'.repeat(900);
+		const events = [
+			promptSubmittedEvent({
+				id: asEventId('old-prompt'),
+				messageId: asMessageId('old-user'),
+				prompt: old,
+			}),
+			assistantMessageCompletedEvent({
+				id: asEventId('old-answer'),
+				messageId: asMessageId('old-assistant'),
+				content: old,
+			}),
+			promptSubmittedEvent({
+				id: asEventId('recent-prompt'),
+				messageId: asMessageId('recent-user'),
+				prompt: 'Recent question',
+			}),
+			assistantMessageCompletedEvent({
+				id: asEventId('recent-answer'),
+				messageId: asMessageId('recent-assistant'),
+				content: 'Recent answer',
+			}),
+		];
+		const model = new ScriptedModel([
+			toolCallResponse([readFileToolCall('README.md')], 'Checking'),
+			textResponse('Done'),
+		]);
+		const { useCase, sessionId, requestPrefixes } = createRunAgentTurnHarness({
+			model,
+			events,
+			toolExecutor: createReadToolExecutor(),
+			maxContextCharacters: 500,
+		});
+		await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Current question' }));
+		expect(requestPrefixes).toHaveLength(2);
+		for (const input of model.receivedInputs) {
+			expect(input.messages.some((message) => message.content === old)).toBe(false);
+			expect(input.messages.some((message) => message.content === 'Current question')).toBe(true);
+			expect(JSON.stringify(input.messages).length).toBeLessThanOrEqual(500);
+		}
+		expect(model.receivedInputs[0]!.messages.slice(1).map((message) => message.content)).toEqual([
+			'Recent question',
+			'Recent answer',
+			'Current question',
+		]);
+		expect(model.receivedInputs[1]!.messages.slice(1).map((message) => message.content)).toEqual([
+			'Current question',
+			'Checking',
+			'{"path":"README.md","content":"hello"}',
+		]);
+	});
+
+	test('normalized list calls reuse the original result across requests with fresh replay equality', async () => {
+		let listings = 0;
+		const registry = new LocalToolRegistry([
+			defineLocalTool({
+				name: 'list_files',
+				description: 'List',
+				inputSchema: z.strictObject({ path: z.string().trim().default('.') }),
+				deduplicate: true,
+				execute: async () => ({ files: [`version-${++listings}`] }),
+			}),
+		]);
+		const executor = new RecordingToolExecutor(
+			registry.listTools(),
+			() => {
+				throw new Error('Expected prepared execution');
+			},
+			(request) => registry.prepare(request),
+		);
+		const model = new ScriptedModel([
+			toolCallResponse([toolCall('list_files', { path: ' src ' })]),
+			toolCallResponse([
+				toolCall('list_files', { path: 'src' }),
+				toolCall('list_files', { path: 'src' }),
+			]),
+			textResponse('Done'),
+		]);
+		const { useCase, sessionId, requestPrefixes } = createRunAgentTurnHarness({
+			model,
+			toolExecutor: executor,
+		});
+		await collectAsyncIterable(useCase.run({ sessionId, prompt: 'List repeatedly' }));
+		expect(requestPrefixes).toHaveLength(3);
+		expect(listings).toBe(1);
+		const firstBatch = requestPrefixes[1]!.find(
+			(event) => event.type === 'assistant.tool_calls.completed',
+		);
+		if (firstBatch?.type !== 'assistant.tool_calls.completed')
+			throw new Error('Expected original batch');
+		const originalId = firstBatch.toolCalls[0]!.id;
+		const lastMessages = model.receivedInputs[2]!.messages.slice(-3);
+		expect(lastMessages[0]).toMatchObject({
+			role: 'assistant',
+			toolCalls: [
+				{ name: 'list_files', arguments: { path: 'src' } },
+				{ name: 'list_files', arguments: { path: 'src' } },
+			],
+		});
+		for (const message of lastMessages.slice(1))
+			expect(JSON.parse(message.content)).toEqual({
+				cached: true,
+				sourceToolCallId: originalId,
+				message: `Result reused from tool call ${originalId}.`,
+			});
+	});
+
+	for (const availability of ['no executor', 'empty registry'] as const) {
+		for (const response of ['text', 'tool calls', 'empty'] as const) {
+			test(`${availability} uses one canonical round without tools and persists ${response}`, async () => {
+				const executor = new RecordingToolExecutor([], () => {
+					throw new Error('Unexpected execution');
+				});
+				const chunks =
+					response === 'empty'
+						? []
+						: [
+								{
+									contentDelta: 'Hello',
+									...(response === 'tool calls'
+										? { toolCalls: [toolCall('unavailable', { invalid: true })] }
+										: {}),
+								},
+								{ contentDelta: '' },
+								{ contentDelta: ' world' },
+							];
+				const model = new ScriptedModel([chunks]);
+				const { useCase, sessionId, sessionStore, requestPrefixes, contextBuilder } =
+					createRunAgentTurnHarness({
+						model,
+						...(availability === 'empty registry' ? { toolExecutor: executor } : {}),
+					});
+				const build = spyOn(contextBuilder, 'build');
+				try {
+					const streamed = await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Hello' }));
+					expect(streamed).toEqual(
+						response === 'empty' ? [] : [{ contentDelta: 'Hello' }, { contentDelta: ' world' }],
+					);
+					expect(model.receivedInputs).toHaveLength(1);
+					expect(model.receivedInputs[0]).not.toHaveProperty('tools');
+					expect(requestPrefixes).toHaveLength(1);
+					expect(build).toHaveBeenCalledTimes(1);
+					expect(executor.preparationRequests).toHaveLength(0);
+					expect(executor.receivedRequests).toHaveLength(0);
+					expect(sessionStore.events.map((event) => event.type)).toEqual([
+						'prompt.submitted',
+						'assistant.message.completed',
+					]);
+					expect(sessionStore.events.at(-1)).toMatchObject({
+						content: response === 'empty' ? '' : 'Hello world',
+					});
+				} finally {
+					build.mockRestore();
+				}
+			});
+		}
+	}
+
+	test('failed stream after text and accumulated calls executes nothing and commits no answer', async () => {
+		const executor = createReadToolExecutor();
+		const model = new ScriptedModel([
+			{
+				chunks: [
+					{ contentDelta: 'Partial ', toolCalls: [readFileToolCall('README.md')] },
+					{ contentDelta: 'text' },
+				],
+				error: new Error('broken stream'),
+			},
+		]);
+		const { useCase, sessionId, sessionStore } = createRunAgentTurnHarness({
+			model,
+			toolExecutor: executor,
+		});
+		const streamed: string[] = [];
+		await expect(
+			(async () => {
+				for await (const chunk of useCase.run({ sessionId, prompt: 'Read' }))
+					streamed.push(chunk.contentDelta);
+			})(),
+		).rejects.toThrow('broken stream');
+		expect(streamed).toEqual(['Partial ', 'text']);
+		expect(executor.preparationRequests).toHaveLength(0);
+		expect(executor.receivedRequests).toHaveLength(0);
+		expect(model.receivedInputs).toHaveLength(1);
+		expect(sessionStore.events.map((event) => event.type)).toEqual([
+			'prompt.submitted',
+			'agent.error',
+		]);
+		expect(sessionStore.events.at(-1)).toMatchObject({ error: { code: 'MODEL_STREAM_FAILED' } });
+	});
+
+	test('common initial context budget error reports once without duplicating the prompt or requesting the model', async () => {
+		const model = new ScriptedModel([textResponse('unused')]);
+		const { useCase, sessionId, sessionStore, contextBuilder } = createRunAgentTurnHarness({
+			model,
+		});
+		const cause = new ContextBudgetExceededError(120);
+		const build = spyOn(contextBuilder, 'build').mockImplementation(() => {
+			throw cause;
+		});
+		try {
+			await expect(
+				collectAsyncIterable(useCase.run({ sessionId, prompt: 'Fits preflight' })),
+			).rejects.toBe(cause);
+			expect(build).toHaveBeenCalledTimes(1);
+			expect(model.receivedInputs).toHaveLength(0);
+			expect(sessionStore.events.map((event) => event.type)).toEqual([
+				'prompt.submitted',
+				'agent.error',
+			]);
+			expect(sessionStore.events.at(-1)).toMatchObject({
+				error: { code: 'CONTEXT_BUDGET_EXCEEDED' },
+			});
+		} finally {
+			build.mockRestore();
+		}
+	});
+
+	test('round twelve can finish with text after eleven tool batches', async () => {
+		const executor = createReadToolExecutor();
+		const model = new ScriptedModel([
+			...Array.from({ length: 11 }, () => toolCallResponse([readFileToolCall('README.md')])),
+			textResponse('Finished on twelve'),
+		]);
+		const { useCase, sessionId, sessionStore, requestPrefixes } = createRunAgentTurnHarness({
+			model,
+			toolExecutor: executor,
+		});
+		expect(await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Read' }))).toEqual([
+			{ contentDelta: 'Finished on twelve' },
+		]);
+		expect(model.receivedInputs).toHaveLength(12);
+		expect(requestPrefixes).toHaveLength(12);
+		expect(executor.receivedRequests).toHaveLength(11);
+		expect(sessionStore.events.at(-1)).toMatchObject({
+			type: 'assistant.message.completed',
+			content: 'Finished on twelve',
+		});
+		expect(sessionStore.events.filter((event) => event.type === 'agent.error')).toEqual([]);
+	});
+
+	test('twelve tool rounds with multiple calls commit all results then stop without a thirteenth request', async () => {
+		const executor = createReadToolExecutor();
+		const model = new ScriptedModel(
+			Array.from({ length: 13 }, () =>
+				toolCallResponse([readFileToolCall('first'), readFileToolCall('second')]),
+			),
+		);
+		const { useCase, sessionId, sessionStore, requestPrefixes } = createRunAgentTurnHarness({
+			model,
+			toolExecutor: executor,
+		});
+		await expect(
+			collectAsyncIterable(useCase.run({ sessionId, prompt: 'Keep reading' })),
+		).rejects.toThrow('Tool iteration limit reached.');
+		expect(model.receivedInputs).toHaveLength(12);
+		expect(requestPrefixes).toHaveLength(12);
+		expect(executor.receivedRequests).toHaveLength(24);
+		expect(
+			sessionStore.events.filter((event) => event.type === 'assistant.tool_calls.completed'),
+		).toHaveLength(12);
+		expect(
+			sessionStore.events.filter((event) => event.type === 'tool.call.completed'),
+		).toHaveLength(24);
+		expect(
+			sessionStore.events.filter((event) => event.type === 'assistant.message.completed'),
+		).toHaveLength(0);
+		expect(sessionStore.events.at(-1)).toMatchObject({
+			type: 'agent.error',
+			error: { code: 'TOOL_ITERATION_LIMIT_REACHED' },
+		});
+	});
+});
+
+test('explicit denial closes all calls and ends the turn; a follow-up sees identical durable denial and cancellation history', async () => {
+	const executor = createReadEditToolExecutor();
+	const model = new ScriptedModel([
+		toolCallResponse([editFileToolCall(), readFileToolCall('later')], 'Proposed edit'),
+		textResponse('Follow-up answer'),
+	]);
+	const { useCase, sessionId, sessionStore, requestPrefixes } = createRunAgentTurnHarness({
+		model,
+		toolExecutor: executor,
+		approveToolCall: async () => false,
+	});
+	const terminal = 'Tool call was not approved: edit_file';
+	expect(await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Edit' }))).toEqual([
+		{ contentDelta: 'Proposed edit' },
+		{ contentDelta: terminal },
+	]);
+	expect(model.receivedInputs).toHaveLength(1);
+	expect(executor.receivedRequests).toHaveLength(0);
+	const failures = sessionStore.events.filter((event) => event.type === 'tool.call.failed');
+	expect(failures.map((event) => event.error.code)).toEqual([
+		'TOOL_APPROVAL_DENIED',
+		'TOOL_BATCH_CANCELLED',
+	]);
+	expect(sessionStore.events.at(-1)).toMatchObject({
+		type: 'assistant.message.completed',
+		content: terminal,
+	});
+	await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Explain denial' }));
+	expect(requestPrefixes).toHaveLength(2);
+	const toolResults = model.receivedInputs[1]!.messages.filter(
+		(message) => message.role === 'tool',
+	);
+	expect(toolResults.map((message) => message.toolCallId)).toEqual(
+		failures.map((event) => event.toolCallId),
+	);
+	expect(toolResults.map((message) => JSON.parse(message.content))).toEqual(
+		failures.map((event) => ({ error: { message: event.error.message } })),
+	);
+	expect(model.receivedInputs[1]!.messages.at(-2)).toMatchObject({
+		role: 'assistant',
+		content: terminal,
+	});
+	expect(executor.receivedRequests).toHaveLength(0);
 });
