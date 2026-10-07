@@ -11,6 +11,7 @@ import type {
 	UnloadModelInput,
 } from '@/application/ports/ModelPort';
 import type { AppConfig } from '@/composition/config';
+import { abortError, isAbortError, throwIfAborted } from '@/application/services/cancellation';
 import { OllamaModelAdapter } from '@/infrastructure/model/OllamaModelAdapter';
 import { OllamaModelCatalog } from '@/infrastructure/model/OllamaModelCatalog';
 import { normalizeOllamaModelName } from '@/infrastructure/model/ollama/OllamaConfig';
@@ -23,7 +24,7 @@ export class OllamaModelRuntime implements ModelPort, ModelMemoryPort {
 	private readonly config: AppConfig;
 	private readonly modelCatalog: ModelCatalogPort;
 	private currentModelName: string;
-	private currentModel: OllamaModelAdapter & ModelMemoryPort;
+	private currentModel: OllamaModelAdapter;
 	private modelListCache: ListModelsResult | undefined;
 	private modelListPromise: Promise<ListModelsResult> | undefined;
 
@@ -46,11 +47,23 @@ export class OllamaModelRuntime implements ModelPort, ModelMemoryPort {
 		return this.currentModel.unload(input);
 	}
 
-	switchModel(modelName: string): string {
-		this.currentModelName = normalizeOllamaModelName(modelName);
-		this.currentModel = this.createModel(this.currentModelName);
-
-		return this.currentModelName;
+	async switchModel(modelName: string, signal?: AbortSignal): Promise<string> {
+		const nextModelName = normalizeOllamaModelName(modelName);
+		throwIfAborted(signal);
+		try {
+			await this.unload(signal === undefined ? {} : { signal });
+		} catch (error) {
+			if (signal?.aborted && (error === signal.reason || isAbortError(error))) {
+				throw abortError();
+			}
+			throw error;
+		}
+		throwIfAborted(signal);
+		const nextModel = this.createModel(nextModelName);
+		throwIfAborted(signal);
+		this.currentModelName = nextModelName;
+		this.currentModel = nextModel;
+		return nextModelName;
 	}
 
 	listModels(options: RuntimeListModelsOptions = {}): Promise<ListModelsResult> {
@@ -79,7 +92,7 @@ export class OllamaModelRuntime implements ModelPort, ModelMemoryPort {
 		return loadModels;
 	}
 
-	private createModel(modelName: string): OllamaModelAdapter & ModelMemoryPort {
+	private createModel(modelName: string): OllamaModelAdapter {
 		return new OllamaModelAdapter(
 			this.config.OLLAMA_BASE_URL,
 			modelName,

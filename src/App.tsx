@@ -2,43 +2,36 @@ import { useMemo } from 'react';
 import { Text, useStdin } from 'ink';
 
 import { createRuntime } from '@/composition/createRuntime';
-import {
-	RuntimePresentationController,
-	type PresentationController,
-} from '@/presentation/adapters/PresentationController';
-import type { StartupMode } from '@/presentation/types';
+import type { PresentationRuntime, StartupMode } from '@/presentation/types';
 import { usePresentation } from '@/presentation/hooks/usePresentation';
 import { ChatScreen } from '@/presentation/chat/ChatScreen';
 import { ModelScreen } from '@/presentation/screens/ModelScreen';
 import { ResumeScreen } from '@/presentation/screens/ResumeScreen';
 
 export type AppProps = {
-	controller?: PresentationController;
+	runtime?: PresentationRuntime;
 	initialMode?: StartupMode;
 };
 
-export function App({ controller: injectedController, initialMode = 'new' }: AppProps) {
-	const controller = useMemo(
-		() => injectedController ?? new RuntimePresentationController(createRuntime()),
-		[injectedController],
-	);
+export function App({ runtime: injectedRuntime, initialMode = 'new' }: AppProps) {
+	const runtime = useMemo(() => injectedRuntime ?? createRuntime(), [injectedRuntime]);
 	const { isRawModeSupported } = useStdin();
 
 	if (!isRawModeSupported) {
 		return <Text color="yellow">codesh requires an interactive terminal.</Text>;
 	}
 
-	return <InteractiveApp controller={controller} initialMode={initialMode} />;
+	return <InteractiveApp runtime={runtime} initialMode={initialMode} />;
 }
 
 const InteractiveApp = ({
-	controller,
+	runtime,
 	initialMode,
 }: {
-	controller: PresentationController;
+	runtime: PresentationRuntime;
 	initialMode: StartupMode;
 }) => {
-	const presentation = usePresentation(controller, initialMode);
+	const presentation = usePresentation(runtime, initialMode);
 
 	if (presentation.screen === 'models') {
 		return (
@@ -74,7 +67,7 @@ const InteractiveApp = ({
 			pendingApproval={presentation.pendingApproval}
 			sessionId={presentation.sessionId}
 			stream={presentation.chat.stream}
-			workspacePath={controller.workspacePath}
+			workspacePath={runtime.workspacePath}
 		/>
 	);
 };

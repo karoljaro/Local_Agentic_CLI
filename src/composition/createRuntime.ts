@@ -1,5 +1,4 @@
-import type { IdGeneratorPort } from '@/application/ports/IdGeneratorPort';
-import type { ListModelsResult } from '@/application/ports/ModelCatalogPort';
+import type { ListedModel } from '@/application/ports/ModelCatalogPort';
 import type { UnloadModelInput } from '@/application/ports/ModelPort';
 import { ContextBuilder } from '@/application/services/ContextBuilder';
 import {
@@ -7,8 +6,6 @@ import {
 	type AgentMetricsSnapshot,
 } from '@/application/services/InMemoryAgentMetrics';
 import { SessionService } from '@/application/services/SessionService';
-import { ListSessionEvents } from '@/application/use-cases/ListSessionEvents';
-import { ListSessions } from '@/application/use-cases/ListSessions';
 import { RunAgentTurn, type ToolApprovalHandler } from '@/application/use-cases/RunAgentTurn';
 import { readConfig, type AppConfig } from '@/composition/config';
 import {
@@ -22,23 +19,27 @@ import { PerformanceMonotonicClock } from '@/infrastructure/runtime/PerformanceM
 import { TemporalClock } from '@/infrastructure/runtime/TemporalClock';
 import type { SessionId } from '@/domain/Ids';
 import type { AgentEvent } from '@/domain/AgentEvent';
+import type { StoredSession } from '@/application/ports/SessionStorePort';
 
 export type { RuntimeListModelsOptions } from '@/composition/model/OllamaModelRuntime';
 export type { AgentMetricsSnapshot } from '@/application/services/InMemoryAgentMetrics';
 
 export type Runtime = {
-	runAgentTurn: RunAgentTurn;
-	listSessionEvents: ListSessionEvents;
+	createSessionId: () => SessionId;
+	runTurn: RunAgentTurn['run'];
+	listSessionEvents: (sessionId: SessionId) => Promise<AgentEvent[]>;
 	readSessionPreviewEvents: (sessionId: SessionId) => Promise<AgentEvent[]>;
-	listSessions: ListSessions;
-	idGenerator: IdGeneratorPort;
+	listSessions: () => Promise<StoredSession[]>;
 	workspacePath: string;
 	getModelName: () => string;
 	getAgentMetrics: (sessionId?: SessionId) => AgentMetricsSnapshot;
-	listModels: (options?: RuntimeListModelsOptions) => Promise<ListModelsResult>;
+	listModels: (
+		signal?: AbortSignal,
+		options?: Pick<RuntimeListModelsOptions, 'forceRefresh'>,
+	) => Promise<ListedModel[]>;
 	unloadCurrentModel: (input?: UnloadModelInput) => Promise<void>;
-	switchModel: (modelName: string) => string;
-	setToolApprovalHandler: (handler: ToolApprovalHandler) => () => void;
+	switchModel: (modelName: string, signal?: AbortSignal) => Promise<string>;
+	setApprovalHandler: (handler: ToolApprovalHandler) => () => void;
 	subscribeSessionEvents: (listener: (event: AgentEvent) => void) => () => void;
 };
 
@@ -57,27 +58,33 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 		maxContextCharacters: config.MAX_CONTEXT_CHARACTERS,
 	});
 
-	const listSessions = new ListSessions({
+	const runAgentTurn = new RunAgentTurn({
 		sessionStore,
-	});
-
-	const listSessionEvents = new ListSessionEvents({
-		sessionStore,
+		model: modelRuntime,
+		contextBuilder,
+		clock,
+		idGenerator,
+		agentMetrics,
+		monotonicClock,
+		toolExecutor,
+		approveToolCall: (request, options) => currentToolApprovalHandler(request, options),
 	});
 
 	return {
-		idGenerator,
-		listSessionEvents,
+		createSessionId: () => idGenerator.nextSessionId(),
+		runTurn: (input) => runAgentTurn.run(input),
+		listSessionEvents: (sessionId) => sessionStore.activateSession(sessionId),
 		readSessionPreviewEvents: (sessionId) => sessionStore.readPreviewEvents(sessionId),
-		listSessions,
+		listSessions: () => sessionStore.listSessions(),
 		workspacePath: process.cwd(),
 		getModelName: () => modelRuntime.getModelName(),
 		getAgentMetrics: (sessionId) => agentMetrics.snapshot(sessionId),
-		listModels: (options) => modelRuntime.listModels(options),
+		listModels: async (signal, options) =>
+			(await modelRuntime.listModels({ ...options, signal })).models,
 		unloadCurrentModel: (input) => modelRuntime.unload(input),
-		switchModel: (modelName) => modelRuntime.switchModel(modelName),
+		switchModel: (modelName, signal) => modelRuntime.switchModel(modelName, signal),
 		subscribeSessionEvents: (listener) => sessionStore.subscribe(listener),
-		setToolApprovalHandler: (handler) => {
+		setApprovalHandler: (handler) => {
 			currentToolApprovalHandler = handler;
 
 			return () => {
@@ -86,16 +93,5 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 				}
 			};
 		},
-		runAgentTurn: new RunAgentTurn({
-			sessionStore,
-			model: modelRuntime,
-			contextBuilder,
-			clock,
-			idGenerator,
-			agentMetrics,
-			monotonicClock,
-			toolExecutor,
-			approveToolCall: (request, options) => currentToolApprovalHandler(request, options),
-		}),
 	};
 };

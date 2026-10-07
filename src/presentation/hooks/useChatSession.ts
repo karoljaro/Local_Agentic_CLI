@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 
 import type { AgentEvent, AssistantMessageCompleted } from '@/domain/AgentEvent';
 import type { SessionId } from '@/domain/Ids';
-import type { PresentationController } from '../adapters/PresentationController';
+import type { PresentationRuntime } from '../types';
 import { StreamBuffer } from '../state/StreamBuffer';
 import { chatReducer, createChatState, getSessionModelName } from '../state/presentationReducer';
 import type { HistoryEntry } from '../types';
 
 type UseChatSessionOptions = {
-	controller: PresentationController;
+	runtime: PresentationRuntime;
 	modelName: string;
 	onModelNameChange: (modelName: string) => void;
 	restoreSessionModel: boolean;
@@ -16,7 +16,7 @@ type UseChatSessionOptions = {
 };
 
 export const useChatSession = ({
-	controller,
+	runtime,
 	modelName,
 	onModelNameChange,
 	restoreSessionModel,
@@ -55,7 +55,7 @@ export const useChatSession = ({
 	}, [stream]);
 
 	useEffect(() => {
-		return controller.subscribeSessionEvents((event) => {
+		return runtime.subscribeSessionEvents((event) => {
 			if (event.sessionId !== activeSessionRef.current) {
 				return;
 			}
@@ -80,7 +80,7 @@ export const useChatSession = ({
 
 			dispatch({ type: 'engine.event', event });
 		});
-	}, [controller, stream]);
+	}, [runtime, stream]);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -92,14 +92,14 @@ export const useChatSession = ({
 
 		const load = async (): Promise<void> => {
 			try {
-				const events = await controller.listSessionEvents(sessionId);
+				const events = await runtime.listSessionEvents(sessionId);
 				if (cancelled) {
 					return;
 				}
 
 				const restoredModel = restoreSessionModel ? getSessionModelName(events) : undefined;
 				if (restoredModel !== undefined && restoredModel !== modelNameRef.current) {
-					const selectedModel = await controller.switchModel(restoredModel, modelController.signal);
+					const selectedModel = await runtime.switchModel(restoredModel, modelController.signal);
 					if (cancelled) {
 						return;
 					}
@@ -119,7 +119,7 @@ export const useChatSession = ({
 			cancelled = true;
 			modelController.abort();
 		};
-	}, [controller, onModelNameChange, restoreSessionModel, sessionId, stream]);
+	}, [runtime, onModelNameChange, restoreSessionModel, sessionId, stream]);
 
 	const runPrompt = useCallback(
 		(prompt: string): boolean => {
@@ -138,7 +138,7 @@ export const useChatSession = ({
 			const run = async (): Promise<void> => {
 				let receivedFirstDelta = false;
 				try {
-					for await (const chunk of controller.runTurn({
+					for await (const chunk of runtime.runTurn({
 						sessionId,
 						prompt,
 						modelName,
@@ -210,7 +210,7 @@ export const useChatSession = ({
 			void run();
 			return true;
 		},
-		[controller, modelName, nextLocalId, sessionId, state.loadStatus, state.turnStatus, stream],
+		[runtime, modelName, nextLocalId, sessionId, state.loadStatus, state.turnStatus, stream],
 	);
 
 	const appendSystemMessage = useCallback(

@@ -48,6 +48,40 @@ const memory = (service: SessionService) =>
 	};
 
 describe('SessionService', () => {
+	test('selected and preview reads return every durable event in stored order (migrated listing)', async () => {
+		const events = [
+			promptSubmittedEvent(),
+			toolCallCompletedEvent(),
+			assistantMessageCompletedEvent(),
+		];
+		const service = new SessionService(new InMemorySessionStore({ events }));
+		expect(await service.readPreviewEvents(sessionId)).toEqual(events);
+		expect(memory(service).selectedSession).toBeUndefined();
+		expect(await service.activateSession(sessionId)).toEqual(events);
+		expect(await service.readSessionEvents(sessionId)).toEqual(events);
+	});
+
+	test('missing sessions return empty selected/preview arrays without creating preview state', async () => {
+		const service = new SessionService(new InMemorySessionStore());
+		expect(await service.listSessions()).toEqual([]);
+		expect(await service.readPreviewEvents(sessionId)).toEqual([]);
+		expect(memory(service).selectedSession).toBeUndefined();
+		expect(await service.activateSession(sessionId)).toEqual([]);
+		expect((await service.readSessionState(sessionId)).messages).toEqual([]);
+	});
+
+	test('session listing propagates the original adapter failure without activation', async () => {
+		const store = new InMemorySessionStore();
+		const cause = new Error('list adapter failure');
+		store.listSessions = async () => {
+			throw cause;
+		};
+		const service = new SessionService(store);
+		await expect(service.listSessions()).rejects.toBe(cause);
+		expect(store.readCount).toBe(0);
+		expect(memory(service).selectedSession).toBeUndefined();
+	});
+
 	test('reads/reduces once and applies later appends incrementally (migrated cache)', async () => {
 		const prompt = promptSubmittedEvent();
 		const assistant = assistantMessageCompletedEvent();

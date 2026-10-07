@@ -19,11 +19,7 @@ import { PassThrough } from 'node:stream';
 import { render, renderToString, Text } from 'ink';
 
 import { App } from '@/App';
-import type {
-	PresentationController,
-	TurnDelta,
-	TurnInput,
-} from './adapters/PresentationController';
+import type { PresentationRuntime, TurnDelta, TurnInput } from './types';
 import {
 	asSessionId,
 	asToolCallId,
@@ -33,19 +29,20 @@ import {
 	type SessionId,
 } from '@/domain/Ids';
 
-class FakePresentationController implements PresentationController {
+class FakePresentationRuntime implements PresentationRuntime {
 	readonly workspacePath = '/workspace';
+	activeModelName = 'current-model';
 
 	createSessionId() {
 		return asSessionId('session-1');
 	}
 
 	getModelName(): string {
-		return 'current-model';
+		return this.activeModelName;
 	}
 
 	async listModels() {
-		return { models: [{ name: 'current-model' }, { name: 'other-model' }] };
+		return [{ name: 'current-model' }, { name: 'other-model' }];
 	}
 
 	async listSessionEvents(_sessionId: SessionId): Promise<AgentEvent[]> {
@@ -73,27 +70,29 @@ class FakePresentationController implements PresentationController {
 	}
 
 	async switchModel(modelName: string) {
+		this.activeModelName = modelName;
 		return modelName;
 	}
 }
 
-class AbortablePresentationController extends FakePresentationController {
+class AbortablePresentationRuntime extends FakePresentationRuntime {
 	turnSignal: AbortSignal | null = null;
 	wasAborted = false;
 
 	override async *runTurn(input: TurnInput): AsyncIterable<TurnDelta> {
-		this.turnSignal = input.signal;
+		this.turnSignal = input.signal ?? null;
+		const signal = input.signal!;
 		yield { contentDelta: 'partial answer' };
 		await new Promise<void>((_resolve, reject) => {
 			const rejectAsAborted = () => {
 				this.wasAborted = true;
 				reject(new DOMException('The operation was aborted.', 'AbortError'));
 			};
-			if (input.signal.aborted) {
+			if (signal.aborted) {
 				rejectAsAborted();
 				return;
 			}
-			input.signal.addEventListener('abort', rejectAsAborted, { once: true });
+			signal.addEventListener('abort', rejectAsAborted, { once: true });
 		});
 	}
 }
@@ -101,15 +100,27 @@ class AbortablePresentationController extends FakePresentationController {
 describe('App interaction', () => {
 	test('resume browsing uses previews; selecting a session activates it and restores history', async () => {
 		const savedId = asSessionId('saved-session');
-		class ResumeController extends FakePresentationController {
+		class ResumeRuntime extends FakePresentationRuntime {
 			readonly service = new SessionService(
 				new InMemorySessionStore({
-					events: [promptSubmittedEvent({ sessionId: savedId, prompt: 'Saved conversation' })],
+					events: [
+						promptSubmittedEvent({
+							sessionId: savedId,
+							prompt: 'Saved conversation',
+							modelName: 'saved-model',
+						}),
+					],
 					sessions: [{ sessionId: savedId }],
 				}),
 			);
 			readonly activations: SessionId[] = [];
 			readonly previews: SessionId[] = [];
+			readonly switches: string[] = [];
+			override async switchModel(name: string, signal?: AbortSignal) {
+				expect(signal?.aborted).toBe(false);
+				this.switches.push(name);
+				return super.switchModel(name);
+			}
 			override async listSessions() {
 				return this.service.listSessions();
 			}
@@ -122,22 +133,130 @@ describe('App interaction', () => {
 				return this.service.readPreviewEvents(id);
 			}
 		}
-		const controller = new ResumeController();
+		const runtime = new ResumeRuntime();
 		const terminal = createTerminal();
-		const instance = renderInteractiveApp(controller, terminal, 'resume');
+		const instance = renderInteractiveApp(runtime, terminal, 'resume');
 		try {
 			await settle(instance);
-			expect(controller.previews).toEqual([savedId]);
-			expect(controller.activations).toEqual([asSessionId('session-1')]);
+			expect(runtime.previews).toEqual([savedId]);
+			expect(runtime.activations).toEqual([asSessionId('session-1')]);
 			expect(terminal.output()).toContain('Saved conversation');
 			terminal.stdin.write('\x1B[B');
 			await settle(instance);
 			terminal.stdin.write('\r');
-			await waitFor(() => controller.activations.includes(savedId));
+			await waitFor(() => runtime.activations.includes(savedId));
 			await settle(instance);
-			expect(controller.activations).toEqual([asSessionId('session-1'), savedId]);
+			expect(runtime.activations).toEqual([asSessionId('session-1'), savedId]);
+			expect(runtime.switches).toEqual(['saved-model']);
+			expect(runtime.getModelName()).toBe('saved-model');
 			expect(terminal.output()).toContain('Saved conversation');
-			expect((await controller.service.readSessionState(savedId)).messages).toHaveLength(1);
+			expect((await runtime.service.readSessionState(savedId)).messages).toHaveLength(1);
+		} finally {
+			instance.unmount();
+			await instance.waitUntilExit();
+			instance.cleanup();
+			terminal.stdin.end();
+		}
+	});
+
+	for (const route of ['command', 'model screen'] as const) {
+		test(`${route} awaits the single injected async switch before displaying/using the new model`, async () => {
+			class SwitchingRuntime extends FakePresentationRuntime {
+				readonly entered = createDeferred<void>();
+				readonly release = createDeferred<void>();
+				readonly switches: string[] = [];
+				readonly turns: TurnInput[] = [];
+				override async switchModel(name: string, signal?: AbortSignal) {
+					expect(signal?.aborted).toBe(false);
+					this.switches.push(name);
+					this.entered.resolve();
+					await this.release.promise;
+					return super.switchModel(name);
+				}
+				override async *runTurn(input: TurnInput): AsyncIterable<TurnDelta> {
+					this.turns.push(input);
+					yield { contentDelta: 'answer after switch' };
+				}
+			}
+			const runtime = new SwitchingRuntime();
+			const terminal = createTerminal();
+			const instance = renderInteractiveApp(runtime, terminal);
+			try {
+				await settle(instance);
+				terminal.stdin.write(route === 'command' ? '/model other-model' : '/model');
+				await settle(instance);
+				terminal.stdin.write('\r');
+				if (route === 'model screen') {
+					await waitFor(() => terminal.output().includes('Select model'));
+					await settle(instance);
+					terminal.stdin.write('\x1B[B');
+					await settle(instance);
+					terminal.stdin.write('\r');
+				}
+				await runtime.entered.promise;
+				expect(runtime.getModelName()).toBe('current-model');
+				expect(runtime.switches).toEqual(['other-model']);
+				runtime.release.resolve();
+				await waitFor(() => terminal.output().includes('Model switched to other-model.'));
+				expect(runtime.getModelName()).toBe('other-model');
+				await settle(instance);
+				terminal.stdin.write('question');
+				await settle(instance);
+				terminal.stdin.write('\r');
+				await waitFor(() => runtime.turns.length === 1);
+				expect(runtime.turns[0]).toMatchObject({
+					modelName: 'other-model',
+					prompt: 'question',
+					sessionId: asSessionId('session-1'),
+				});
+				expect(runtime.turns[0]?.signal).toBeInstanceOf(AbortSignal);
+				await waitFor(() => terminal.output().includes('answer after switch'));
+			} finally {
+				runtime.release.resolve();
+				instance.unmount();
+				await instance.waitUntilExit();
+				instance.cleanup();
+				terminal.stdin.end();
+			}
+		});
+	}
+
+	test('session model restoration failure calls async switch once and retains current selection', async () => {
+		const savedId = asSessionId('saved-failing-session');
+		const event = promptSubmittedEvent({
+			sessionId: savedId,
+			prompt: 'saved prompt',
+			modelName: 'saved-model',
+		});
+		class FailedRestoreRuntime extends FakePresentationRuntime {
+			readonly switches: string[] = [];
+			override async listSessions() {
+				return [{ sessionId: savedId }];
+			}
+			override async readSessionPreviewEvents() {
+				return [event];
+			}
+			override async listSessionEvents(id: SessionId) {
+				return id === savedId ? [event] : [];
+			}
+			override async switchModel(name: string, signal?: AbortSignal): Promise<string> {
+				expect(signal?.aborted).toBe(false);
+				this.switches.push(name);
+				throw new Error('unload failure while restoring saved model');
+			}
+		}
+		const runtime = new FailedRestoreRuntime();
+		const terminal = createTerminal();
+		const instance = renderInteractiveApp(runtime, terminal, 'resume');
+		try {
+			await waitFor(() => terminal.output().includes('saved prompt'));
+			await settle(instance);
+			terminal.stdin.write('\x1B[B');
+			await settle(instance);
+			terminal.stdin.write('\r');
+			await waitFor(() => terminal.output().includes('unload failure while restoring saved model'));
+			expect(runtime.switches).toEqual(['saved-model']);
+			expect(runtime.getModelName()).toBe('current-model');
 		} finally {
 			instance.unmount();
 			await instance.waitUntilExit();
@@ -147,15 +266,13 @@ describe('App interaction', () => {
 	});
 
 	test('shows a guard without mounting interactive hooks for piped input', () => {
-		const output = Bun.stripANSI(
-			renderToString(<App controller={new FakePresentationController()} />),
-		);
+		const output = Bun.stripANSI(renderToString(<App runtime={new FakePresentationRuntime()} />));
 		expect(output).toContain('requires an interactive terminal');
 	});
 
 	test('opens the command menu, enters the model screen, and returns to preserved chat', async () => {
 		const terminal = createTerminal();
-		const instance = renderInteractiveApp(new FakePresentationController(), terminal);
+		const instance = renderInteractiveApp(new FakePresentationRuntime(), terminal);
 
 		await settle(instance);
 		terminal.stdin.write('/');
@@ -180,8 +297,8 @@ describe('App interaction', () => {
 
 	test('cancels an active response on Ctrl+C and exits on the next Ctrl+C once idle', async () => {
 		const terminal = createTerminal();
-		const controller = new AbortablePresentationController();
-		const instance = renderInteractiveApp(controller, terminal);
+		const runtime = new AbortablePresentationRuntime();
+		const instance = renderInteractiveApp(runtime, terminal);
 		let exited = false;
 		const exitPromise = instance.waitUntilExit().then(() => {
 			exited = true;
@@ -191,10 +308,10 @@ describe('App interaction', () => {
 		terminal.stdin.write('x');
 		await settle(instance);
 		terminal.stdin.write('\r');
-		await waitFor(() => controller.turnSignal !== null);
+		await waitFor(() => runtime.turnSignal !== null);
 
 		terminal.stdin.write('\x03');
-		await waitFor(() => controller.wasAborted);
+		await waitFor(() => runtime.wasAborted);
 		await waitFor(() => terminal.output().includes('The response was cancelled.'));
 		expect(exited).toBe(false);
 
@@ -207,8 +324,8 @@ describe('App interaction', () => {
 
 	test('keeps Escape as a response cancellation shortcut without exiting', async () => {
 		const terminal = createTerminal();
-		const controller = new AbortablePresentationController();
-		const instance = renderInteractiveApp(controller, terminal);
+		const runtime = new AbortablePresentationRuntime();
+		const instance = renderInteractiveApp(runtime, terminal);
 		let exited = false;
 		const exitPromise = instance.waitUntilExit().then(() => {
 			exited = true;
@@ -218,10 +335,10 @@ describe('App interaction', () => {
 		terminal.stdin.write('x');
 		await settle(instance);
 		terminal.stdin.write('\r');
-		await waitFor(() => controller.turnSignal !== null);
+		await waitFor(() => runtime.turnSignal !== null);
 
 		terminal.stdin.write('\u001B');
-		await waitFor(() => controller.wasAborted);
+		await waitFor(() => runtime.wasAborted);
 		await waitFor(() => terminal.output().includes('The response was cancelled.'));
 		expect(exited).toBe(false);
 
@@ -233,7 +350,7 @@ describe('App interaction', () => {
 
 	test('exits on Ctrl+C when no response is active', async () => {
 		const terminal = createTerminal();
-		const instance = renderInteractiveApp(new FakePresentationController(), terminal);
+		const instance = renderInteractiveApp(new FakePresentationRuntime(), terminal);
 		const exitPromise = instance.waitUntilExit();
 
 		await settle(instance);
@@ -246,11 +363,11 @@ describe('App interaction', () => {
 });
 
 const renderInteractiveApp = (
-	controller: PresentationController,
+	runtime: PresentationRuntime,
 	terminal: ReturnType<typeof createTerminal>,
 	initialMode: 'new' | 'resume' = 'new',
 ) =>
-	render(<App controller={controller} initialMode={initialMode} />, {
+	render(<App runtime={runtime} initialMode={initialMode} />, {
 		stdin: terminal.stdin,
 		stdout: terminal.stdout,
 		stderr: terminal.stderr,
@@ -312,7 +429,7 @@ const createTerminal = () => {
 	return { stdin, stdout, stderr, output: () => Bun.stripANSI(rendered) };
 };
 
-class ApprovalPresentationController extends FakePresentationController {
+class ApprovalPresentationRuntime extends FakePresentationRuntime {
 	handler: ToolApprovalHandler | null = null;
 	turnSignal: AbortSignal | null = null;
 	executions = 0;
@@ -325,8 +442,11 @@ class ApprovalPresentationController extends FakePresentationController {
 		};
 	}
 	override async *runTurn(input: TurnInput): AsyncIterable<TurnDelta> {
-		this.turnSignal = input.signal;
-		const approved = await this.handler?.(approvalRequest('pending'), { signal: input.signal });
+		this.turnSignal = input.signal ?? null;
+		const approved = await this.handler?.(
+			approvalRequest('pending'),
+			input.signal === undefined ? {} : { signal: input.signal },
+		);
 		throwIfAborted(input.signal);
 		if (approved) this.executions++;
 		yield { contentDelta: approved ? 'approved' : 'denied' };
@@ -344,18 +464,14 @@ const rejection = (promise: Promise<unknown>) =>
 		() => undefined,
 		(error: unknown) => error,
 	);
-const renderPresentationProbe = (controller: ApprovalPresentationController) => {
+const renderPresentationProbe = (runtime: ApprovalPresentationRuntime) => {
 	const terminal = createTerminal();
 	let latest!: ReturnType<typeof usePresentation>;
-	const Probe = ({
-		controller: activeController,
-	}: {
-		controller: ApprovalPresentationController;
-	}) => {
-		latest = usePresentation(activeController, 'new');
+	const Probe = ({ runtime: activeRuntime }: { runtime: ApprovalPresentationRuntime }) => {
+		latest = usePresentation(activeRuntime, 'new');
 		return <Text>{latest.pendingApproval?.toolInput ? 'pending' : 'clear'}</Text>;
 	};
-	const instance = render(<Probe controller={controller} />, {
+	const instance = render(<Probe runtime={runtime} />, {
 		stdin: terminal.stdin,
 		stdout: terminal.stdout,
 		stderr: terminal.stderr,
@@ -368,8 +484,7 @@ const renderPresentationProbe = (controller: ApprovalPresentationController) => 
 		instance,
 		terminal,
 		latest: () => latest,
-		replace: (next: ApprovalPresentationController) =>
-			instance.rerender(<Probe controller={next} />),
+		replace: (next: ApprovalPresentationRuntime) => instance.rerender(<Probe runtime={next} />),
 		cleanup: async () => {
 			instance.unmount();
 			await instance.waitUntilExit();
@@ -381,8 +496,8 @@ const renderPresentationProbe = (controller: ApprovalPresentationController) => 
 
 describe('presentation approval lifecycle', () => {
 	test('aborted pending approval clears matching state and stale callbacks cannot affect a newer request', async () => {
-		const controller = new ApprovalPresentationController();
-		const probe = renderPresentationProbe(controller);
+		const runtime = new ApprovalPresentationRuntime();
+		const probe = renderPresentationProbe(runtime);
 		try {
 			await settle(probe.instance);
 			const signalController = new AbortController();
@@ -407,7 +522,7 @@ describe('presentation approval lifecycle', () => {
 				remove(type, listener, options);
 			};
 			const first = rejection(
-				controller.handler!(approvalRequest('first'), { signal: signalController.signal }),
+				runtime.handler!(approvalRequest('first'), { signal: signalController.signal }),
 			);
 			await settle(probe.instance);
 			const staleResolve = probe.latest().resolveApproval;
@@ -418,7 +533,7 @@ describe('presentation approval lifecycle', () => {
 			expect(removes).toBe(adds);
 			const newer = new AbortController();
 			let settled = false;
-			const second = controller.handler!(approvalRequest('second'), { signal: newer.signal }).then(
+			const second = runtime.handler!(approvalRequest('second'), { signal: newer.signal }).then(
 				(result) => {
 					settled = true;
 					return result;
@@ -438,17 +553,17 @@ describe('presentation approval lifecycle', () => {
 	});
 
 	test('replacement cancels the previous request and old callbacks cannot resolve even reused request IDs', async () => {
-		const controller = new ApprovalPresentationController();
-		const probe = renderPresentationProbe(controller);
+		const runtime = new ApprovalPresentationRuntime();
+		const probe = renderPresentationProbe(runtime);
 		try {
 			await settle(probe.instance);
 			const request = approvalRequest('same');
 			const firstController = new AbortController();
-			const first = rejection(controller.handler!(request, { signal: firstController.signal }));
+			const first = rejection(runtime.handler!(request, { signal: firstController.signal }));
 			await settle(probe.instance);
 			const stale = probe.latest().resolveApproval;
 			let settled = false;
-			const second = controller.handler!(request, {}).then((result) => {
+			const second = runtime.handler!(request, {}).then((result) => {
 				settled = true;
 				return result;
 			});
@@ -467,14 +582,14 @@ describe('presentation approval lifecycle', () => {
 	});
 
 	test('handler disposal cancels pending approval and a disposed handler cannot replace the new one', async () => {
-		const old = new ApprovalPresentationController();
+		const old = new ApprovalPresentationRuntime();
 		const probe = renderPresentationProbe(old);
 		try {
 			await settle(probe.instance);
 			const oldHandler = old.handler!;
 			const first = rejection(oldHandler(approvalRequest('old'), {}));
 			await settle(probe.instance);
-			const newer = new ApprovalPresentationController();
+			const newer = new ApprovalPresentationRuntime();
 			probe.replace(newer);
 			await settle(probe.instance);
 			expect(await first).toHaveProperty('name', 'AbortError');
@@ -494,14 +609,14 @@ describe('presentation approval lifecycle', () => {
 	});
 
 	test('already-aborted UI request never displays approval', async () => {
-		const controller = new ApprovalPresentationController();
-		const probe = renderPresentationProbe(controller);
+		const runtime = new ApprovalPresentationRuntime();
+		const probe = renderPresentationProbe(runtime);
 		try {
 			await settle(probe.instance);
 			const request = new AbortController();
 			request.abort('custom');
 			expect(
-				await rejection(controller.handler!(approvalRequest('never'), { signal: request.signal })),
+				await rejection(runtime.handler!(approvalRequest('never'), { signal: request.signal })),
 			).toHaveProperty('name', 'AbortError');
 			expect(probe.latest().pendingApproval).toBeNull();
 		} finally {
@@ -511,9 +626,9 @@ describe('presentation approval lifecycle', () => {
 
 	for (const shutdown of ['unmount', 'Ctrl+C'] as const) {
 		test(`${shutdown} while approval is pending aborts the turn without executing`, async () => {
-			const controller = new ApprovalPresentationController();
+			const runtime = new ApprovalPresentationRuntime();
 			const terminal = createTerminal();
-			const instance = renderInteractiveApp(controller, terminal);
+			const instance = renderInteractiveApp(runtime, terminal);
 			const exit = instance.waitUntilExit();
 			try {
 				await settle(instance);
@@ -524,10 +639,10 @@ describe('presentation approval lifecycle', () => {
 				if (shutdown === 'unmount') instance.unmount();
 				else terminal.stdin.write('\x03');
 				await expectExit(exit);
-				expect(controller.turnSignal?.aborted).toBe(true);
-				expect(controller.executions).toBe(0);
-				expect(controller.handler).toBeNull();
-				expect(controller.disposals).toBe(1);
+				expect(runtime.turnSignal?.aborted).toBe(true);
+				expect(runtime.executions).toBe(0);
+				expect(runtime.handler).toBeNull();
+				expect(runtime.disposals).toBe(1);
 			} finally {
 				instance.unmount();
 				instance.cleanup();
@@ -537,9 +652,9 @@ describe('presentation approval lifecycle', () => {
 	}
 
 	test('Escape while approval is visible keeps explicit denial interaction', async () => {
-		const controller = new ApprovalPresentationController();
+		const runtime = new ApprovalPresentationRuntime();
 		const terminal = createTerminal();
-		const instance = renderInteractiveApp(controller, terminal);
+		const instance = renderInteractiveApp(runtime, terminal);
 		try {
 			await settle(instance);
 			terminal.stdin.write('edit');
@@ -548,8 +663,8 @@ describe('presentation approval lifecycle', () => {
 			await waitFor(() => terminal.output().includes('? APPROVAL'));
 			terminal.stdin.write('\u001B');
 			await waitFor(() => terminal.output().includes('denied'));
-			expect(controller.turnSignal?.aborted).toBe(false);
-			expect(controller.executions).toBe(0);
+			expect(runtime.turnSignal?.aborted).toBe(false);
+			expect(runtime.executions).toBe(0);
 		} finally {
 			instance.unmount();
 			await instance.waitUntilExit();
@@ -559,7 +674,7 @@ describe('presentation approval lifecycle', () => {
 	});
 });
 
-class StorageFailurePresentationController extends FakePresentationController {
+class StorageFailurePresentationRuntime extends FakePresentationRuntime {
 	readonly pendingCompletion = createDeferred<void>();
 	readonly finishCompletion = createDeferred<void>();
 	readonly store = new InMemorySessionStore();
@@ -608,7 +723,7 @@ class StorageFailurePresentationController extends FakePresentationController {
 		});
 	}
 	override async *runTurn(input: TurnInput) {
-		this.turnSignal = input.signal;
+		this.turnSignal = input.signal ?? null;
 		yield* this.loop.run(input);
 	}
 	override subscribeSessionEvents(listener: (event: AgentEvent) => void) {
@@ -617,27 +732,25 @@ class StorageFailurePresentationController extends FakePresentationController {
 }
 
 test('UI displays original storage failure after mutation even when cancellation is also pending', async () => {
-	const controller = new StorageFailurePresentationController();
+	const runtime = new StorageFailurePresentationRuntime();
 	const terminal = createTerminal();
-	const instance = renderInteractiveApp(controller, terminal);
+	const instance = renderInteractiveApp(runtime, terminal);
 	try {
 		await settle(instance);
 		terminal.stdin.write('mutate');
 		await settle(instance);
 		terminal.stdin.write('\r');
-		await controller.pendingCompletion.promise;
+		await runtime.pendingCompletion.promise;
 		terminal.stdin.write('\u001B');
-		await waitFor(() => controller.turnSignal?.aborted === true);
-		controller.finishCompletion.resolve();
+		await waitFor(() => runtime.turnSignal?.aborted === true);
+		runtime.finishCompletion.resolve();
 		await waitFor(() => terminal.output().includes('actual storage error after mutation'));
 		expect(terminal.output()).not.toContain('The response was cancelled.');
-		expect(controller.executor.receivedRequests).toHaveLength(1);
-		expect(controller.model.receivedInputs).toHaveLength(1);
-		expect(controller.store.events.filter((event) => event.type === 'tool.call.failed')).toEqual(
-			[],
-		);
+		expect(runtime.executor.receivedRequests).toHaveLength(1);
+		expect(runtime.model.receivedInputs).toHaveLength(1);
+		expect(runtime.store.events.filter((event) => event.type === 'tool.call.failed')).toEqual([]);
 	} finally {
-		controller.finishCompletion.resolve();
+		runtime.finishCompletion.resolve();
 		instance.unmount();
 		await instance.waitUntilExit();
 		instance.cleanup();

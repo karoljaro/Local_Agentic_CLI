@@ -5,7 +5,7 @@ import { useApp, useInput } from 'ink';
 import type { ListedModel } from '@/application/ports/ModelCatalogPort';
 import type { ToolApprovalRequest } from '@/application/use-cases/RunAgentTurn';
 import type { SessionId } from '@/domain/Ids';
-import type { PresentationController } from '../adapters/PresentationController';
+import type { PresentationRuntime } from '../types';
 import { parseCommand } from '../commands/commands';
 import type { ResumeChoice } from '../screens/ResumeScreen';
 import { buildSessionOption } from '../state/sessionSummary';
@@ -16,15 +16,15 @@ import { useComposer } from './useComposer';
 const EMPTY_MODEL_SELECTION: ModelSelectionState = { status: 'idle', items: [] };
 const EMPTY_SESSION_SELECTION: SessionSelectionState = { status: 'idle', items: [] };
 
-export const usePresentation = (controller: PresentationController, initialMode: StartupMode) => {
+export const usePresentation = (runtime: PresentationRuntime, initialMode: StartupMode) => {
 	const { exit } = useApp();
 	const [screen, setScreen] = useState<AppScreen>(() =>
 		initialMode === 'resume' ? 'resume' : 'chat',
 	);
 	const [hasChat, setHasChat] = useState(initialMode === 'new');
-	const [sessionId, setSessionId] = useState(() => controller.createSessionId());
+	const [sessionId, setSessionId] = useState(() => runtime.createSessionId());
 	const [restoreSessionModel, setRestoreSessionModel] = useState(false);
-	const [modelName, setModelName] = useState(() => controller.getModelName());
+	const [modelName, setModelName] = useState(() => runtime.getModelName());
 	const [modelSelection, setModelSelection] = useState<ModelSelectionState>(EMPTY_MODEL_SELECTION);
 	const [sessionSelection, setSessionSelection] =
 		useState<SessionSelectionState>(EMPTY_SESSION_SELECTION);
@@ -37,7 +37,7 @@ export const usePresentation = (controller: PresentationController, initialMode:
 	} | null>(null);
 	const onModelNameChange = useCallback((nextModelName: string) => setModelName(nextModelName), []);
 	const chat = useChatSession({
-		controller,
+		runtime,
 		modelName,
 		onModelNameChange,
 		restoreSessionModel,
@@ -46,11 +46,11 @@ export const usePresentation = (controller: PresentationController, initialMode:
 
 	useEffect(() => {
 		const warmupController = new AbortController();
-		void controller.listModels(warmupController.signal).catch(() => {
+		void runtime.listModels(warmupController.signal).catch(() => {
 			// Opening the model screen reports the actionable error.
 		});
 		return () => warmupController.abort();
-	}, [controller]);
+	}, [runtime]);
 
 	useEffect(() => {
 		if (screen !== 'models') {
@@ -59,11 +59,11 @@ export const usePresentation = (controller: PresentationController, initialMode:
 
 		const request = new AbortController();
 		setModelSelection({ status: 'loading', items: [] });
-		void controller
+		void runtime
 			.listModels(request.signal)
 			.then((result) => {
 				if (!request.signal.aborted) {
-					setModelSelection({ status: 'idle', items: result.models });
+					setModelSelection({ status: 'idle', items: result });
 				}
 			})
 			.catch((caughtError: unknown) => {
@@ -77,7 +77,7 @@ export const usePresentation = (controller: PresentationController, initialMode:
 			});
 
 		return () => request.abort();
-	}, [controller, screen]);
+	}, [runtime, screen]);
 
 	useEffect(() => {
 		if (screen !== 'resume') {
@@ -88,11 +88,11 @@ export const usePresentation = (controller: PresentationController, initialMode:
 		setSessionSelection({ status: 'loading', items: [] });
 		const load = async (): Promise<void> => {
 			try {
-				const sessions = await controller.listSessions();
+				const sessions = await runtime.listSessions();
 				const options = await Promise.all(
 					sessions.map(async ({ sessionId: listedSessionId }) => {
 						try {
-							const events = await controller.readSessionPreviewEvents(listedSessionId);
+							const events = await runtime.readSessionPreviewEvents(listedSessionId);
 							return buildSessionOption(listedSessionId, events);
 						} catch {
 							return { sessionId: listedSessionId };
@@ -122,11 +122,11 @@ export const usePresentation = (controller: PresentationController, initialMode:
 		return () => {
 			cancelled = true;
 		};
-	}, [controller, screen]);
+	}, [runtime, screen]);
 
 	useEffect(() => {
 		let disposed = false;
-		const unregister = controller.setApprovalHandler((request, { signal }) => {
+		const unregister = runtime.setApprovalHandler((request, { signal }) => {
 			return new Promise<boolean>((resolve, reject) => {
 				throwIfAborted(signal);
 				if (disposed) throw abortError();
@@ -162,7 +162,7 @@ export const usePresentation = (controller: PresentationController, initialMode:
 			unregister();
 			approvalResolveRef.current?.cancel();
 		};
-	}, [controller]);
+	}, [runtime]);
 
 	const resolveApproval = useCallback(
 		(approved: boolean) => {
@@ -177,7 +177,7 @@ export const usePresentation = (controller: PresentationController, initialMode:
 			setCommandBusy(true);
 			const request = new AbortController();
 			try {
-				const selected = await controller.switchModel(nextModelName, request.signal);
+				const selected = await runtime.switchModel(nextModelName, request.signal);
 				setModelName(selected);
 				setRestoreSessionModel(false);
 				chat.appendSystemMessage(`Model switched to ${selected}.`);
@@ -189,7 +189,7 @@ export const usePresentation = (controller: PresentationController, initialMode:
 				setCommandBusy(false);
 			}
 		},
-		[chat, controller],
+		[chat, runtime],
 	);
 
 	const submit = useCallback(
@@ -249,14 +249,14 @@ export const usePresentation = (controller: PresentationController, initialMode:
 	const selectSession = useCallback(
 		(choice: ResumeChoice) => {
 			const selectedSessionId: SessionId =
-				choice.type === 'new' ? controller.createSessionId() : choice.session.sessionId;
+				choice.type === 'new' ? runtime.createSessionId() : choice.session.sessionId;
 			setRestoreSessionModel(choice.type === 'existing');
 			setSessionId(selectedSessionId);
 			setHasChat(true);
 			composer.clear();
 			setScreen('chat');
 		},
-		[composer, controller],
+		[composer, runtime],
 	);
 
 	const cancelScreen = useCallback(() => {

@@ -1,3 +1,4 @@
+import type { Runtime } from '@/composition/createRuntime';
 import type { ListedModel } from '@/application/ports/ModelCatalogPort';
 import type { ToolApprovalRequest } from '@/application/use-cases/RunAgentTurn';
 import type { EventId, SessionId, ToolCallId } from '@/domain/Ids';
@@ -52,3 +53,22 @@ export type CompletedAssistant = {
 	eventId: EventId;
 	content: string;
 };
+
+// Presentation consumes the real composition contract without a parallel method surface.
+export type PresentationRuntime = Pick<
+	Runtime,
+	| 'createSessionId'
+	| 'getModelName'
+	| 'listModels'
+	| 'listSessions'
+	| 'listSessionEvents'
+	| 'readSessionPreviewEvents'
+	| 'runTurn'
+	| 'setApprovalHandler'
+	| 'subscribeSessionEvents'
+	| 'switchModel'
+	| 'workspacePath'
+>;
+export type TurnInput = Parameters<Runtime['runTurn']>[0];
+export type TurnOutput = ReturnType<Runtime['runTurn']>;
+export type TurnDelta = TurnOutput extends AsyncIterable<infer Delta> ? Delta : never;
