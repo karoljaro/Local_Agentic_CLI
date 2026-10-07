@@ -1,6 +1,6 @@
 import type { AgentEvent } from '@/domain/AgentEvent';
 import type { SessionId } from '@/domain/Ids';
-import type { SessionStorePort } from '../ports/SessionStorePort';
+import type { SessionServicePort } from '../ports/SessionServicePort';
 
 export type ListedSessionEvent = AgentEvent;
 
@@ -13,17 +13,17 @@ type ListSessionEventsResult = {
 };
 
 type ListSessionEventsDependencies = {
-	sessionStore: SessionStorePort;
+	sessionStore: SessionServicePort;
 };
 
 export class ListSessionEvents {
 	constructor(private readonly dependencies: ListSessionEventsDependencies) {}
 
 	async list(input: ListSessionEventsInput): Promise<ListSessionEventsResult> {
-		const events = await this.dependencies.sessionStore.readSessionEvents(input.sessionId);
+		const events = await this.dependencies.sessionStore.activateSession(input.sessionId);
 
 		return {
-			events: events.filter((event) => event.sessionId === input.sessionId),
+			events,
 		};
 	}
 }

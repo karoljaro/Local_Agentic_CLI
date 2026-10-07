@@ -6,7 +6,7 @@ import {
 	InMemoryAgentMetrics,
 	type AgentMetricsSnapshot,
 } from '@/application/services/InMemoryAgentMetrics';
-import { SessionStateCache } from '@/application/services/SessionStateCache';
+import { SessionService } from '@/application/services/SessionService';
 import { ListSessionEvents } from '@/application/use-cases/ListSessionEvents';
 import { ListSessions } from '@/application/use-cases/ListSessions';
 import { RunAgentTurn, type ToolApprovalHandler } from '@/application/use-cases/RunAgentTurn';
@@ -22,7 +22,6 @@ import { PerformanceMonotonicClock } from '@/infrastructure/runtime/PerformanceM
 import { TemporalClock } from '@/infrastructure/runtime/TemporalClock';
 import type { SessionId } from '@/domain/Ids';
 import type { AgentEvent } from '@/domain/AgentEvent';
-import { PublishingSessionStore } from './PublishingSessionStore';
 
 export type { RuntimeListModelsOptions } from '@/composition/model/OllamaModelRuntime';
 export type { AgentMetricsSnapshot } from '@/application/services/InMemoryAgentMetrics';
@@ -30,6 +29,7 @@ export type { AgentMetricsSnapshot } from '@/application/services/InMemoryAgentM
 export type Runtime = {
 	runAgentTurn: RunAgentTurn;
 	listSessionEvents: ListSessionEvents;
+	readSessionPreviewEvents: (sessionId: SessionId) => Promise<AgentEvent[]>;
 	listSessions: ListSessions;
 	idGenerator: IdGeneratorPort;
 	workspacePath: string;
@@ -43,8 +43,7 @@ export type Runtime = {
 };
 
 export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
-	const publishingSessionStore = new PublishingSessionStore(new JsonlSessionStore());
-	const sessionStore = new SessionStateCache(publishingSessionStore);
+	const sessionStore = new SessionService(new JsonlSessionStore());
 	const modelRuntime = new OllamaModelRuntime(config);
 	const idGenerator = new BunUuidV7IdGenerator();
 	const clock = new TemporalClock();
@@ -69,6 +68,7 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 	return {
 		idGenerator,
 		listSessionEvents,
+		readSessionPreviewEvents: (sessionId) => sessionStore.readPreviewEvents(sessionId),
 		listSessions,
 		workspacePath: process.cwd(),
 		getModelName: () => modelRuntime.getModelName(),
@@ -76,7 +76,7 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 		listModels: (options) => modelRuntime.listModels(options),
 		unloadCurrentModel: (input) => modelRuntime.unload(input),
 		switchModel: (modelName) => modelRuntime.switchModel(modelName),
-		subscribeSessionEvents: (listener) => publishingSessionStore.subscribe(listener),
+		subscribeSessionEvents: (listener) => sessionStore.subscribe(listener),
 		setToolApprovalHandler: (handler) => {
 			currentToolApprovalHandler = handler;
 

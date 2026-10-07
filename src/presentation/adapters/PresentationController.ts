@@ -22,6 +22,7 @@ export interface PresentationController {
 	getModelName(): string;
 	listModels(signal: AbortSignal): Promise<ListModelsResult>;
 	listSessionEvents(sessionId: SessionId): Promise<AgentEvent[]>;
+	readSessionPreviewEvents(sessionId: SessionId): Promise<AgentEvent[]>;
 	listSessions(): Promise<StoredSession[]>;
 	runTurn(input: TurnInput): AsyncIterable<TurnDelta>;
 	setApprovalHandler(handler: ToolApprovalHandler): () => void;
@@ -51,6 +52,10 @@ export class RuntimePresentationController implements PresentationController {
 	async listSessionEvents(sessionId: SessionId): Promise<AgentEvent[]> {
 		const result = await this.runtime.listSessionEvents.list({ sessionId });
 		return result.events;
+	}
+
+	readSessionPreviewEvents(sessionId: SessionId): Promise<AgentEvent[]> {
+		return this.runtime.readSessionPreviewEvents(sessionId);
 	}
 
 	async listSessions(): Promise<StoredSession[]> {

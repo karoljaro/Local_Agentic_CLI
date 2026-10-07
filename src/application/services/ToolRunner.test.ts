@@ -1,3 +1,4 @@
+import { SessionService } from './SessionService';
 import { describe, expect, test } from 'bun:test';
 
 import type { ClockPort } from '@/application/ports/ClockPort';
@@ -78,7 +79,7 @@ describe('ToolRunner', () => {
 			},
 		);
 		const runner = new ToolRunner({
-			sessionStore: new InMemorySessionStore(),
+			sessionStore: new SessionService(new InMemorySessionStore()),
 			clock: new FixedClock(),
 			idGenerator,
 			toolExecutor,
@@ -101,7 +102,7 @@ describe('ToolRunner', () => {
 			output: { matches: ['result'] },
 		}));
 		const dependencies = {
-			sessionStore,
+			sessionStore: new SessionService(sessionStore),
 			clock: new FixedClock(),
 			idGenerator,
 			toolExecutor,
@@ -160,7 +161,7 @@ const harness = (overrides: Partial<ToolRunnerDependencies> = {}, denyByDefault 
 	);
 	let id = 0;
 	const runner = new ToolRunner({
-		sessionStore: store,
+		sessionStore: new SessionService(store),
 		toolExecutor: executor,
 		clock: { now: () => asISODateTime('2026-10-07T12:00:00Z') },
 		idGenerator: {

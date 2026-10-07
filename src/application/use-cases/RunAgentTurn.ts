@@ -13,10 +13,9 @@ import type { AgentMetricsPort, AgentTurnMetricsPort } from '../ports/AgentMetri
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
 import type { ModelChatInput, ModelPort } from '../ports/ModelPort';
 import type { MonotonicClockPort } from '../ports/MonotonicClockPort';
-import type { SessionStorePort } from '../ports/SessionStorePort';
+import type { SessionServicePort } from '../ports/SessionServicePort';
 import type { ToolExecutorPort } from '../ports/ToolExecutorPort';
 import { ContextBudgetExceededError, type ContextBuilder } from '../services/ContextBuilder';
-import { SessionStateCache } from '../services/SessionStateCache';
 import {
 	ToolRunner,
 	type PersistedModelToolCall,
@@ -44,7 +43,7 @@ type StreamedModelResponse = {
 };
 
 export type RunAgentTurnDependencies = {
-	sessionStore: SessionStorePort;
+	sessionStore: SessionServicePort;
 	model: ModelPort;
 	contextBuilder: ContextBuilder;
 	clock: ClockPort;
@@ -56,14 +55,7 @@ export type RunAgentTurnDependencies = {
 };
 
 export class AgentLoop {
-	private readonly sessionStore: SessionStateCache;
-
-	constructor(private readonly dependencies: RunAgentTurnDependencies) {
-		this.sessionStore =
-			dependencies.sessionStore instanceof SessionStateCache
-				? dependencies.sessionStore
-				: new SessionStateCache(dependencies.sessionStore);
-	}
+	constructor(private readonly dependencies: RunAgentTurnDependencies) {}
 
 	async *run(input: RunAgentTurnInput): AsyncIterable<AgentTurnChunk> {
 		if (input.prompt.trim().length === 0) {
@@ -97,10 +89,12 @@ export class AgentLoop {
 		};
 		this.dependencies.contextBuilder.assertPromptFits(prompt, promptEvent.messageId);
 
-		await this.sessionStore.appendSessionEvent(promptEvent);
+		await this.dependencies.sessionStore.activateSession(sessionId);
+		throwIfAborted(signal);
+		await this.dependencies.sessionStore.appendSessionEvent(promptEvent);
 		throwIfAborted(signal);
 
-		const state = await this.sessionStore.readSessionState(sessionId);
+		const state = await this.dependencies.sessionStore.readSessionState(sessionId);
 		throwIfAborted(signal);
 		const { messages } = this.dependencies.contextBuilder.build(state);
 
@@ -143,7 +137,7 @@ export class AgentLoop {
 		turnMetrics: AgentTurnMetricsPort | undefined,
 	): AsyncIterable<AgentTurnChunk> {
 		const toolRunner = new ToolRunner({
-			sessionStore: this.sessionStore,
+			sessionStore: this.dependencies.sessionStore,
 			clock: this.dependencies.clock,
 			idGenerator: this.dependencies.idGenerator,
 			toolExecutor,
@@ -297,7 +291,7 @@ export class AgentLoop {
 			content,
 		};
 
-		await this.sessionStore.appendSessionEvent(event);
+		await this.dependencies.sessionStore.appendSessionEvent(event);
 	}
 
 	private async appendAssistantToolCallsCompleted(
@@ -315,7 +309,7 @@ export class AgentLoop {
 			toolCalls,
 		};
 
-		await this.sessionStore.appendSessionEvent(event);
+		await this.dependencies.sessionStore.appendSessionEvent(event);
 
 		return event;
 	}
@@ -334,7 +328,7 @@ export class AgentLoop {
 			},
 		};
 
-		await this.sessionStore.appendSessionEvent(event);
+		await this.dependencies.sessionStore.appendSessionEvent(event);
 	}
 
 	private async tryAppendAgentError(

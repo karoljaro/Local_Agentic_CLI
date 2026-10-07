@@ -1,3 +1,4 @@
+import { SessionService } from '@/application/services/SessionService';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createLocalToolExecutor } from '@/composition/factories/createLocalToolExecutor';
@@ -307,7 +308,7 @@ const createRunAgentTurnHarness = ({
 	const sessionStore = new InMemorySessionStore();
 	const sessionId = asSessionId('session-1');
 	const dependencies: RunAgentTurnDependencies = {
-		sessionStore,
+		sessionStore: new SessionService(sessionStore),
 		model,
 		contextBuilder: new ContextBuilder({
 			systemPrompt: 'You are a local coding agent.',
@@ -532,6 +533,7 @@ describe('RunAgentTurn', () => {
 			collectAsyncIterable(useCase.run({ sessionId, prompt: 'x'.repeat(300) })),
 		).rejects.toThrow('Current turn exceeds the model context budget');
 		expect(sessionStore.events).toEqual([]);
+		expect(sessionStore.readCount).toBe(0);
 		expect(model.receivedInputs).toEqual([]);
 	});
 
@@ -1613,7 +1615,7 @@ describe('RunAgentTurn lifecycle regressions', () => {
 					textResponse('should never be requested'),
 				]);
 				const loop = new RunAgentTurn({
-					sessionStore: store,
+					sessionStore: new SessionService(store),
 					model,
 					toolExecutor: executor,
 					clock: new FixedClock(),
@@ -1791,7 +1793,7 @@ test('failure-event storage failure stops subsequent tools and model rounds with
 		textResponse('never'),
 	]);
 	const loop = new RunAgentTurn({
-		sessionStore: store,
+		sessionStore: new SessionService(store),
 		model,
 		toolExecutor: executor,
 		clock: new FixedClock(),
@@ -1819,4 +1821,41 @@ test('failure-event storage failure stops subsequent tools and model rounds with
 			(message) => message.role,
 		),
 	).toEqual(['user']);
+});
+
+test('cancellation during activation prevents prompt persistence and model work', async () => {
+	const entered = createDeferred<void>();
+	const release = createDeferred<void>();
+	const store = new InMemorySessionStore();
+	const read = store.readSessionEvents.bind(store);
+	store.readSessionEvents = async (id) => {
+		entered.resolve();
+		await release.promise;
+		return read(id);
+	};
+	const controller = new AbortController();
+	const model = new ScriptedModel([textResponse('unused')]);
+	const service = new SessionService(store);
+	const loop = new RunAgentTurn({
+		sessionStore: service,
+		model,
+		clock: new FixedClock(),
+		idGenerator: new SequenceIdGenerator(),
+		contextBuilder: new ContextBuilder({ systemPrompt: 'test' }),
+	});
+	const outcome = collectAsyncIterable(
+		loop.run({
+			sessionId: asSessionId('session-1'),
+			prompt: 'hello',
+			signal: controller.signal,
+		}),
+	).catch((error: unknown) => error);
+	await entered.promise;
+	controller.abort();
+	release.resolve();
+	expect(await outcome).toHaveProperty('name', 'AbortError');
+	expect(store.events).toEqual([]);
+	expect(model.receivedInputs).toEqual([]);
+	await service.activateSession(asSessionId('session-1'));
+	expect(store.readCount).toBe(1);
 });

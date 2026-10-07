@@ -1,3 +1,4 @@
+import { SessionService } from '@/application/services/SessionService';
 import { describe, expect, test } from 'bun:test';
 
 import { asSessionId } from '@/domain/Ids';
@@ -12,7 +13,7 @@ describe('ListSessions', () => {
 			{ sessionId: asSessionId('session-1') },
 		];
 		const useCase = new ListSessions({
-			sessionStore: new InMemorySessionStore({ sessions }),
+			sessionStore: new SessionService(new InMemorySessionStore({ sessions })),
 		});
 
 		const result = await useCase.list();

@@ -11,7 +11,7 @@ import type { AgentTurnMetricsPort } from '../ports/AgentMetricsPort';
 import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
 import type { MonotonicClockPort } from '../ports/MonotonicClockPort';
-import type { SessionStorePort } from '../ports/SessionStorePort';
+import type { SessionServicePort } from '../ports/SessionServicePort';
 import type {
 	ToolExecutionOptions,
 	ToolExecutionResult,
@@ -40,7 +40,7 @@ export type ToolExecutionBatchResult = {
 };
 
 export type ToolRunnerDependencies = {
-	sessionStore: SessionStorePort;
+	sessionStore: SessionServicePort;
 	clock: ClockPort;
 	idGenerator: IdGeneratorPort;
 	toolExecutor: ToolExecutorPort;

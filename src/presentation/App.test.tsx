@@ -1,4 +1,6 @@
 import { usePresentation } from './hooks/usePresentation';
+import type { StoredSession } from '@/application/ports/SessionStorePort';
+import { promptSubmittedEvent } from '@/test-support/AgentEventFixtures';
 import { throwIfAborted } from '@/application/services/cancellation';
 import {
 	RunAgentTurn,
@@ -10,7 +12,7 @@ import { createDeferred } from '@/test-support/createDeferred';
 import { InMemorySessionStore } from '@/test-support/InMemorySessionStore';
 import { ScriptedModel } from '@/test-support/ScriptedModel';
 import { RecordingToolExecutor } from '@/test-support/RecordingToolExecutor';
-import { PublishingSessionStore } from '@/composition/PublishingSessionStore';
+import { SessionService } from '@/application/services/SessionService';
 import { ContextBuilder } from '@/application/services/ContextBuilder';
 import { describe, expect, test } from 'bun:test';
 import { PassThrough } from 'node:stream';
@@ -22,7 +24,14 @@ import type {
 	TurnDelta,
 	TurnInput,
 } from './adapters/PresentationController';
-import { asSessionId, asToolCallId, asISODateTime, asEventId, asMessageId } from '@/domain/Ids';
+import {
+	asSessionId,
+	asToolCallId,
+	asISODateTime,
+	asEventId,
+	asMessageId,
+	type SessionId,
+} from '@/domain/Ids';
 
 class FakePresentationController implements PresentationController {
 	readonly workspacePath = '/workspace';
@@ -39,11 +48,15 @@ class FakePresentationController implements PresentationController {
 		return { models: [{ name: 'current-model' }, { name: 'other-model' }] };
 	}
 
-	async listSessionEvents() {
+	async listSessionEvents(_sessionId: SessionId): Promise<AgentEvent[]> {
 		return [];
 	}
 
-	async listSessions() {
+	async readSessionPreviewEvents(_sessionId: SessionId): Promise<AgentEvent[]> {
+		return [];
+	}
+
+	async listSessions(): Promise<StoredSession[]> {
 		return [];
 	}
 
@@ -86,6 +99,53 @@ class AbortablePresentationController extends FakePresentationController {
 }
 
 describe('App interaction', () => {
+	test('resume browsing uses previews; selecting a session activates it and restores history', async () => {
+		const savedId = asSessionId('saved-session');
+		class ResumeController extends FakePresentationController {
+			readonly service = new SessionService(
+				new InMemorySessionStore({
+					events: [promptSubmittedEvent({ sessionId: savedId, prompt: 'Saved conversation' })],
+					sessions: [{ sessionId: savedId }],
+				}),
+			);
+			readonly activations: SessionId[] = [];
+			readonly previews: SessionId[] = [];
+			override async listSessions() {
+				return this.service.listSessions();
+			}
+			override async listSessionEvents(id: SessionId) {
+				this.activations.push(id);
+				return this.service.activateSession(id);
+			}
+			override async readSessionPreviewEvents(id: SessionId) {
+				this.previews.push(id);
+				return this.service.readPreviewEvents(id);
+			}
+		}
+		const controller = new ResumeController();
+		const terminal = createTerminal();
+		const instance = renderInteractiveApp(controller, terminal, 'resume');
+		try {
+			await settle(instance);
+			expect(controller.previews).toEqual([savedId]);
+			expect(controller.activations).toEqual([asSessionId('session-1')]);
+			expect(terminal.output()).toContain('Saved conversation');
+			terminal.stdin.write('\x1B[B');
+			await settle(instance);
+			terminal.stdin.write('\r');
+			await waitFor(() => controller.activations.includes(savedId));
+			await settle(instance);
+			expect(controller.activations).toEqual([asSessionId('session-1'), savedId]);
+			expect(terminal.output()).toContain('Saved conversation');
+			expect((await controller.service.readSessionState(savedId)).messages).toHaveLength(1);
+		} finally {
+			instance.unmount();
+			await instance.waitUntilExit();
+			instance.cleanup();
+			terminal.stdin.end();
+		}
+	});
+
 	test('shows a guard without mounting interactive hooks for piped input', () => {
 		const output = Bun.stripANSI(
 			renderToString(<App controller={new FakePresentationController()} />),
@@ -188,8 +248,9 @@ describe('App interaction', () => {
 const renderInteractiveApp = (
 	controller: PresentationController,
 	terminal: ReturnType<typeof createTerminal>,
+	initialMode: 'new' | 'resume' = 'new',
 ) =>
-	render(<App controller={controller} />, {
+	render(<App controller={controller} initialMode={initialMode} />, {
 		stdin: terminal.stdin,
 		stdout: terminal.stdout,
 		stderr: terminal.stderr,
@@ -502,7 +563,7 @@ class StorageFailurePresentationController extends FakePresentationController {
 	readonly pendingCompletion = createDeferred<void>();
 	readonly finishCompletion = createDeferred<void>();
 	readonly store = new InMemorySessionStore();
-	readonly publishing = new PublishingSessionStore(this.store);
+	readonly sessionService = new SessionService(this.store);
 	readonly model = new ScriptedModel([
 		[
 			{
@@ -533,7 +594,7 @@ class StorageFailurePresentationController extends FakePresentationController {
 		};
 		let id = 0;
 		this.loop = new RunAgentTurn({
-			sessionStore: this.publishing,
+			sessionStore: this.sessionService,
 			model: this.model,
 			toolExecutor: this.executor,
 			contextBuilder: new ContextBuilder({ systemPrompt: 'test' }),
@@ -551,7 +612,7 @@ class StorageFailurePresentationController extends FakePresentationController {
 		yield* this.loop.run(input);
 	}
 	override subscribeSessionEvents(listener: (event: AgentEvent) => void) {
-		return this.publishing.subscribe(listener);
+		return this.sessionService.subscribe(listener);
 	}
 }
 

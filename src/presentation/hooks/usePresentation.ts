@@ -92,7 +92,7 @@ export const usePresentation = (controller: PresentationController, initialMode:
 				const options = await Promise.all(
 					sessions.map(async ({ sessionId: listedSessionId }) => {
 						try {
-							const events = await controller.listSessionEvents(listedSessionId);
+							const events = await controller.readSessionPreviewEvents(listedSessionId);
 							return buildSessionOption(listedSessionId, events);
 						} catch {
 							return { sessionId: listedSessionId };
