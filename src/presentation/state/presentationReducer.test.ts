@@ -114,3 +114,38 @@ test('loading an interrupted persisted prefix does not revive transient active t
 	expect(state.activeTools).toEqual([]);
 	expect(state.history).toEqual([]);
 });
+
+test('turn.streaming is idempotent and durable assistant round boundaries enter waiting', () => {
+	let state = chatReducer(createChatState(asSessionId('session-1')), { type: 'turn.started' });
+	for (const event of [
+		assistantToolCallsCompletedEvent({ content: 'intermediate' }),
+		assistantMessageCompletedEvent({ content: 'final' }),
+		assistantMessageCompletedEvent({ id: asEventId('empty'), content: '' }),
+	]) {
+		state = chatReducer(state, { type: 'turn.streaming' });
+		expect(chatReducer(state, { type: 'turn.streaming' })).toBe(state);
+		state = chatReducer(state, { type: 'engine.event', event });
+		expect(state.turnStatus).toBe('waiting');
+	}
+	expect(state.history.map((entry) => entry.content)).toEqual(['intermediate', 'final']);
+	const finished = chatReducer(state, { type: 'turn.finished' });
+	expect(finished.turnStatus).toBe('idle');
+	expect(finished.history).toBe(state.history);
+});
+
+test('durable completions/errors use durable IDs once and match replay after transient finish', () => {
+	const sessionId = asSessionId('session-1');
+	const events = [
+		assistantToolCallsCompletedEvent({ content: 'intermediate' }),
+		assistantMessageCompletedEvent({ content: 'final' }),
+		agentErrorOccurredEvent(),
+	];
+	let state = chatReducer(createChatState(sessionId), { type: 'turn.started' });
+	for (const event of events) {
+		state = chatReducer(state, { type: 'engine.event', event });
+		state = chatReducer(state, { type: 'engine.event', event });
+	}
+	state = chatReducer(state, { type: 'turn.finished' });
+	expect(state.history.map((entry) => entry.id)).toEqual(events.map((event) => String(event.id)));
+	expect(state.history).toEqual(reduceSessionEvents(sessionId, events).history);
+});

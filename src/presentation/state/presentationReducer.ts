@@ -11,7 +11,7 @@ export type ChatAction =
 	| { type: 'engine.event'; event: AgentEvent }
 	| { type: 'turn.started' }
 	| { type: 'turn.streaming' }
-	| { type: 'turn.finished'; assistant?: HistoryEntry }
+	| { type: 'turn.finished' }
 	| { type: 'turn.failed'; entries: HistoryEntry[] }
 	| { type: 'history.append'; entry: HistoryEntry };
 
@@ -54,9 +54,6 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
 				...state,
 				activeTools: [],
 				turnStatus: 'idle',
-				...(action.assistant === undefined
-					? {}
-					: { history: appendUnique(state.history, action.assistant) }),
 			};
 		case 'turn.failed':
 			return {
@@ -97,21 +94,13 @@ const applyEvent = (state: ChatState, event: AgentEvent): ChatState => {
 				content: event.prompt,
 			});
 		case 'assistant.message.completed':
-			return event.content.trim().length === 0
-				? state
-				: withHistory(state, {
-						id: String(event.id),
-						kind: 'assistant',
-						content: event.content,
-					});
-		case 'assistant.tool_calls.completed':
-			return event.content.trim().length === 0
-				? state
-				: withHistory(state, {
-						id: String(event.id),
-						kind: 'assistant',
-						content: event.content,
-					});
+		case 'assistant.tool_calls.completed': {
+			const committed =
+				event.content.trim().length === 0
+					? state
+					: withHistory(state, { id: String(event.id), kind: 'assistant', content: event.content });
+			return { ...committed, turnStatus: state.turnStatus === 'idle' ? 'idle' : 'waiting' };
+		}
 		case 'tool.call.requested':
 			return withActiveTool(state, {
 				id: event.toolCallId,

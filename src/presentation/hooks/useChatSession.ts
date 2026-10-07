@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 
-import type { AgentEvent, AssistantMessageCompleted } from '@/domain/AgentEvent';
-import type { SessionId } from '@/domain/Ids';
+import { isAbortError, throwIfAborted } from '@/application/services/cancellation';
+import type { EventId, SessionId } from '@/domain/Ids';
 import type { PresentationRuntime } from '../types';
 import { StreamBuffer } from '../state/StreamBuffer';
 import { chatReducer, createChatState, getSessionModelName } from '../state/presentationReducer';
@@ -15,6 +15,17 @@ type UseChatSessionOptions = {
 	sessionId: SessionId;
 };
 
+type SelectedSession = {
+	sessionId: SessionId;
+	appliedEventIds: Set<EventId>;
+};
+
+type ActiveTurn = {
+	selection: SelectedSession;
+	controller: AbortController;
+	durableErrorDisplayed: boolean;
+};
+
 export const useChatSession = ({
 	runtime,
 	modelName,
@@ -24,16 +35,27 @@ export const useChatSession = ({
 }: UseChatSessionOptions) => {
 	const [state, dispatch] = useReducer(chatReducer, sessionId, createChatState);
 	const stream = useMemo(() => new StreamBuffer(), []);
-	const activeSessionRef = useRef(sessionId);
+	const selection = useMemo<SelectedSession>(
+		() => ({ sessionId, appliedEventIds: new Set() }),
+		[runtime, sessionId],
+	);
+	const selectedSessionRef = useRef(selection);
+	const mountedRef = useRef(true);
 	const modelNameRef = useRef(modelName);
-	const activeTurnRef = useRef(false);
-	const activeTurnControllerRef = useRef<AbortController | null>(null);
-	const completedAssistantRef = useRef<AssistantMessageCompleted | null>(null);
-	const activeAgentErrorRef = useRef<(AgentEvent & { type: 'agent.error' }) | null>(null);
+	const activeTurnRef = useRef<ActiveTurn | null>(null);
+	const subscriptionRef = useRef<(() => void) | null>(null);
 	const localEntryIndexRef = useRef(0);
-	activeSessionRef.current = sessionId;
+	selectedSessionRef.current = selection;
 	modelNameRef.current = modelName;
 
+	const isSelected = useCallback(
+		(expected: SelectedSession) => mountedRef.current && selectedSessionRef.current === expected,
+		[],
+	);
+	const isActiveTurn = useCallback(
+		(turn: ActiveTurn) => isSelected(turn.selection) && activeTurnRef.current === turn,
+		[isSelected],
+	);
 	const nextLocalId = useCallback(
 		(prefix: string): string => {
 			const index = localEntryIndexRef.current;
@@ -43,72 +65,113 @@ export const useChatSession = ({
 		[sessionId],
 	);
 
+	// Only uncommitted current-round output can become a local partial.
+	const takePartial = useCallback((): HistoryEntry[] => {
+		const content = stream.flush();
+		stream.reset();
+		return content.trim().length === 0
+			? []
+			: [{ id: nextLocalId('partial-assistant'), kind: 'assistant', content }];
+	}, [nextLocalId, stream]);
+
+	const subscribeEvents = useCallback(
+		(turn: ActiveTurn | null) => {
+			subscriptionRef.current?.();
+			let disposed = false;
+			const unsubscribe = runtime.subscribeSessionEvents((event) => {
+				if (
+					disposed ||
+					!isSelected(selection) ||
+					activeTurnRef.current !== turn ||
+					event.sessionId !== selection.sessionId ||
+					selection.appliedEventIds.has(event.id)
+				)
+					return;
+
+				selection.appliedEventIds.add(event.id);
+				if (turn !== null) {
+					if (
+						event.type === 'assistant.tool_calls.completed' ||
+						event.type === 'assistant.message.completed'
+					) {
+						stream.flush();
+						stream.reset();
+					} else if (event.type === 'agent.error') {
+						// Older producers may report normalized model cancellation as an error.
+						const details = event.error.details;
+						if (
+							turn.controller.signal.aborted &&
+							event.error.code === 'MODEL_STREAM_FAILED' &&
+							typeof details === 'object' &&
+							details !== null &&
+							'name' in details &&
+							details.name === 'AbortError'
+						)
+							return;
+						for (const entry of takePartial()) dispatch({ type: 'history.append', entry });
+						turn.durableErrorDisplayed = true;
+					}
+				}
+				dispatch({ type: 'engine.event', event });
+			});
+			subscriptionRef.current = () => {
+				if (disposed) return;
+				disposed = true;
+				unsubscribe();
+			};
+		},
+		[runtime, selection, isSelected, stream, takePartial],
+	);
+
 	const abortTurn = useCallback(() => {
-		activeTurnControllerRef.current?.abort();
+		activeTurnRef.current?.controller.abort();
 	}, []);
 
 	useEffect(() => {
+		mountedRef.current = true;
 		return () => {
-			activeTurnControllerRef.current?.abort();
+			mountedRef.current = false;
+			activeTurnRef.current?.controller.abort();
+			activeTurnRef.current = null;
+			subscriptionRef.current?.();
+			subscriptionRef.current = null;
+			stream.reset();
 			stream.dispose();
 		};
 	}, [stream]);
 
 	useEffect(() => {
-		return runtime.subscribeSessionEvents((event) => {
-			if (event.sessionId !== activeSessionRef.current) {
-				return;
-			}
-
-			if (activeTurnRef.current && event.type === 'assistant.message.completed') {
-				completedAssistantRef.current = event;
-				return;
-			}
-
-			if (activeTurnRef.current && event.type === 'assistant.tool_calls.completed') {
-				stream.flush();
-				stream.reset();
-				dispatch({ type: 'engine.event', event });
-				dispatch({ type: 'turn.started' });
-				return;
-			}
-
-			if (activeTurnRef.current && event.type === 'agent.error') {
-				activeAgentErrorRef.current = event;
-				return;
-			}
-
-			dispatch({ type: 'engine.event', event });
-		});
-	}, [runtime, stream]);
-
-	useEffect(() => {
 		let cancelled = false;
 		const modelController = new AbortController();
-		activeTurnControllerRef.current?.abort();
+		activeTurnRef.current?.controller.abort();
+		activeTurnRef.current = null;
 		stream.start();
+		subscribeEvents(null);
 		localEntryIndexRef.current = 0;
 		dispatch({ type: 'session.changed', sessionId });
 
 		const load = async (): Promise<void> => {
 			try {
 				const events = await runtime.listSessionEvents(sessionId);
-				if (cancelled) {
+				if (cancelled || !isSelected(selection)) {
 					return;
 				}
 
 				const restoredModel = restoreSessionModel ? getSessionModelName(events) : undefined;
 				if (restoredModel !== undefined && restoredModel !== modelNameRef.current) {
 					const selectedModel = await runtime.switchModel(restoredModel, modelController.signal);
-					if (cancelled) {
+					if (cancelled || !isSelected(selection)) {
 						return;
 					}
 					onModelNameChange(selectedModel);
 				}
 
+				for (const event of events) {
+					if (event.sessionId === sessionId) selection.appliedEventIds.add(event.id);
+				}
 				dispatch({ type: 'session.loaded', events });
 			} catch (caughtError) {
-				if (!cancelled && !modelController.signal.aborted) {
+				if (!cancelled && isSelected(selection) && !modelController.signal.aborted) {
 					dispatch({ type: 'session.load-failed', message: toError(caughtError).message });
 				}
 			}
@@ -118,109 +181,115 @@ export const useChatSession = ({
 		return () => {
 			cancelled = true;
 			modelController.abort();
+			if (activeTurnRef.current?.selection === selection) {
+				activeTurnRef.current.controller.abort();
+				activeTurnRef.current = null;
+			}
+			subscriptionRef.current?.();
 		};
-	}, [runtime, onModelNameChange, restoreSessionModel, sessionId, stream]);
+	}, [
+		runtime,
+		onModelNameChange,
+		restoreSessionModel,
+		sessionId,
+		stream,
+		selection,
+		isSelected,
+		subscribeEvents,
+	]);
 
 	const runPrompt = useCallback(
 		(prompt: string): boolean => {
-			if (activeTurnRef.current || state.loadStatus !== 'ready' || state.turnStatus !== 'idle') {
+			if (
+				!isSelected(selection) ||
+				state.sessionId !== sessionId ||
+				activeTurnRef.current !== null ||
+				state.loadStatus !== 'ready' ||
+				state.turnStatus !== 'idle'
+			)
 				return false;
-			}
 
-			activeTurnRef.current = true;
-			completedAssistantRef.current = null;
-			activeAgentErrorRef.current = null;
+			const turn: ActiveTurn = {
+				selection,
+				controller: new AbortController(),
+				durableErrorDisplayed: false,
+			};
+			activeTurnRef.current = turn;
 			stream.start();
+			subscribeEvents(turn);
 			dispatch({ type: 'turn.started' });
-			const turnController = new AbortController();
-			activeTurnControllerRef.current = turnController;
 
 			const run = async (): Promise<void> => {
-				let receivedFirstDelta = false;
 				try {
 					for await (const chunk of runtime.runTurn({
 						sessionId,
 						prompt,
 						modelName,
-						signal: turnController.signal,
+						signal: turn.controller.signal,
 					})) {
-						if (chunk.contentDelta.length === 0) {
-							continue;
-						}
-						if (!receivedFirstDelta) {
-							receivedFirstDelta = true;
-							dispatch({ type: 'turn.streaming' });
-						}
+						if (!isActiveTurn(turn)) return;
+						if (chunk.contentDelta.length === 0) continue;
+						dispatch({ type: 'turn.streaming' });
 						stream.push(chunk.contentDelta);
 					}
-
-					const streamedContent = stream.flush();
-					const completed = completedAssistantRef.current;
-					const finalContent = streamedContent || completed?.content || '';
-					const assistant =
-						finalContent.trim().length === 0
-							? undefined
-							: {
-									id: completed === null ? nextLocalId('assistant') : String(completed.id),
-									kind: 'assistant' as const,
-									content: finalContent,
-								};
-					dispatch(
-						assistant === undefined
-							? { type: 'turn.finished' }
-							: { type: 'turn.finished', assistant },
-					);
+					if (!isActiveTurn(turn)) return;
+					throwIfAborted(turn.controller.signal);
+					// An iterator returning without a commit cannot manufacture durable history.
+					for (const entry of takePartial()) dispatch({ type: 'history.append', entry });
+					dispatch({ type: 'turn.finished' });
 				} catch (caughtError) {
-					const partialContent = stream.flush();
-					const entries: HistoryEntry[] = [];
-					if (partialContent.trim().length > 0) {
-						entries.push({
-							id: nextLocalId('partial-assistant'),
-							kind: 'assistant',
-							content: partialContent,
-						});
-					}
-
-					if (isAbortError(caughtError)) {
+					if (!isActiveTurn(turn)) return;
+					const entries = takePartial();
+					if (turn.controller.signal.aborted && isAbortError(caughtError)) {
 						entries.push({
 							id: nextLocalId('cancelled'),
 							kind: 'cancelled',
 							content: 'The response was cancelled.',
 						});
-					} else {
-						const agentError = activeAgentErrorRef.current;
+					} else if (!turn.durableErrorDisplayed) {
 						entries.push({
-							id: agentError === null ? nextLocalId('turn-error') : String(agentError.id),
+							id: nextLocalId('turn-error'),
 							kind: 'error',
-							content: agentError?.error.message ?? toError(caughtError).message,
+							content: toError(caughtError).message,
 						});
 					}
 					dispatch({ type: 'turn.failed', entries });
 				} finally {
-					activeTurnRef.current = false;
-					completedAssistantRef.current = null;
-					activeAgentErrorRef.current = null;
-					if (activeTurnControllerRef.current === turnController) {
-						activeTurnControllerRef.current = null;
+					if (isActiveTurn(turn)) {
+						stream.reset();
+						activeTurnRef.current = null;
+						subscribeEvents(null);
 					}
-					stream.reset();
 				}
 			};
 
 			void run();
 			return true;
 		},
-		[runtime, modelName, nextLocalId, sessionId, state.loadStatus, state.turnStatus, stream],
+		[
+			runtime,
+			modelName,
+			nextLocalId,
+			sessionId,
+			state,
+			stream,
+			selection,
+			isSelected,
+			isActiveTurn,
+			subscribeEvents,
+			takePartial,
+		],
 	);
 
 	const appendSystemMessage = useCallback(
 		(content: string, kind: 'system' | 'error' = 'system') => {
+			if (!isSelected(selection)) return;
 			dispatch({
 				type: 'history.append',
 				entry: { id: nextLocalId(kind), kind, content },
 			});
 		},
-		[nextLocalId],
+		[nextLocalId, selection, isSelected],
 	);
 
 	return { state, stream, runPrompt, abortTurn, appendSystemMessage };
@@ -228,8 +297,4 @@ export const useChatSession = ({
 
 const toError = (caughtError: unknown): Error => {
 	return caughtError instanceof Error ? caughtError : new Error(String(caughtError));
-};
-
-const isAbortError = (caughtError: unknown): boolean => {
-	return caughtError instanceof Error && caughtError.name === 'AbortError';
 };

@@ -1,6 +1,9 @@
 import { usePresentation } from './hooks/usePresentation';
 import type { StoredSession } from '@/application/ports/SessionStorePort';
-import { promptSubmittedEvent } from '@/test-support/AgentEventFixtures';
+import {
+	assistantMessageCompletedEvent,
+	promptSubmittedEvent,
+} from '@/test-support/AgentEventFixtures';
 import { throwIfAborted } from '@/application/services/cancellation';
 import {
 	RunAgentTurn,
@@ -32,6 +35,17 @@ import {
 class FakePresentationRuntime implements PresentationRuntime {
 	readonly workspacePath = '/workspace';
 	activeModelName = 'current-model';
+	readonly listeners = new Set<(event: AgentEvent) => void>();
+	private completionIndex = 0;
+
+	protected commitAnswer(input: TurnInput, content: string): void {
+		const event = assistantMessageCompletedEvent({
+			sessionId: input.sessionId,
+			id: asEventId(`fake-completion-${this.completionIndex++}`),
+			content,
+		});
+		for (const listener of this.listeners) listener(event);
+	}
 
 	createSessionId() {
 		return asSessionId('session-1');
@@ -57,16 +71,20 @@ class FakePresentationRuntime implements PresentationRuntime {
 		return [];
 	}
 
-	async *runTurn(_input: TurnInput): AsyncIterable<TurnDelta> {
+	async *runTurn(input: TurnInput): AsyncIterable<TurnDelta> {
 		yield { contentDelta: 'answer' };
+		this.commitAnswer(input, 'answer');
 	}
 
 	setApprovalHandler(_handler: ToolApprovalHandler): () => void {
 		return () => undefined;
 	}
 
-	subscribeSessionEvents(_listener: (event: AgentEvent) => void): () => void {
-		return () => undefined;
+	subscribeSessionEvents(listener: (event: AgentEvent) => void): () => void {
+		this.listeners.add(listener);
+		return () => {
+			this.listeners.delete(listener);
+		};
 	}
 
 	async switchModel(modelName: string) {
@@ -176,6 +194,7 @@ describe('App interaction', () => {
 				override async *runTurn(input: TurnInput): AsyncIterable<TurnDelta> {
 					this.turns.push(input);
 					yield { contentDelta: 'answer after switch' };
+					this.commitAnswer(input, 'answer after switch');
 				}
 			}
 			const runtime = new SwitchingRuntime();
@@ -450,6 +469,7 @@ class ApprovalPresentationRuntime extends FakePresentationRuntime {
 		throwIfAborted(input.signal);
 		if (approved) this.executions++;
 		yield { contentDelta: approved ? 'approved' : 'denied' };
+		this.commitAnswer(input, approved ? 'approved' : 'denied');
 	}
 }
 
