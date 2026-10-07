@@ -7,9 +7,8 @@
 		"moduleResolution": "bundler",
 		"moduleDetection": "force",
 
-		"jsx": "react-jsx",
 		"allowJs": true,
-		"types": ["bun", "react"],
+		"types": ["bun"],
 
 		"paths": {
 			"@/*": ["./src/*"],

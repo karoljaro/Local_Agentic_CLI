@@ -17,15 +17,15 @@ This project is intentionally small. The current goal is a practical local agent
 
 Implemented:
 
-- Ink-based terminal UI
+- OpenTUI Core terminal UI with a conversation-first layout and native scrolling
 - Ollama chat integration with batched real-time streaming across model/tool rounds
 - stable, readable conversation history with Markdown rendering
 - slash-command menu with keyboard filtering and selection
 - model picker with `/model` and direct switching with `/model <name>`
-- separate model and resume screens that preserve chat and draft state
-- current model, workspace path, and session shown under the input
+- focused model and resume pickers that preserve the prompt draft on cancellation
+- subtle current model and session context above the conversation
 - `Ctrl+C` cancels an active response and exits the CLI when no response is running
-- resume session picker with `New chat`, last activity, and prompt preview
+- resume session picker with `New session`, last activity, and prompt preview
 - persisted sessions in `.agent/sessions/<session-id>/events.jsonl`
 - loading previous chat messages when continuing a session
 - tool calling through Ollama
@@ -126,7 +126,7 @@ Replaces exact text in a UTF-8 file:
 The edit is applied only when `oldText` appears exactly once. `oldText` and `newText` are used exactly as decoded from the model's JSON arguments; literal sequences such as `\\n` are not converted into line breaks.
 
 `edit_file` requires interactive approval. Use the arrow keys and Enter, press `y` to approve,
-or press `n`/`Esc` to deny. Press `d` to toggle concise technical details.
+or press `n`/`Esc` to deny. Deny is selected by default. Press `d` to toggle full input details.
 
 ## Architecture
 
@@ -158,7 +158,7 @@ JSONL remains the source of truth. During one process, each active session is re
 
 ## Requirements
 
-- Bun
+- Bun 1.3 or newer (development and builds)
 - Ollama
 - a pulled local model matching the configured model name
 
@@ -177,8 +177,13 @@ bun run start
 Build the CLI:
 
 ```bash
+bun install --frozen-lockfile --os '*' --cpu x64
 bun run build
 ```
+
+The install flags include OpenTUI's Windows x64 native dependency for cross-compilation from Linux.
+A normal host-only install is sufficient for development and a matching host build. Repeat the
+cross-platform install after dependency changes before building both release targets.
 
 The build output is placed in `dist`:
 
@@ -186,7 +191,8 @@ The build output is placed in `dist`:
 - Windows x64: `codesh.exe` and `rg.exe`
 
 The `codesh` executables are standalone. Keep each executable together with its matching ripgrep
-binary; no project checkout or `node_modules` directory is required at runtime.
+binary; no project checkout or `node_modules` directory is required at runtime. Bun embeds OpenTUI's
+native library, parser worker and bundled grammar assets. The Linux artifact targets glibc.
 
 To run the built CLI from any folder, add the `dist` directory to your shell `PATH`:
 
@@ -238,6 +244,12 @@ Inside the chat:
 
 `/model` opens the local Ollama model picker. `/model <name>` switches the model directly for subsequent turns. `/resume` opens the session picker.
 
+`F2` and `F3` also open the model and session pickers. Enter submits a prompt; Shift+Enter or Ctrl+J
+inserts a newline. Escape closes a picker, denies approval, or cancels the active response. PageUp
+and PageDown scroll the conversation; Ctrl+Home and Ctrl+End jump to its ends. Scrolling upward
+pauses automatic following until you return to the bottom. Ctrl+C cancels an active response and
+exits when idle or when an approval is open.
+
 ## Tests
 
 Run all tests:
@@ -279,7 +291,6 @@ modes and verifies ripgrep with a real search. It does not require a running Oll
 
 Likely next work:
 
-- show tool events in the UI
 - add a guarded `run_command` tool with an allowlist
 - show a compact diff before edit approval
 - move model defaults into settings
