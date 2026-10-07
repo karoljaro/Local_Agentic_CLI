@@ -1,3 +1,4 @@
+import { abortError, throwIfAborted } from '@/application/services/cancellation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useApp, useInput } from 'ink';
 
@@ -29,7 +30,11 @@ export const usePresentation = (controller: PresentationController, initialMode:
 		useState<SessionSelectionState>(EMPTY_SESSION_SELECTION);
 	const [isCommandBusy, setCommandBusy] = useState(false);
 	const [pendingApproval, setPendingApproval] = useState<ToolApprovalRequest | null>(null);
-	const approvalResolveRef = useRef<((approved: boolean) => void) | null>(null);
+	const approvalResolveRef = useRef<{
+		request: ToolApprovalRequest;
+		resolve: (approved: boolean) => void;
+		cancel: () => void;
+	} | null>(null);
 	const onModelNameChange = useCallback((nextModelName: string) => setModelName(nextModelName), []);
 	const chat = useChatSession({
 		controller,
@@ -120,28 +125,52 @@ export const usePresentation = (controller: PresentationController, initialMode:
 	}, [controller, screen]);
 
 	useEffect(() => {
-		return controller.setApprovalHandler((request) => {
-			return new Promise<boolean>((resolve) => {
-				approvalResolveRef.current?.(false);
-				approvalResolveRef.current = resolve;
-				setPendingApproval(request);
+		let disposed = false;
+		const unregister = controller.setApprovalHandler((request, { signal }) => {
+			return new Promise<boolean>((resolve, reject) => {
+				throwIfAborted(signal);
+				if (disposed) throw abortError();
+				approvalResolveRef.current?.cancel();
+				// A distinct presentation identity also protects repeated requests with the same IDs.
+				const displayedRequest = { ...request };
+				let settled = false;
+				const finish = (approved: boolean, cancelled = false) => {
+					if (settled) return;
+					settled = true;
+					signal?.removeEventListener('abort', onAbort);
+					if (approvalResolveRef.current === pending) {
+						approvalResolveRef.current = null;
+						setPendingApproval((current) => (current === displayedRequest ? null : current));
+					}
+					if (cancelled) reject(abortError());
+					else resolve(approved);
+				};
+				const onAbort = () => finish(false, true);
+				const pending = {
+					request: displayedRequest,
+					resolve: (approved: boolean) => finish(approved),
+					cancel: onAbort,
+				};
+				approvalResolveRef.current = pending;
+				signal?.addEventListener('abort', onAbort, { once: true });
+				setPendingApproval(displayedRequest);
+				if (signal?.aborted) onAbort();
 			});
 		});
+		return () => {
+			disposed = true;
+			unregister();
+			approvalResolveRef.current?.cancel();
+		};
 	}, [controller]);
 
-	useEffect(() => {
-		return () => {
-			approvalResolveRef.current?.(false);
-			approvalResolveRef.current = null;
-		};
-	}, []);
-
-	const resolveApproval = useCallback((approved: boolean) => {
-		const resolve = approvalResolveRef.current;
-		approvalResolveRef.current = null;
-		setPendingApproval(null);
-		resolve?.(approved);
-	}, []);
+	const resolveApproval = useCallback(
+		(approved: boolean) => {
+			const pending = approvalResolveRef.current;
+			if (pending !== null && pending.request === pendingApproval) pending.resolve(approved);
+		},
+		[pendingApproval],
+	);
 
 	const switchModel = useCallback(
 		async (nextModelName: string): Promise<boolean> => {

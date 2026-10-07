@@ -36,10 +36,13 @@ export const editFileTool = (
 				),
 			newText: z.string().describe('The replacement text. May be empty to remove oldText.'),
 		}),
-		execute: async (input) =>
-			editWorkspaceFile.execute({
-				...input,
-				maxFileBytes: options.maxFileBytes,
-			}),
+		execute: async (input, executionOptions) =>
+			editWorkspaceFile.execute(
+				{
+					...input,
+					maxFileBytes: options.maxFileBytes,
+				},
+				executionOptions,
+			),
 	});
 };

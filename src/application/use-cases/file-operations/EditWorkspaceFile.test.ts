@@ -6,6 +6,7 @@ import { describe, expect, test } from 'bun:test';
 import type {
 	ListWorkspaceFilesInput,
 	ReadWorkspaceFileInput,
+	WorkspaceExecutionOptions,
 	WorkspaceFile,
 	WorkspaceFileList,
 	WorkspaceFilePort,
@@ -131,5 +132,53 @@ describe('EditWorkspaceFile', () => {
 			expectedContent: 'before target after',
 			maxFileBytes: 1024,
 		});
+	});
+});
+
+describe('EditWorkspaceFile cooperative cancellation', () => {
+	test('abort after reading prevents write and passes the same execution options separately', async () => {
+		const controller = new AbortController();
+		const options = { signal: controller.signal };
+		const files = new RecordingWorkspaceFilePort();
+		let reads = 0;
+		files.readFile = async (_input, received?: WorkspaceExecutionOptions) => {
+			reads++;
+			expect(received).toBe(options);
+			controller.abort();
+			return { path: 'file.txt', content: 'before target after' };
+		};
+		expect(
+			await new EditWorkspaceFile(files)
+				.execute(
+					{ path: 'file.txt', oldText: 'target', newText: '$&', maxFileBytes: 1024 },
+					options,
+				)
+				.then(
+					() => undefined,
+					(error: unknown) => error,
+				),
+		).toHaveProperty('name', 'AbortError');
+		expect(reads).toBe(1);
+		expect(files.writeInput).toBeUndefined();
+	});
+
+	test('write that has started completes truthfully after cancellation', async () => {
+		const controller = new AbortController();
+		const options = { signal: controller.signal };
+		const files = new RecordingWorkspaceFilePort();
+		files.writeFile = async (input, received?: WorkspaceExecutionOptions) => {
+			expect(received).toBe(options);
+			controller.abort();
+			files.writeInput = input;
+			return { path: input.path, content: input.content };
+		};
+		await expect(
+			new EditWorkspaceFile(files).execute(
+				{ path: 'file.txt', oldText: 'target', newText: '$&', maxFileBytes: 1024 },
+				options,
+			),
+		).resolves.toMatchObject({ replaced: true });
+		expect(files.writeInput?.content).toBe('before $& after');
+		expect(files.writeInput).not.toHaveProperty('signal');
 	});
 });

@@ -95,7 +95,7 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 			agentMetrics,
 			monotonicClock,
 			toolExecutor,
-			approveToolCall: (request) => currentToolApprovalHandler(request),
+			approveToolCall: (request, options) => currentToolApprovalHandler(request, options),
 		}),
 	};
 };

@@ -1,7 +1,9 @@
+import * as fsPromises from 'node:fs/promises';
+import { createDeferred } from '@/test-support/createDeferred';
 import { mkdir, readdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test, spyOn } from 'bun:test';
 
 import { createTempDirectory } from '@/test-support/createTempDirectory';
 import { NodeWorkspaceFileSystem } from './NodeWorkspaceFileSystem';
@@ -412,5 +414,159 @@ describe('NodeWorkspaceFileSystem', () => {
 				await cleanup();
 			}
 		});
+	});
+});
+
+describe('NodeWorkspaceFileSystem cooperative cancellation', () => {
+	for (const operation of ['list', 'read', 'write', 'create'] as const) {
+		test(`already-aborted ${operation} performs no filesystem work`, async () => {
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
+			try {
+				await writeFile(join(directory, 'existing'), 'original');
+				const controller = new AbortController();
+				controller.abort('custom reason');
+				const options = { signal: controller.signal };
+				const promise =
+					operation === 'list'
+						? fileSystem.listFiles({ maxEntries: 10 }, options)
+						: operation === 'read'
+							? fileSystem.readFile({ path: 'existing', maxFileBytes: MAX_FILE_BYTES }, options)
+							: operation === 'write'
+								? fileSystem.writeFile(
+										{ path: 'existing', content: 'changed', maxFileBytes: MAX_FILE_BYTES },
+										options,
+									)
+								: fileSystem.createFile(
+										{ path: 'new', content: 'created', maxFileBytes: MAX_FILE_BYTES },
+										options,
+									);
+				expect(
+					await promise.then(
+						() => undefined,
+						(error: unknown) => error,
+					),
+				).toHaveProperty('name', 'AbortError');
+				expect(await readFile(join(directory, 'existing'), 'utf8')).toBe('original');
+				expect(await readdir(directory)).toEqual(['existing']);
+			} finally {
+				await cleanup();
+			}
+		});
+	}
+
+	for (const operation of ['write', 'create'] as const) {
+		test(`${operation} crosses its safe mutation boundary and finishes after cancellation`, async () => {
+			const { directory, fileSystem, cleanup } = await createTempWorkspace();
+			const started = createDeferred<void>();
+			const finish = createDeferred<void>();
+			const controller = new AbortController();
+			const originalWrite = fsPromises.writeFile;
+			let writeSpy: ReturnType<typeof spyOn> | undefined;
+			try {
+				await writeFile(join(directory, 'target'), 'original');
+				writeSpy = spyOn(fsPromises, 'writeFile').mockImplementation(
+					async (...args: Parameters<typeof fsPromises.writeFile>) => {
+						await originalWrite(...args);
+						started.resolve();
+						await finish.promise;
+					},
+				);
+				const promise =
+					operation === 'write'
+						? fileSystem.writeFile(
+								{
+									path: 'target',
+									content: 'changed',
+									maxFileBytes: MAX_FILE_BYTES,
+									expectedContent: 'original',
+								},
+								{ signal: controller.signal },
+							)
+						: fileSystem.createFile(
+								{ path: 'created', content: 'changed', maxFileBytes: MAX_FILE_BYTES },
+								{ signal: controller.signal },
+							);
+				let settled = false;
+				void promise.then(() => {
+					settled = true;
+				});
+				await started.promise;
+				controller.abort();
+				await Promise.resolve();
+				expect(settled).toBe(false);
+				finish.resolve();
+				await expect(promise).resolves.toMatchObject({ content: 'changed' });
+				const target = operation === 'write' ? 'target' : 'created';
+				expect(await readFile(join(directory, target), 'utf8')).toBe('changed');
+				expect((await readdir(directory)).filter((name) => name.startsWith('.tmp-'))).toEqual([]);
+			} finally {
+				finish.resolve();
+				writeSpy?.mockRestore();
+				await cleanup();
+			}
+		});
+	}
+
+	test('rename failure during cancellation preserves the cause and removes the temporary file', async () => {
+		const { directory, fileSystem, cleanup } = await createTempWorkspace();
+		const cause = new Error('rename failed');
+		const controller = new AbortController();
+		await writeFile(join(directory, 'target'), 'original');
+		const renameSpy = spyOn(fsPromises, 'rename').mockImplementation(async () => {
+			controller.abort();
+			throw cause;
+		});
+		try {
+			expect(
+				await fileSystem
+					.writeFile(
+						{
+							path: 'target',
+							content: 'changed',
+							maxFileBytes: MAX_FILE_BYTES,
+							expectedContent: 'original',
+						},
+						{ signal: controller.signal },
+					)
+					.then(
+						() => undefined,
+						(error: unknown) => error,
+					),
+			).toBe(cause);
+			expect(await readFile(join(directory, 'target'), 'utf8')).toBe('original');
+			expect(await readdir(directory)).toEqual(['target']);
+		} finally {
+			renameSpy.mockRestore();
+			await cleanup();
+		}
+	});
+
+	test('cancellation during listing stops before entering another directory', async () => {
+		const { directory, fileSystem, cleanup } = await createTempWorkspace();
+		const controller = new AbortController();
+		const originalRead = fsPromises.readdir;
+		await mkdir(join(directory, 'nested'));
+		await writeFile(join(directory, 'nested', 'file'), 'content');
+		let reads = 0;
+		const readSpy = spyOn(fsPromises, 'readdir').mockImplementation((async (
+			...args: Parameters<typeof fsPromises.readdir>
+		) => {
+			reads++;
+			const result = await originalRead(...args);
+			controller.abort();
+			return result;
+		}) as typeof fsPromises.readdir);
+		try {
+			expect(
+				await fileSystem.listFiles({ maxEntries: 10 }, { signal: controller.signal }).then(
+					() => undefined,
+					(error: unknown) => error,
+				),
+			).toHaveProperty('name', 'AbortError');
+			expect(reads).toBe(1);
+		} finally {
+			readSpy.mockRestore();
+			await cleanup();
+		}
 	});
 });

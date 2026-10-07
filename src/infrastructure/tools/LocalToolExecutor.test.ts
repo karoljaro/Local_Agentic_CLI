@@ -1,3 +1,16 @@
+import type {
+	WorkspaceExecutionOptions,
+	WorkspaceFilePort,
+} from '@/application/ports/WorkspaceFilePort';
+import { EditWorkspaceFile } from '@/application/use-cases/file-operations/EditWorkspaceFile';
+import { LocalToolRegistry } from './LocalToolExecutor';
+import { defineLocalTool } from './LocalTool';
+import { listFilesTool } from './providers/ListFilesProvider';
+import { readFileTool } from './providers/ReadFileProvider';
+import { searchFileTool } from './providers/SearchFileProvider';
+import { createFileTool } from './providers/CreateFileProvider';
+import { editFileTool } from './providers/EditFileProvider';
+import { z } from 'zod';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -1241,5 +1254,85 @@ describe('LocalToolRegistry', () => {
 		} finally {
 			await cleanup();
 		}
+	});
+});
+
+describe('LocalToolRegistry execution options', () => {
+	test('all providers forward the same signal outside parsed arguments and schemas', async () => {
+		const controller = new AbortController();
+		const options = { signal: controller.signal };
+		const received: WorkspaceExecutionOptions[] = [];
+		const inputs: unknown[] = [];
+		const files: WorkspaceFilePort = {
+			listFiles: async (input, execution = {}) => {
+				inputs.push(input);
+				received.push(execution);
+				return { files: [], truncated: false };
+			},
+			readFile: async (input, execution = {}) => {
+				inputs.push(input);
+				received.push(execution);
+				return { path: input.path, content: 'target' };
+			},
+			writeFile: async (input, execution = {}) => {
+				inputs.push(input);
+				received.push(execution);
+				return { path: input.path, content: input.content };
+			},
+			createFile: async (input, execution = {}) => {
+				inputs.push(input);
+				received.push(execution);
+				return { path: input.path, content: input.content };
+			},
+		};
+		const tools = new LocalToolRegistry([
+			listFilesTool(files, { maxEntries: 10 }),
+			readFileTool(files, { maxFileBytes: 1024, maxCharacters: 100, maxLines: 10 }),
+			searchFileTool({
+				search: async (input, execution = {}) => {
+					inputs.push(input);
+					received.push(execution);
+					return { returnedMatches: 0, returnedFiles: 0, matches: [], truncated: false };
+				},
+			}),
+			createFileTool(files, { maxFileBytes: 1024 }),
+			editFileTool(new EditWorkspaceFile(files), { maxFileBytes: 1024 }),
+		]);
+		for (const request of [
+			{ toolName: 'list_files', toolInput: {} },
+			{ toolName: 'read_file', toolInput: { path: 'file' } },
+			{ toolName: 'search_file', toolInput: { query: 'target' } },
+			{ toolName: 'create_file', toolInput: { path: 'new', content: 'created' } },
+			{ toolName: 'edit_file', toolInput: { path: 'file', oldText: 'target', newText: '$&' } },
+		])
+			await tools.execute(request, options);
+		expect(received).toHaveLength(6);
+		for (const execution of received) expect(execution).toBe(options);
+		for (const input of inputs) expect(input).not.toHaveProperty('signal');
+		expect(JSON.stringify(tools.listTools())).not.toContain('signal');
+	});
+
+	test('public raw execution with an already aborted signal never invokes a provider', async () => {
+		let executions = 0;
+		const controller = new AbortController();
+		controller.abort();
+		const tools = new LocalToolRegistry([
+			defineLocalTool({
+				name: 'test',
+				description: '',
+				inputSchema: z.strictObject({}),
+				execute: async () => {
+					executions++;
+					return {};
+				},
+			}),
+		]);
+		expect(
+			await tools.execute({ toolName: 'test', toolInput: {} }, { signal: controller.signal }).then(
+				() => undefined,
+				(error: unknown) => error,
+			),
+		).toHaveProperty('name', 'AbortError');
+		expect(executions).toBe(0);
 	});
 });

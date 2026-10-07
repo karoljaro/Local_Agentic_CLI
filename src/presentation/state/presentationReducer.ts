@@ -31,7 +31,7 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
 			return { ...state, history: [], activeTools: [], loadStatus: 'loading', turnStatus: 'idle' };
 		case 'session.loaded': {
 			const loaded = reduceSessionEvents(state.sessionId, action.events);
-			return { ...loaded, loadStatus: 'ready', turnStatus: 'idle' };
+			return { ...loaded, activeTools: [], loadStatus: 'ready', turnStatus: 'idle' };
 		}
 		case 'session.load-failed':
 			return {
@@ -52,6 +52,7 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
 		case 'turn.finished':
 			return {
 				...state,
+				activeTools: [],
 				turnStatus: 'idle',
 				...(action.assistant === undefined
 					? {}
@@ -60,6 +61,7 @@ export const chatReducer = (state: ChatState, action: ChatAction): ChatState => 
 		case 'turn.failed':
 			return {
 				...state,
+				activeTools: [],
 				turnStatus: 'idle',
 				history: action.entries.reduce(appendUnique, state.history),
 			};

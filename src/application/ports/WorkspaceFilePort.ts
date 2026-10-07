@@ -1,3 +1,5 @@
+export type WorkspaceExecutionOptions = { signal?: AbortSignal };
+
 export type WorkspaceFile = {
 	path: string;
 	content: string;
@@ -26,8 +28,20 @@ export type WriteWorkspaceFileInput = {
 };
 
 export interface WorkspaceFilePort {
-	listFiles(input: ListWorkspaceFilesInput): Promise<WorkspaceFileList>;
-	readFile(input: ReadWorkspaceFileInput): Promise<WorkspaceFile>;
-	writeFile(input: WriteWorkspaceFileInput): Promise<WorkspaceFile>;
-	createFile(input: WriteWorkspaceFileInput): Promise<WorkspaceFile>;
+	listFiles(
+		input: ListWorkspaceFilesInput,
+		options?: WorkspaceExecutionOptions,
+	): Promise<WorkspaceFileList>;
+	readFile(
+		input: ReadWorkspaceFileInput,
+		options?: WorkspaceExecutionOptions,
+	): Promise<WorkspaceFile>;
+	writeFile(
+		input: WriteWorkspaceFileInput,
+		options?: WorkspaceExecutionOptions,
+	): Promise<WorkspaceFile>;
+	createFile(
+		input: WriteWorkspaceFileInput,
+		options?: WorkspaceExecutionOptions,
+	): Promise<WorkspaceFile>;
 }

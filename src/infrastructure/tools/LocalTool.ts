@@ -1,3 +1,4 @@
+import type { ToolExecutionOptions } from '@/application/ports/ToolExecutorPort';
 import { z } from 'zod';
 
 export type LocalToolOptions<InputSchema extends z.ZodType> = {
@@ -7,7 +8,7 @@ export type LocalToolOptions<InputSchema extends z.ZodType> = {
 	deduplicate?: boolean;
 	invalidatesWorkspaceCache?: boolean;
 	inputSchema: InputSchema;
-	execute(input: z.output<InputSchema>): Promise<unknown>;
+	execute(input: z.output<InputSchema>, options: ToolExecutionOptions): Promise<unknown>;
 };
 
 export type LocalTool = {
@@ -18,7 +19,7 @@ export type LocalTool = {
 	invalidatesWorkspaceCache?: boolean;
 	inputSchema: z.ZodType;
 	parse(input: unknown): unknown;
-	execute(input: unknown): Promise<unknown>;
+	execute(input: unknown, options: ToolExecutionOptions): Promise<unknown>;
 };
 
 export const defineLocalTool = <InputSchema extends z.ZodType>(
@@ -26,5 +27,6 @@ export const defineLocalTool = <InputSchema extends z.ZodType>(
 ): LocalTool => ({
 	...options,
 	parse: (input) => options.inputSchema.parse(input),
-	execute: async (input) => options.execute(input as z.output<InputSchema>),
+	execute: async (input, executionOptions) =>
+		options.execute(input as z.output<InputSchema>, executionOptions),
 });

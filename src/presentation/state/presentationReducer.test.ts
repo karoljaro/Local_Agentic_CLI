@@ -84,3 +84,33 @@ describe('presentationReducer', () => {
 		expect(state.history.map((entry) => entry.status)).toEqual(['success', 'failure']);
 	});
 });
+
+for (const ending of ['turn.finished', 'turn.failed'] as const) {
+	test(`${ending} clears transient active tools without adding tool terminal history`, () => {
+		const sessionId = asSessionId('session-1');
+		const running = reduceSessionEvents(sessionId, [
+			toolCallRequestedEvent(),
+			toolCallStartedEvent(),
+		]);
+		expect(running.activeTools).toHaveLength(1);
+		const finished = chatReducer(
+			running,
+			ending === 'turn.finished'
+				? { type: ending }
+				: { type: ending, entries: [{ id: 'error', kind: 'error', content: 'storage failure' }] },
+		);
+		expect(finished.activeTools).toEqual([]);
+		expect(finished.turnStatus).toBe('idle');
+		expect(finished.history.filter((entry) => entry.kind === 'tool')).toEqual([]);
+	});
+}
+
+test('loading an interrupted persisted prefix does not revive transient active tools', () => {
+	const state = chatReducer(createChatState(asSessionId('session-1')), {
+		type: 'session.loaded',
+		events: [toolCallRequestedEvent(), toolCallStartedEvent()],
+	});
+	expect(state.turnStatus).toBe('idle');
+	expect(state.activeTools).toEqual([]);
+	expect(state.history).toEqual([]);
+});

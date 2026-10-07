@@ -1,3 +1,8 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createLocalToolExecutor } from '@/composition/factories/createLocalToolExecutor';
+import { createTempDirectory } from '@/test-support/createTempDirectory';
+import { createDeferred } from '@/test-support/createDeferred';
 import { describe, expect, test } from 'bun:test';
 
 import {
@@ -1576,4 +1581,242 @@ describe('RunAgentTurn', () => {
 			},
 		});
 	});
+});
+
+describe('RunAgentTurn lifecycle regressions', () => {
+	for (const alsoAbort of [false, true]) {
+		test(`successful disk mutation plus completion persistence failure terminates the turn (also abort: ${alsoAbort})`, async () => {
+			const { directory, cleanup } = await createTempDirectory('turn-mutation-');
+			try {
+				const cause = new Error('completion storage unavailable');
+				const controller = new AbortController();
+				const store = new InMemorySessionStore();
+				const append = store.appendSessionEvent.bind(store);
+				store.appendSessionEvent = async (event) => {
+					if (event.type === 'tool.call.completed') {
+						if (alsoAbort) controller.abort();
+						throw cause;
+					}
+					await append(event);
+				};
+				const local = createLocalToolExecutor({ workspaceRoot: directory });
+				const executor = new RecordingToolExecutor(
+					local.listTools(),
+					(request, _requests, options) => local.execute(request, options),
+					(request) => local.prepare(request),
+				);
+				const model = new ScriptedModel([
+					toolCallResponse([
+						toolCall('create_file', { path: 'created.txt', content: 'durable side effect' }),
+						readFileToolCall('created.txt'),
+					]),
+					textResponse('should never be requested'),
+				]);
+				const loop = new RunAgentTurn({
+					sessionStore: store,
+					model,
+					toolExecutor: executor,
+					clock: new FixedClock(),
+					idGenerator: new SequenceIdGenerator(),
+					contextBuilder: new ContextBuilder({ systemPrompt: 'test' }),
+					approveToolCall: async (_request, options) => {
+						expect(options.signal).toBe(controller.signal);
+						return true;
+					},
+				});
+				const error = await collectAsyncIterable(
+					loop.run({
+						sessionId: asSessionId('session-1'),
+						prompt: 'create',
+						signal: controller.signal,
+					}),
+				).then(
+					() => undefined,
+					(error: unknown) => error,
+				);
+				expect(error).toBe(cause);
+				expect(await readFile(join(directory, 'created.txt'), 'utf8')).toBe('durable side effect');
+				expect(executor.receivedRequests).toHaveLength(1);
+				expect(executor.receivedOptions[0]?.signal).toBe(controller.signal);
+				expect(model.receivedInputs).toHaveLength(1);
+				expect(model.receivedInputs[0]?.signal).toBe(controller.signal);
+				expect(store.events.map((event) => event.type)).toEqual([
+					'prompt.submitted',
+					'assistant.tool_calls.completed',
+					'tool.call.requested',
+					'tool.call.started',
+				]);
+				expect(
+					reduceAgentState(asSessionId('session-1'), store.events).messages.map(
+						(message) => message.role,
+					),
+				).toEqual(['user']);
+			} finally {
+				await cleanup();
+			}
+		});
+	}
+
+	test('already-aborted turn does not append a prompt or request the model', async () => {
+		const model = new ScriptedModel([textResponse('never')]);
+		const { useCase, sessionStore, sessionId } = createRunAgentTurnHarness({ model });
+		const controller = new AbortController();
+		controller.abort('custom reason');
+		const error = await collectAsyncIterable(
+			useCase.run({ sessionId, prompt: 'hello', signal: controller.signal }),
+		).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(error).toHaveProperty('name', 'AbortError');
+		expect(sessionStore.events).toEqual([]);
+		expect(model.receivedInputs).toEqual([]);
+	});
+
+	test('late approval after turn cancellation requests no next model round', async () => {
+		const pending = createDeferred<boolean>();
+		const waiting = createDeferred<void>();
+		const model = new ScriptedModel([
+			toolCallResponse([editFileToolCall()]),
+			textResponse('never'),
+		]);
+		const executor = createEditToolExecutor();
+		const { useCase, sessionStore, sessionId } = createRunAgentTurnHarness({
+			model,
+			toolExecutor: executor,
+			approveToolCall: () => {
+				waiting.resolve();
+				return pending.promise;
+			},
+		});
+		const controller = new AbortController();
+		const outcome = collectAsyncIterable(
+			useCase.run({ sessionId, prompt: 'edit', signal: controller.signal }),
+		).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		await waiting.promise;
+		controller.abort();
+		expect(await outcome).toHaveProperty('name', 'AbortError');
+		pending.resolve(true);
+		await Promise.resolve();
+		expect(executor.receivedRequests.length).toBe(0);
+		expect(model.receivedInputs).toHaveLength(1);
+		expect(sessionStore.events.map((event) => event.type)).toEqual([
+			'prompt.submitted',
+			'assistant.tool_calls.completed',
+			'tool.call.requested',
+		]);
+		expect(
+			reduceAgentState(sessionId, sessionStore.events).messages.map((message) => message.role),
+		).toEqual(['user']);
+	});
+
+	test('successful tool during cancellation records completion but requests no next call or round', async () => {
+		const controller = new AbortController();
+		const model = new ScriptedModel([
+			toolCallResponse([readFileToolCall('one'), readFileToolCall('two')]),
+			textResponse('never'),
+		]);
+		const executor = new RecordingToolExecutor([readToolDefinition], (request) => {
+			controller.abort();
+			return { toolName: request.toolName, output: 'done' };
+		});
+		const { useCase, sessionStore, sessionId } = createRunAgentTurnHarness({
+			model,
+			toolExecutor: executor,
+		});
+		expect(
+			await collectAsyncIterable(
+				useCase.run({ sessionId, prompt: 'read', signal: controller.signal }),
+			).then(
+				() => undefined,
+				(error: unknown) => error,
+			),
+		).toHaveProperty('name', 'AbortError');
+		expect(executor.receivedRequests).toHaveLength(1);
+		expect(model.receivedInputs).toHaveLength(1);
+		expect(sessionStore.events.map((event) => event.type)).toEqual([
+			'prompt.submitted',
+			'assistant.tool_calls.completed',
+			'tool.call.requested',
+			'tool.call.started',
+			'tool.call.completed',
+		]);
+		expect(
+			reduceAgentState(sessionId, sessionStore.events).messages.map((message) => message.role),
+		).toEqual(['user']);
+	});
+
+	test('abort during complete-batch preparation prevents batch append and tools', async () => {
+		const controller = new AbortController();
+		const executor = new RecordingToolExecutor(
+			[readToolDefinition],
+			(request) => ({ toolName: request.toolName, output: 'never' }),
+			(request) => {
+				controller.abort();
+				return request;
+			},
+		);
+		const model = new ScriptedModel([toolCallResponse([readFileToolCall('one')])]);
+		const { useCase, sessionStore, sessionId } = createRunAgentTurnHarness({
+			model,
+			toolExecutor: executor,
+		});
+		expect(
+			await collectAsyncIterable(
+				useCase.run({ sessionId, prompt: 'read', signal: controller.signal }),
+			).then(
+				() => undefined,
+				(error: unknown) => error,
+			),
+		).toHaveProperty('name', 'AbortError');
+		expect(executor.receivedRequests).toHaveLength(0);
+		expect(sessionStore.events.map((event) => event.type)).toEqual(['prompt.submitted']);
+	});
+});
+
+test('failure-event storage failure stops subsequent tools and model rounds with original cause', async () => {
+	const cause = new Error('failed-event append unavailable');
+	const store = new InMemorySessionStore();
+	const append = store.appendSessionEvent.bind(store);
+	store.appendSessionEvent = async (event) => {
+		if (event.type === 'tool.call.failed') throw cause;
+		await append(event);
+	};
+	const executor = createFailingToolExecutor();
+	const model = new ScriptedModel([
+		toolCallResponse([readFileToolCall('one'), readFileToolCall('two')]),
+		textResponse('never'),
+	]);
+	const loop = new RunAgentTurn({
+		sessionStore: store,
+		model,
+		toolExecutor: executor,
+		clock: new FixedClock(),
+		idGenerator: new SequenceIdGenerator(),
+		contextBuilder: new ContextBuilder({ systemPrompt: 'test' }),
+	});
+	expect(
+		await collectAsyncIterable(
+			loop.run({ sessionId: asSessionId('session-1'), prompt: 'read' }),
+		).then(
+			() => undefined,
+			(error: unknown) => error,
+		),
+	).toBe(cause);
+	expect(executor.receivedRequests).toHaveLength(1);
+	expect(model.receivedInputs).toHaveLength(1);
+	expect(store.events.map((event) => event.type)).toEqual([
+		'prompt.submitted',
+		'assistant.tool_calls.completed',
+		'tool.call.requested',
+		'tool.call.started',
+	]);
+	expect(
+		reduceAgentState(asSessionId('session-1'), store.events).messages.map(
+			(message) => message.role,
+		),
+	).toEqual(['user']);
 });

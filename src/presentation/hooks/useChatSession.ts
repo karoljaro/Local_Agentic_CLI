@@ -181,7 +181,7 @@ export const useChatSession = ({
 						});
 					}
 
-					if (turnController.signal.aborted || isAbortError(caughtError)) {
+					if (isAbortError(caughtError)) {
 						entries.push({
 							id: nextLocalId('cancelled'),
 							kind: 'cancelled',

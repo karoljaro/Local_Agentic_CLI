@@ -66,11 +66,14 @@ export const readFileTool = (
 		description:
 			'Read a bounded range from a UTF-8 text file in the current workspace. Use startLine/endLine to select lines or startOffset as a zero-based UTF-16 cursor. When nextRead is returned, pass it unchanged to continue from the first unreturned character. Output startLine/endLine describe touched lines, which may be partial. truncated describes a partial-file view; only nextRead indicates forward content remains.',
 		inputSchema: readFileInputSchema,
-		execute: async (input) => {
-			const file = await workspaceFiles.readFile({
-				path: input.path,
-				maxFileBytes: options.maxFileBytes,
-			});
+		execute: async (input, executionOptions) => {
+			const file = await workspaceFiles.readFile(
+				{
+					path: input.path,
+					maxFileBytes: options.maxFileBytes,
+				},
+				executionOptions,
+			);
 
 			return sliceFile(file, input, options);
 		},

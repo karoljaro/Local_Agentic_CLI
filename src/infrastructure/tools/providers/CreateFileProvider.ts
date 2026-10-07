@@ -26,11 +26,14 @@ export const createFileTool = (
 				.describe('The path for the new file, relative to the workspace root.'),
 			content: z.string().describe('The complete content of the new file.'),
 		}),
-		execute: async (input) => {
-			const file = await workspaceFiles.createFile({
-				...input,
-				maxFileBytes: options.maxFileBytes,
-			});
+		execute: async (input, executionOptions) => {
+			const file = await workspaceFiles.createFile(
+				{
+					...input,
+					maxFileBytes: options.maxFileBytes,
+				},
+				executionOptions,
+			);
 
 			return {
 				path: file.path,

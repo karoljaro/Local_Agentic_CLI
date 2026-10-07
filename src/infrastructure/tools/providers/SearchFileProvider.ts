@@ -17,5 +17,6 @@ export const searchFileTool = (workspaceSearch: WorkspaceSearchPort): LocalTool 
 				.min(1, 'search_file requires a non-empty string query.')
 				.describe('Exact text or | separated alternatives.'),
 		}),
-		execute: async ({ query }) => workspaceSearch.search({ query }),
+		execute: async ({ query }, executionOptions) =>
+			workspaceSearch.search({ query }, executionOptions),
 	});

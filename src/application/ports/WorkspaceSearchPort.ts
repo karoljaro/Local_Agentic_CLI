@@ -1,3 +1,5 @@
+import type { WorkspaceExecutionOptions } from './WorkspaceFilePort';
+
 export type SearchWorkspaceInput = {
 	query: string;
 };
@@ -16,5 +18,8 @@ export type SearchWorkspaceOutput = {
 };
 
 export interface WorkspaceSearchPort {
-	search(input: SearchWorkspaceInput): Promise<SearchWorkspaceOutput>;
+	search(
+		input: SearchWorkspaceInput,
+		options?: WorkspaceExecutionOptions,
+	): Promise<SearchWorkspaceOutput>;
 }

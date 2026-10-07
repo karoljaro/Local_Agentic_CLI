@@ -1,3 +1,4 @@
+import { isAbortError, throwIfAborted } from '../services/cancellation';
 import type {
 	AgentErrorOccurred,
 	AssistantMessageCompleted,
@@ -83,6 +84,7 @@ export class AgentLoop {
 		turnMetrics: AgentTurnMetricsPort | undefined,
 	): AsyncIterable<AgentTurnChunk> {
 		const { sessionId, prompt, modelName, signal } = input;
+		throwIfAborted(signal);
 
 		const promptEvent: PromptSubmitted = {
 			id: this.dependencies.idGenerator.nextEventId(),
@@ -96,8 +98,10 @@ export class AgentLoop {
 		this.dependencies.contextBuilder.assertPromptFits(prompt, promptEvent.messageId);
 
 		await this.sessionStore.appendSessionEvent(promptEvent);
+		throwIfAborted(signal);
 
 		const state = await this.sessionStore.readSessionState(sessionId);
+		throwIfAborted(signal);
 		const { messages } = this.dependencies.contextBuilder.build(state);
 
 		if (this.dependencies.toolExecutor === undefined) {
@@ -127,6 +131,7 @@ export class AgentLoop {
 			turnMetrics,
 		);
 
+		throwIfAborted(signal);
 		await this.appendAssistantCompleted(sessionId, toContent(result));
 	}
 
@@ -160,13 +165,17 @@ export class AgentLoop {
 		let currentMessages = messages;
 
 		for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
+			throwIfAborted(signal);
 			currentMessages = await this.fitModelMessages(sessionId, currentMessages);
+			throwIfAborted(signal);
 			const result = yield* this.readModelResponse(
 				sessionId,
 				withSignal({ messages: currentMessages, tools }, signal),
 				true,
 				turnMetrics,
 			);
+
+			throwIfAborted(signal);
 
 			if (result.toolCalls.length === 0) {
 				await this.appendAssistantCompleted(sessionId, toContent(result));
@@ -184,21 +193,26 @@ export class AgentLoop {
 				throw error;
 			}
 
+			throwIfAborted(signal);
 			const persistedAssistantMessage = await this.appendAssistantToolCallsCompleted(
 				sessionId,
 				toContent(result),
 				persistedToolCalls,
 			);
+			throwIfAborted(signal);
 			const { toolMessages, terminalMessage } = await toolRunner.executeToolCalls(
 				sessionId,
 				persistedToolCalls,
+				signal === undefined ? {} : { signal },
 			);
+			throwIfAborted(signal);
 
 			if (terminalMessage !== undefined) {
 				if (terminalMessage.length > 0) {
 					yield { contentDelta: terminalMessage };
 				}
 
+				throwIfAborted(signal);
 				await this.appendAssistantCompleted(sessionId, terminalMessage);
 				return;
 			}
@@ -244,10 +258,13 @@ export class AgentLoop {
 	): AsyncGenerator<AgentTurnChunk, StreamedModelResponse> {
 		const contentDeltas: string[] = [];
 		const toolCalls: ModelToolCall[] = [];
+		throwIfAborted(input.signal);
 		recordModelRequestMetric(turnMetrics, measureModelRequestCharacters(input));
+		throwIfAborted(input.signal);
 
 		try {
 			for await (const chunk of this.dependencies.model.streamChat(input)) {
+				throwIfAborted(input.signal);
 				toolCalls.push(...(chunk.toolCalls ?? []));
 
 				if (chunk.contentDelta.length > 0) {
@@ -261,10 +278,12 @@ export class AgentLoop {
 		} catch (caughtError) {
 			const error = toError(caughtError);
 
-			await this.tryAppendAgentError(sessionId, error, 'MODEL_STREAM_FAILED');
+			if (!isAbortError(caughtError))
+				await this.tryAppendAgentError(sessionId, error, 'MODEL_STREAM_FAILED');
 			throw error;
 		}
 
+		throwIfAborted(input.signal);
 		return { contentDeltas, toolCalls };
 	}
 

@@ -29,13 +29,16 @@ export const listFilesTool = (
 				.optional()
 				.describe('Optional relative file or directory path. Defaults to the workspace root.'),
 		}),
-		execute: async (input) => {
+		execute: async (input, executionOptions) => {
 			const path = input.path;
 
-			return workspaceFiles.listFiles({
-				...(path === undefined ? {} : { path }),
-				maxEntries: options.maxEntries,
-			});
+			return workspaceFiles.listFiles(
+				{
+					...(path === undefined ? {} : { path }),
+					maxEntries: options.maxEntries,
+				},
+				executionOptions,
+			);
 		},
 	});
 };

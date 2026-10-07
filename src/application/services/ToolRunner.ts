@@ -12,7 +12,13 @@ import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
 import type { MonotonicClockPort } from '../ports/MonotonicClockPort';
 import type { SessionStorePort } from '../ports/SessionStorePort';
-import type { ToolExecutorPort } from '../ports/ToolExecutorPort';
+import type {
+	ToolExecutionOptions,
+	ToolExecutionResult,
+	ToolExecutorPort,
+} from '../ports/ToolExecutorPort';
+
+import { abortError, isAbortError, throwIfAborted } from './cancellation';
 
 export type ToolApprovalRequest = {
 	sessionId: SessionId;
@@ -21,7 +27,10 @@ export type ToolApprovalRequest = {
 	toolInput: unknown;
 };
 
-export type ToolApprovalHandler = (request: ToolApprovalRequest) => Promise<boolean>;
+export type ToolApprovalHandler = (
+	request: ToolApprovalRequest,
+	options: ToolExecutionOptions,
+) => Promise<boolean>;
 
 export type PersistedModelToolCall = ModelToolCall & { id: ToolCallId };
 
@@ -80,22 +89,30 @@ export class ToolRunner {
 	async executeToolCalls(
 		sessionId: SessionId,
 		toolCalls: PersistedModelToolCall[],
+		options: ToolExecutionOptions = {},
 	): Promise<ToolExecutionBatchResult> {
 		const toolMessages: ModelMessage[] = [];
 
 		for (const [toolCallIndex, toolCall] of toolCalls.entries()) {
+			throwIfAborted(options.signal);
 			const { id: toolCallId, name: toolName } = toolCall;
 			const requestedEvent = await this.appendToolCallRequested(sessionId, toolCall);
 
-			if (requestedEvent.approvalRequired) {
-				const approved = await this.requestToolApproval({
-					sessionId,
-					toolCallId,
-					toolName,
-					toolInput: toolCall.arguments,
-				});
+			throwIfAborted(options.signal);
 
-				if (!approved) {
+			if (requestedEvent.approvalRequired) {
+				const approved = await this.requestToolApproval(
+					{
+						sessionId,
+						toolCallId,
+						toolName,
+						toolInput: toolCall.arguments,
+					},
+					options,
+				);
+				throwIfAborted(options.signal);
+
+				if (approved === false) {
 					const errorMessage = `Tool call was not approved: ${toolName}`;
 
 					await this.appendToolCallFailed({
@@ -107,6 +124,7 @@ export class ToolRunner {
 					});
 
 					for (const cancelledToolCall of toolCalls.slice(toolCallIndex + 1)) {
+						throwIfAborted(options.signal);
 						await this.appendToolCallRequested(sessionId, cancelledToolCall);
 						await this.appendToolCallFailed({
 							sessionId,
@@ -124,41 +142,39 @@ export class ToolRunner {
 				}
 			}
 
+			const toolDefinition = getToolDefinition(toolName, this.tools);
+			const cacheKey =
+				toolDefinition.deduplicate === true
+					? JSON.stringify([toolName, toolCall.arguments])
+					: undefined;
+			const previousResult =
+				cacheKey === undefined ? undefined : this.toolResultReferences.get(cacheKey);
 			await this.appendToolCallStarted(sessionId, toolCallId, toolName);
+			throwIfAborted(options.signal);
 			const executionStartedAt = this.readMonotonicClock();
-			let executionMetricRecorded = false;
+			throwIfAborted(options.signal);
+			let result: ToolExecutionResult | undefined;
+			let executionFailure: { error: Error } | undefined;
 
-			try {
-				const { output, reused } = await this.executeToolCall(toolCall);
-				this.recordToolExecution({
-					toolName,
-					durationMs: this.elapsedMilliseconds(executionStartedAt),
-					outputCharacters: stringifyToolOutput(output).length,
-					failed: false,
-					reused,
-				});
-				executionMetricRecorded = true;
-				await this.appendToolCallCompleted(sessionId, toolCallId, toolName, output);
-				toolMessages.push({
-					role: 'tool',
-					toolCallId,
-					toolName,
-					content: stringifyToolOutput(output),
-				});
-			} catch (caughtError) {
-				const error = toError(caughtError);
-				const errorOutput = { error: { message: error.message } };
-
-				if (!executionMetricRecorded) {
-					this.recordToolExecution({
-						toolName,
-						durationMs: this.elapsedMilliseconds(executionStartedAt),
-						outputCharacters: stringifyToolOutput(errorOutput).length,
-						failed: true,
-						reused: false,
-					});
+			if (previousResult === undefined) {
+				try {
+					result = await this.dependencies.toolExecutor.execute(
+						{
+							toolName,
+							toolInput: toolCall.arguments,
+						},
+						options,
+					);
+				} catch (caughtError) {
+					if (isAbortError(caughtError)) throw caughtError;
+					executionFailure = { error: toError(caughtError) };
 				}
+			}
 
+			if (executionFailure !== undefined) {
+				const { error } = executionFailure;
+				const errorOutput = { error: { message: error.message } };
+				this.recordToolExecution(toolName, executionStartedAt, errorOutput, true, false);
 				await this.appendToolCallFailed({
 					sessionId,
 					toolCallId,
@@ -173,51 +189,51 @@ export class ToolRunner {
 					toolName,
 					content: stringifyToolOutput(errorOutput),
 				});
+			} else {
+				const output =
+					previousResult === undefined
+						? result!.output
+						: createCachedToolOutput(previousResult.sourceToolCallId);
+				if (cacheKey !== undefined && previousResult === undefined) {
+					this.toolResultReferences.set(cacheKey, { sourceToolCallId: toolCallId });
+				}
+				if (toolDefinition.invalidatesWorkspaceCache === true) this.toolResultReferences.clear();
+				this.recordToolExecution(
+					toolName,
+					executionStartedAt,
+					output,
+					false,
+					previousResult !== undefined,
+				);
+				// Serialization and persistence failures are turn failures, never executor failures.
+				const content = stringifyToolOutput(output);
+				await this.appendToolCallCompleted(sessionId, toolCallId, toolName, output);
+				toolMessages.push({ role: 'tool', toolCallId, toolName, content });
 			}
+			// In-flight work is awaited and recorded before honoring cancellation.
+			throwIfAborted(options.signal);
 		}
 
 		return { toolMessages };
 	}
 
-	private async executeToolCall(
-		toolCall: PersistedModelToolCall,
-	): Promise<{ output: unknown; reused: boolean }> {
-		const toolDefinition = getToolDefinition(toolCall.name, this.tools);
-		const cacheKey =
-			toolDefinition.deduplicate === true
-				? JSON.stringify([toolCall.name, toolCall.arguments])
-				: undefined;
-		const previousResult =
-			cacheKey === undefined ? undefined : this.toolResultReferences.get(cacheKey);
-		let output: unknown;
-		const reused = previousResult !== undefined;
-
-		if (previousResult === undefined) {
-			const result = await this.dependencies.toolExecutor.execute({
-				toolName: toolCall.name,
-				toolInput: toolCall.arguments,
-			});
-			output = result.output;
-
-			if (cacheKey !== undefined) {
-				this.toolResultReferences.set(cacheKey, { sourceToolCallId: toolCall.id });
-			}
-		} else {
-			output = createCachedToolOutput(previousResult.sourceToolCallId);
-		}
-
-		if (toolDefinition.invalidatesWorkspaceCache === true) {
-			this.toolResultReferences.clear();
-		}
-
-		return { output, reused };
-	}
-
-	private recordToolExecution(metric: Parameters<AgentTurnMetricsPort['recordToolExecution']>[0]) {
+	private recordToolExecution(
+		toolName: string,
+		startedAt: number | undefined,
+		output: unknown,
+		failed: boolean,
+		reused: boolean,
+	): void {
 		try {
-			this.dependencies.turnMetrics?.recordToolExecution(metric);
+			this.dependencies.turnMetrics?.recordToolExecution({
+				toolName,
+				durationMs: this.elapsedMilliseconds(startedAt),
+				outputCharacters: stringifyToolOutput(output).length,
+				failed,
+				reused,
+			});
 		} catch {
-			// Diagnostics must not change tool behavior.
+			// Diagnostic calculations and recording must not change tool behavior.
 		}
 	}
 
@@ -295,15 +311,48 @@ export class ToolRunner {
 		await this.dependencies.sessionStore.appendSessionEvent(event);
 	}
 
-	private async requestToolApproval(request: ToolApprovalRequest): Promise<boolean> {
-		if (this.dependencies.approveToolCall === undefined) {
-			return false;
-		}
-
+	private async requestToolApproval(
+		request: ToolApprovalRequest,
+		options: ToolExecutionOptions,
+	): Promise<boolean> {
+		const { signal } = options;
+		throwIfAborted(signal);
+		let onAbort: (() => void) | undefined;
 		try {
-			return await this.dependencies.approveToolCall(request);
-		} catch {
-			return false;
+			const aborted = new Promise<never>((_resolve, reject) => {
+				onAbort = () => reject(abortError());
+				signal?.addEventListener('abort', onAbort, { once: true });
+			});
+			// The race attaches rejection handling even when the underlying handler settles late.
+			const approval = Promise.resolve().then(() => {
+				throwIfAborted(signal);
+				return this.dependencies.approveToolCall?.(request, options) ?? false;
+			});
+			const approved = await Promise.race([approval, aborted]);
+			throwIfAborted(signal);
+			return approved;
+		} catch (error) {
+			if (!isAbortError(error)) {
+				try {
+					await this.dependencies.sessionStore.appendSessionEvent({
+						id: this.dependencies.idGenerator.nextEventId(),
+						sessionId: request.sessionId,
+						type: 'agent.error',
+						timestamp: this.dependencies.clock.now(),
+						error: {
+							message: toError(error).message,
+							code: 'TOOL_APPROVAL_FAILED',
+							recoverable: true,
+							details: { name: toError(error).name },
+						},
+					});
+				} catch {
+					// Error reporting is best effort; retain the approval handler's original cause.
+				}
+			}
+			throw error;
+		} finally {
+			if (onAbort !== undefined) signal?.removeEventListener('abort', onAbort);
 		}
 	}
 

@@ -1,6 +1,7 @@
-import { describe, expect, test } from 'bun:test';
+import { createDeferred } from '@/test-support/createDeferred';
+import { describe, expect, test, spyOn } from 'bun:test';
 
-import { RipgrepSearch, type RipgrepCommandRunner } from './RipgrepSearch';
+import { RipgrepSearch, runRipgrepCommand, type RipgrepCommandRunner } from './RipgrepSearch';
 
 type CommandFixture = {
 	stdout: string;
@@ -213,4 +214,174 @@ describe('RipgrepSearch', () => {
 		);
 		expect(secondRunnerFinished).toBe(true);
 	});
+});
+
+describe('Ripgrep cancellation cleanup', () => {
+	test('already aborted starts neither branch', async () => {
+		let commands = 0;
+		const search = createSearch(async () => {
+			commands++;
+			return { stderr: '', exitCode: 0, stoppedEarly: false };
+		});
+		const controller = new AbortController();
+		controller.abort('custom');
+		expect(
+			await search.search({ query: 'needle' }, { signal: controller.signal }).then(
+				() => undefined,
+				(error: unknown) => error,
+			),
+		).toHaveProperty('name', 'AbortError');
+		expect(commands).toBe(0);
+	});
+
+	test('both branches receive the same signal and cancellation awaits both cleanup paths', async () => {
+		const controller = new AbortController();
+		const first = createDeferred<void>();
+		const second = createDeferred<void>();
+		const ready = createDeferred<void>();
+		let commands = 0;
+		let cleaned = 0;
+		const search = createSearch(async ({ signal }) => {
+			expect(signal).toBe(controller.signal);
+			const gate = commands++ === 0 ? first : second;
+			const aborted = createDeferred<void>();
+			const onAbort = () => aborted.resolve();
+			signal?.addEventListener('abort', onAbort);
+			if (commands === 2) ready.resolve();
+			try {
+				await aborted.promise;
+				await gate.promise;
+				throw new DOMException('cancelled', 'AbortError');
+			} finally {
+				signal?.removeEventListener('abort', onAbort);
+				cleaned++;
+			}
+		});
+		let settled = false;
+		const outcome = search
+			.search({ query: 'needle' }, { signal: controller.signal })
+			.then(
+				() => undefined,
+				(error: unknown) => error,
+			)
+			.then((error) => {
+				settled = true;
+				return error;
+			});
+		await ready.promise;
+		controller.abort();
+		first.resolve();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(settled).toBe(false);
+		second.resolve();
+		expect(await outcome).toHaveProperty('name', 'AbortError');
+		expect(cleaned).toBe(2);
+	});
+
+	test('independent branch failure retains its cause even when another branch aborts', async () => {
+		const cause = new Error('independent process failure');
+		let calls = 0;
+		const search = createSearch(async () => {
+			if (calls++ === 0) throw new DOMException('cancelled', 'AbortError');
+			throw cause;
+		});
+		expect(
+			await search.search({ query: 'needle' }).then(
+				() => undefined,
+				(error: unknown) => error,
+			),
+		).toBe(cause);
+	});
+
+	for (const termination of ['abort', 'limit', 'consumer failure'] as const) {
+		test(`real child settles and removes listeners after ${termination}`, async () => {
+			const controller = new AbortController();
+			const added: unknown[] = [];
+			const removed: unknown[] = [];
+			const add = controller.signal.addEventListener.bind(controller.signal);
+			const remove = controller.signal.removeEventListener.bind(controller.signal);
+			controller.signal.addEventListener = (
+				type: string,
+				listener: EventListenerOrEventListenerObject,
+				options?: boolean | AddEventListenerOptions,
+			) => {
+				added.push(listener);
+				add(type, listener, options);
+			};
+			controller.signal.removeEventListener = (
+				type: string,
+				listener: EventListenerOrEventListenerObject,
+				options?: boolean | EventListenerOptions,
+			) => {
+				removed.push(listener);
+				remove(type, listener, options);
+			};
+			const cause = new Error('consumer failed');
+			let pid = 0;
+			const outcome = await runRipgrepCommand({
+				cmd: [process.execPath, '-e', 'console.log(process.pid); setInterval(() => {}, 1000);'],
+				cwd: process.cwd(),
+				timeoutMs: 2000,
+				signal: controller.signal,
+				onStdoutLine: (line) => {
+					pid = Number(line);
+					if (termination === 'abort') controller.abort();
+					if (termination === 'consumer failure') {
+						controller.abort();
+						throw cause;
+					}
+					return termination !== 'limit';
+				},
+			}).then(
+				(result) => result,
+				(error: unknown) => error,
+			);
+			if (termination === 'abort') expect(outcome).toHaveProperty('name', 'AbortError');
+			if (termination === 'limit') expect(outcome).toMatchObject({ stoppedEarly: true });
+			if (termination === 'consumer failure') expect(outcome).toBe(cause);
+			expect(pid).toBeGreaterThan(0);
+			expect(() => process.kill(pid, 0)).toThrow();
+			expect(removed).toEqual(added);
+		});
+	}
+});
+
+test('abort releases both process stream readers after draining and child settlement', async () => {
+	const originalSpawn = Bun.spawn;
+	let stdout: ReadableStream<Uint8Array> | undefined;
+	let stderr: ReadableStream<Uint8Array> | undefined;
+	const spawnSpy = spyOn(Bun, 'spawn').mockImplementation(((
+		...args: Parameters<typeof Bun.spawn>
+	) => {
+		const subprocess = originalSpawn(...args);
+		stdout = subprocess.stdout as ReadableStream<Uint8Array>;
+		stderr = subprocess.stderr as ReadableStream<Uint8Array>;
+		return subprocess;
+	}) as typeof Bun.spawn);
+	const controller = new AbortController();
+	try {
+		const outcome = await runRipgrepCommand({
+			cmd: [
+				process.execPath,
+				'-e',
+				'console.error("diagnostic"); console.log("ready"); setInterval(() => {}, 1000);',
+			],
+			cwd: process.cwd(),
+			timeoutMs: 2000,
+			signal: controller.signal,
+			onStdoutLine: () => {
+				controller.abort();
+				return true;
+			},
+		}).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(outcome).toHaveProperty('name', 'AbortError');
+		expect(stdout?.locked).toBe(false);
+		expect(stderr?.locked).toBe(false);
+	} finally {
+		spawnSpy.mockRestore();
+	}
 });

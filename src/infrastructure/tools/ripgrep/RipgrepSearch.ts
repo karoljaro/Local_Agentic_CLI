@@ -1,3 +1,5 @@
+import type { WorkspaceExecutionOptions } from '@/application/ports/WorkspaceFilePort';
+import { abortError, isAbortError, throwIfAborted } from '@/application/services/cancellation';
 import { existsSync, realpathSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +27,7 @@ type RipgrepRunInput = {
 	maxMatchTextLength: number;
 	globs: string[];
 	runCommand: RipgrepCommandRunner;
+	signal?: AbortSignal;
 };
 
 export type RipgrepCommandInput = {
@@ -32,6 +35,7 @@ export type RipgrepCommandInput = {
 	cwd: string;
 	timeoutMs: number;
 	onStdoutLine: (line: string) => boolean;
+	signal?: AbortSignal;
 };
 
 export type RipgrepCommandOutput = {
@@ -64,8 +68,11 @@ const rgPath = resolveRipgrepPath();
 export class RipgrepSearch implements WorkspaceSearchPort {
 	constructor(private readonly options: RipgrepSearchOptions) {}
 
-	search(input: SearchWorkspaceInput): Promise<SearchWorkspaceOutput> {
-		return searchWithRipgrep(input.query, this.options);
+	search(
+		input: SearchWorkspaceInput,
+		executionOptions: WorkspaceExecutionOptions = {},
+	): Promise<SearchWorkspaceOutput> {
+		return searchWithRipgrep(input.query, this.options, executionOptions);
 	}
 }
 
@@ -78,7 +85,9 @@ const searchWithRipgrep = async (
 		maxMatchTextLength,
 		runCommand = runRipgrepCommand,
 	}: RipgrepSearchOptions,
+	{ signal }: WorkspaceExecutionOptions,
 ): Promise<SearchWorkspaceOutput> => {
+	throwIfAborted(signal);
 	const alternatives = query
 		.split('|')
 		.map((part) => part.trim())
@@ -91,6 +100,7 @@ const searchWithRipgrep = async (
 		maxMatches,
 		maxMatchTextLength,
 		runCommand,
+		...(signal === undefined ? {} : { signal }),
 	};
 
 	const settledResults = await Promise.allSettled([
@@ -103,14 +113,16 @@ const searchWithRipgrep = async (
 			globs: [...SAFE_ENV_GLOBS, ...EXCLUDED_GLOBS],
 		}),
 	]);
-	const failedResult = settledResults.find(
+	const failures = settledResults.filter(
 		(result): result is PromiseRejectedResult => result.status === 'rejected',
 	);
+	const failedResult = failures.find((result) => !isAbortError(result.reason)) ?? failures[0];
 
 	if (failedResult !== undefined) {
 		throw failedResult.reason;
 	}
 
+	throwIfAborted(signal);
 	const results = settledResults
 		.filter(
 			(result): result is PromiseFulfilledResult<BoundedSearchResult> =>
@@ -138,7 +150,9 @@ const runRipgrep = async ({
 	maxMatchTextLength,
 	globs,
 	runCommand,
+	signal,
 }: RipgrepRunInput): Promise<BoundedSearchResult> => {
+	throwIfAborted(signal);
 	const command = [
 		rgPath,
 		'--json',
@@ -159,6 +173,7 @@ const runRipgrep = async ({
 			cmd: command,
 			cwd: workspaceRoot,
 			timeoutMs,
+			...(signal === undefined ? {} : { signal }),
 			onStdoutLine: (line) => {
 				const match = parseRipgrepMatch(line, maxMatchTextLength);
 
@@ -189,42 +204,66 @@ const runRipgrep = async ({
 		throw new Error(`search_file failed: ${message}`);
 	}
 
+	throwIfAborted(signal);
 	return {
 		matches: matches.slice(0, maxMatches),
 		truncated: result.stoppedEarly || matches.length > maxMatches,
 	};
 };
 
-const runRipgrepCommand: RipgrepCommandRunner = async ({ cmd, cwd, timeoutMs, onStdoutLine }) => {
-	const subprocess = Bun.spawn({
-		cmd,
-		cwd,
-		stdout: 'pipe',
-		stderr: 'pipe',
-		timeout: timeoutMs,
-	});
-	const stderrPromise = new Response(subprocess.stderr).text();
-	const exitCodePromise = subprocess.exited;
+export const runRipgrepCommand: RipgrepCommandRunner = async ({
+	cmd,
+	cwd,
+	timeoutMs,
+	onStdoutLine,
+	signal,
+}) => {
+	throwIfAborted(signal);
+	const subprocess = Bun.spawn({ cmd, cwd, stdout: 'pipe', stderr: 'pipe', timeout: timeoutMs });
+	let cancelled = false;
+	const onAbort = () => {
+		cancelled = true;
+		subprocess.kill();
+	};
+	signal?.addEventListener('abort', onAbort, { once: true });
+	const settledOutput = Promise.allSettled([readStreamText(subprocess.stderr), subprocess.exited]);
 	let stoppedEarly = false;
-	let consumerError: unknown;
+	let consumerFailure: { cause: unknown } | undefined;
 
 	try {
-		stoppedEarly = await consumeLines(subprocess.stdout, onStdoutLine);
-	} catch (caughtError) {
-		consumerError = caughtError;
+		if (signal?.aborted) onAbort();
+		try {
+			stoppedEarly = await consumeLines(subprocess.stdout, onStdoutLine);
+		} catch (cause) {
+			consumerFailure = { cause };
+		}
+		if (stoppedEarly || consumerFailure !== undefined) subprocess.kill();
+		const results = await settledOutput;
+		if (consumerFailure !== undefined) throw consumerFailure.cause;
+		const [stderr, exitCode] = results;
+		if (stderr.status === 'rejected') throw stderr.reason;
+		if (exitCode.status === 'rejected') throw exitCode.reason;
+		if (cancelled) throw abortError();
+		return { stderr: stderr.value, exitCode: exitCode.value, stoppedEarly };
+	} finally {
+		signal?.removeEventListener('abort', onAbort);
 	}
+};
 
-	if (stoppedEarly || consumerError !== undefined) {
-		subprocess.kill();
+const readStreamText = async (stream: ReadableStream<Uint8Array>): Promise<string> => {
+	const reader = stream.getReader();
+	const decoder = new TextDecoder();
+	let text = '';
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) return text + decoder.decode();
+			text += decoder.decode(value, { stream: true });
+		}
+	} finally {
+		await reader.cancel().catch(() => undefined);
+		reader.releaseLock();
 	}
-
-	const [stderr, exitCode] = await Promise.all([stderrPromise, exitCodePromise]);
-
-	if (consumerError !== undefined) {
-		throw consumerError;
-	}
-
-	return { stderr, exitCode, stoppedEarly };
 };
 
 const consumeLines = async (

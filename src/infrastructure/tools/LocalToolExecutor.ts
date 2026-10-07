@@ -1,4 +1,6 @@
+import { throwIfAborted } from '@/application/services/cancellation';
 import type {
+	ToolExecutionOptions,
 	ToolExecutionRequest,
 	ToolExecutionResult,
 	ToolExecutorPort,
@@ -45,13 +47,18 @@ export class LocalToolRegistry implements ToolExecutorPort {
 		}
 	}
 
-	async execute(request: ToolExecutionRequest): Promise<ToolExecutionResult> {
+	async execute(
+		request: ToolExecutionRequest,
+		options: ToolExecutionOptions = {},
+	): Promise<ToolExecutionResult> {
+		throwIfAborted(options.signal);
 		const prepared = this.prepare(request);
+		throwIfAborted(options.signal);
 		const tool = this.getTool(prepared.toolName);
 
 		return {
 			toolName: tool.name,
-			output: await tool.execute(prepared.toolInput),
+			output: await tool.execute(prepared.toolInput, options),
 		};
 	}
 
