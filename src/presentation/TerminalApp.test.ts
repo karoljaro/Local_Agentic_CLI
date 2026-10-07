@@ -5,6 +5,8 @@ import { afterEach, expect, spyOn, test } from 'bun:test';
 import {
 	CodeRenderable,
 	MarkdownRenderable,
+	SyntaxStyle,
+	TextAttributes,
 	TextRenderable,
 	TreeSitterClient,
 	type Renderable,
@@ -22,6 +24,35 @@ import {
 	toolCallFailedEvent,
 } from '@/test-support/AgentEventFixtures';
 import { TerminalApp } from './TerminalApp';
+
+const markdownFragments = [
+	'#',
+	'#',
+	' Thi',
+	's is a Markdown heading',
+	'\n\n',
+	'*',
+	'*',
+	'bold',
+	'*',
+	'*',
+	' and _',
+	'italic',
+	'_',
+	'\n\n',
+	'-',
+	' item',
+	'\n- ',
+	'second',
+	'\n\n',
+	'`',
+	'`',
+	'`ts\n',
+	'const answer = 42;\n',
+	'`',
+	'`',
+	'`',
+];
 
 const parsers: MockTreeSitterClient[] = [];
 afterEach(async () => {
@@ -231,6 +262,124 @@ test('streaming is visible before completion and durable output renders once', a
 	}
 });
 
+test('native unconcealed Markdown changes frozen emphasis/fence frames that Text keeps stable', async () => {
+	const directory = await mkdtemp(join(tmpdir(), 'codesh-live-markdown-'));
+	const real = new TreeSitterClient({ dataPath: directory });
+	const syntax = SyntaxStyle.fromStyles({
+		default: { fg: '#ffffff' },
+		'markup.heading': { bold: true },
+		'markup.strong': { bold: true },
+		'markup.italic': { italic: true },
+	});
+	try {
+		await real.initialize();
+		for (const width of [74, 26]) {
+			for (const mode of ['text', 'markdown'] as const) {
+				const native = await createTestRenderer({ width, height: 40, useThread: false });
+				const parser = new MockTreeSitterClient();
+				const highlight = spyOn(parser, 'highlightOnce');
+				const live =
+					mode === 'text'
+						? new TextRenderable(native.renderer, {
+								id: 'live-output',
+								width: '100%',
+								content: '',
+								wrapMode: 'word',
+							})
+						: new MarkdownRenderable(native.renderer, {
+								id: 'live-output',
+								width: '100%',
+								content: '',
+								syntaxStyle: syntax,
+								streaming: true,
+								conceal: false,
+								concealCode: false,
+								tableOptions: { style: 'columns' },
+								treeSitterClient: parser,
+							});
+				native.renderer.root.add(live);
+				const crop = () =>
+					native
+						.captureCharFrame()
+						.split('\n')
+						.slice(live.y, live.y + live.height)
+						.map((row) => row.slice(live.x, live.x + live.width).trimEnd())
+						.join('\n')
+						.trimEnd();
+				let content = '';
+				const textChanges: number[] = [];
+				const heightChanges: number[] = [];
+				try {
+					for (const [stage, fragment] of markdownFragments.entries()) {
+						content += fragment;
+						live.content = content;
+						await native.renderOnce();
+						const preview = crop();
+						const previewHeight = live.height;
+						const pending: Promise<void>[] = [];
+						const collect = (node: Renderable) => {
+							if (node instanceof CodeRenderable) pending.push(node.highlightingDone);
+							for (const child of node.getChildren()) collect(child);
+						};
+						collect(live);
+						for (const [source, filetype] of highlight.mock.calls) {
+							const result = await real.highlightOnce(source, filetype);
+							expect(result.error).toBeUndefined();
+							expect(result.warning).toBeUndefined();
+							parser.setMockResult(result);
+							parser.resolveHighlightOnce(0);
+						}
+						if (mode === 'text') expect(highlight).not.toHaveBeenCalled();
+						highlight.mockClear();
+						await Promise.all(pending);
+						await native.renderOnce();
+						const settled = crop();
+						const height = live.height;
+						if (preview !== settled) textChanges.push(stage);
+						if (previewHeight !== height) heightChanges.push(stage);
+						if (mode === 'text' && width === 74) expect(settled).toBe(content.trimEnd());
+						if (mode === 'markdown' && stage === 12) {
+							expect(preview).toContain('**bold** and *italic*');
+							expect(settled).toContain('**bold** and _italic_');
+							const spans = native.captureSpans().lines.flatMap((line) => line.spans);
+							expect(
+								spans.find((span) => span.text === '**bold**')!.attributes & TextAttributes.BOLD,
+							).toBeTruthy();
+							expect(
+								spans.find((span) => span.text === '_italic_')!.attributes & TextAttributes.ITALIC,
+							).toBeTruthy();
+						}
+						if (mode === 'markdown' && stage === 22) {
+							expect(preview).not.toContain('const answer = 42;');
+							expect(settled).toContain('const answer = 42;');
+						}
+						await native.renderOnce();
+						expect(crop()).toBe(settled);
+						expect(live.height).toBe(height);
+						expect(native.renderer.root.getChildren()).toEqual([live]);
+					}
+					if (mode === 'text') {
+						expect(textChanges).toEqual([]);
+						expect(heightChanges).toEqual([]);
+					} else {
+						expect(textChanges).toEqual([12, 14, 15, 16, 17, 19, 20, 21, 22, 23, 24, 25]);
+						expect(heightChanges).toEqual([16, 23, 25]);
+					}
+				} finally {
+					parser.resolveAllHighlightOnce();
+					native.renderer.destroy();
+					highlight.mockRestore();
+					await parser.destroy();
+				}
+			}
+		}
+	} finally {
+		syntax.destroy();
+		await real.destroy();
+		await rm(directory, { recursive: true, force: true });
+	}
+});
+
 test('Markdown boundary deltas stay literal in one stable live Text owner until native Markdown commit', async () => {
 	const directory = await mkdtemp(join(tmpdir(), 'codesh-streaming-render-'));
 	const parser = new TreeSitterClient({ dataPath: directory });
@@ -245,34 +394,7 @@ test('Markdown boundary deltas stay literal in one stable live Text owner until 
 		useThread: false,
 	});
 	const runtime = new FakeTerminalRuntime();
-	const fragments = [
-		'#',
-		'#',
-		' Thi',
-		's is a Markdown heading',
-		'\n\n',
-		'*',
-		'*',
-		'bold',
-		'*',
-		'*',
-		' and _',
-		'italic',
-		'_',
-		'\n\n',
-		'-',
-		' item',
-		'\n- ',
-		'second',
-		'\n\n',
-		'`',
-		'`',
-		'`ts\n',
-		'const answer = 42;\n',
-		'`',
-		'`',
-		'`',
-	];
+	const fragments = markdownFragments;
 	const received = fragments.map(() => createDeferred<void>());
 	const releases = fragments.map(() => createDeferred<void>());
 	runtime.script = async function* () {
