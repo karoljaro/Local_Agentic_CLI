@@ -207,6 +207,60 @@ test('durable completion is authoritative before iterator end and produces no du
 	}
 });
 
+test('Markdown boundary flushes preserve history and clear live before authoritative entry notification', async () => {
+	const runtime = new ControlledRuntime();
+	const historical = assistantMessageCompletedEvent({ content: 'Historical answer.' });
+	runtime.loaded.push(historical);
+	const changes: ConversationChange[] = [];
+	let conversation: Conversation;
+	conversation = new Conversation(runtime, (change) => {
+		changes.push(change);
+		if (change.type === 'entry' && change.entry.kind === 'assistant') {
+			expect(conversation.liveContent).toBe('');
+		}
+	});
+	try {
+		await conversation.initialize();
+		const history = conversation.history;
+		const entry = history[0];
+		expect(conversation.submit('Stream syntax')).toBe(true);
+		await waitFor(() => runtime.turns[0]?.ready === true);
+		const turn = runtime.turns[0]!;
+		let content = '';
+		for (const fragment of ['#', '#', ' Thi', 's is a heading\n\n', '**', 'bold', '**']) {
+			const before = changes.length;
+			await turn.delta(fragment);
+			content += fragment;
+			await waitFor(() => conversation.liveContent === content);
+			expect(conversation.history).toBe(history);
+			expect(conversation.history).toHaveLength(1);
+			expect(conversation.history[0]).toBe(entry);
+			expect(changes.slice(before)).toEqual([{ type: 'live', content }]);
+			expect(runtime.listeners.size).toBe(1);
+		}
+		const event = assistantMessageCompletedEvent({
+			id: asEventId('syntax-complete'),
+			content: `${content}\n\nAuthoritative tail.`,
+		});
+		const beforeCommit = changes.length;
+		runtime.publish(event);
+		expect(changes.slice(beforeCommit).map((change) => change.type)).toEqual(['live', 'entry']);
+		expect(changes[beforeCommit]).toEqual({ type: 'live', content: '' });
+		expect(conversation.history[1]?.content).toBe(event.content);
+		expect(conversation.liveContent).toBe('');
+		runtime.publish(event);
+		turn.finish();
+		await waitFor(() => !conversation.running);
+		expect(conversation.history).toHaveLength(2);
+		expect(conversation.history[0]).toBe(entry);
+		expect(conversation.liveContent).toBe('');
+	} finally {
+		const closing = conversation.dispose();
+		for (const turn of runtime.turns) turn.finish();
+		await closing;
+	}
+});
+
 for (const content of ['', ' \n\t']) {
 	test(`empty durable completion clears live output without manufacturing history: ${JSON.stringify(content)}`, async () => {
 		const p = await setup();

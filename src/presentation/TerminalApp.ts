@@ -35,7 +35,7 @@ export class TerminalApp {
 	private readonly model: TextRenderable;
 	private readonly session: TextRenderable;
 	private readonly activity: TextRenderable;
-	private readonly live: MarkdownRenderable;
+	private readonly live: TextRenderable;
 	private readonly liveRegion: BoxRenderable;
 	private readonly suggestions: SelectRenderable;
 	private readonly syntax: SyntaxStyle;
@@ -112,15 +112,14 @@ export class TerminalApp {
 			flexShrink: 0,
 			visible: false,
 		});
-		this.live = new MarkdownRenderable(renderer, {
+		// Incomplete Markdown alternates between parser previews and concealed highlights.
+		// Keep the live buffer literal; appendEntry renders the final assistant Markdown once.
+		this.live = new TextRenderable(renderer, {
 			id: 'live-output',
 			width: '100%',
 			content: '',
-			syntaxStyle: this.syntax,
-			streaming: true,
+			wrapMode: 'word',
 			fg: RGBA.defaultForeground(),
-			tableOptions: { style: 'columns' },
-			...(treeSitterClient ? { treeSitterClient } : {}),
 		});
 		this.liveRegion.add(this.live);
 		this.transcript.add(this.liveRegion);

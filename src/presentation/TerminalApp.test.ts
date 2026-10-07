@@ -1,4 +1,14 @@
-import { afterEach, expect, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, expect, spyOn, test } from 'bun:test';
+import {
+	CodeRenderable,
+	MarkdownRenderable,
+	TextRenderable,
+	TreeSitterClient,
+	type Renderable,
+} from '@opentui/core';
 import { createTestRenderer, MockTreeSitterClient } from '@opentui/core/testing';
 import { asSessionId, asToolCallId } from '@/domain/Ids';
 import { createDeferred } from '@/test-support/createDeferred';
@@ -218,6 +228,165 @@ test('streaming is visible before completion and durable output renders once', a
 	} finally {
 		release.resolve();
 		await ui.app.shutdown();
+	}
+});
+
+test('Markdown boundary deltas stay literal in one stable live Text owner until native Markdown commit', async () => {
+	const directory = await mkdtemp(join(tmpdir(), 'codesh-streaming-render-'));
+	const parser = new TreeSitterClient({ dataPath: directory });
+	const highlight = spyOn(parser, 'highlightOnce');
+	const native = await createTestRenderer({
+		width: 80,
+		height: 40,
+		screenMode: 'alternate-screen',
+		exitOnCtrlC: false,
+		exitSignals: [],
+		autoFocus: false,
+		useThread: false,
+	});
+	const runtime = new FakeTerminalRuntime();
+	const fragments = [
+		'#',
+		'#',
+		' Thi',
+		's is a Markdown heading',
+		'\n\n',
+		'*',
+		'*',
+		'bold',
+		'*',
+		'*',
+		' and _',
+		'italic',
+		'_',
+		'\n\n',
+		'-',
+		' item',
+		'\n- ',
+		'second',
+		'\n\n',
+		'`',
+		'`',
+		'`ts\n',
+		'const answer = 42;\n',
+		'`',
+		'`',
+		'`',
+	];
+	const received = fragments.map(() => createDeferred<void>());
+	const releases = fragments.map(() => createDeferred<void>());
+	runtime.script = async function* () {
+		for (const [index, fragment] of fragments.entries()) {
+			yield { contentDelta: fragment };
+			received[index]!.resolve();
+			await releases[index]!.promise;
+		}
+	};
+	const app = new TerminalApp(native.renderer, runtime, 'new', parser);
+	const waitFor = async (condition: () => boolean) => {
+		const deadline = Date.now() + 2000;
+		while (!condition()) {
+			if (Date.now() >= deadline) throw new Error('Live rendering condition timed out');
+			await Bun.sleep(1);
+		}
+	};
+	try {
+		await parser.initialize();
+		await app.ready;
+		runtime.complete(app.conversation.sessionId, 'Historical answer stays.');
+		await native.renderOnce();
+		const historical = app.transcript.getChildren()[0]!;
+		const historicalMarkdown = historical.getChildren()[0]!;
+		expect(historicalMarkdown).toBeInstanceOf(MarkdownRenderable);
+		await (historicalMarkdown.getChildren()[0] as CodeRenderable).highlightingDone;
+		highlight.mockClear();
+		app.conversation.submit('Stream Markdown boundaries');
+		await received[0]!.promise;
+		const committed = app.transcript.getChildren().filter((node) => node.id.startsWith('entry:'));
+		const liveRegion = app.transcript.findDescendantById('live-round')!;
+		const live = liveRegion.getChildren()[0]!;
+		expect(live instanceof TextRenderable).toBe(true);
+		const text = live as TextRenderable;
+		let content = '';
+		for (const [index, fragment] of fragments.entries()) {
+			await received[index]!.promise;
+			content += fragment;
+			await waitFor(() => app.conversation.liveContent === content);
+			await native.renderOnce();
+			expect(text.plainText).toBe(content);
+			expect(liveRegion.visible).toBe(true);
+			expect(liveRegion.getChildren()).toHaveLength(1);
+			expect(liveRegion.getChildren()[0]).toBe(live);
+			expect(app.transcript.findDescendantById('live-output')).toBe(live);
+			expect(app.transcript.getChildren().filter((node) => node.id === 'live-round')).toHaveLength(
+				1,
+			);
+			const entries = app.transcript.getChildren().filter((node) => node.id.startsWith('entry:'));
+			expect(entries).toHaveLength(committed.length);
+			expect(entries.every((node, entryIndex) => node === committed[entryIndex])).toBe(true);
+			expect(historical.getChildren()[0]).toBe(historicalMarkdown);
+			expect(highlight).not.toHaveBeenCalled();
+			expect(runtime.listeners.size).toBe(1);
+			const liveFrame = () =>
+				native
+					.captureCharFrame()
+					.split('\n')
+					.slice(text.y, text.y + text.height)
+					.map((row) => row.slice(text.x, text.x + text.width).trimEnd())
+					.join('\n')
+					.trimEnd();
+			expect(liveFrame()).toBe(content.trimEnd());
+			const height = text.height;
+			await native.renderOnce();
+			expect(liveFrame()).toBe(content.trimEnd());
+			expect(text.height).toBe(height);
+			if (index < fragments.length - 1) releases[index]!.resolve();
+		}
+		const authoritative = `${content}\n\nAuthoritative final text.`;
+		const event = runtime.complete(app.conversation.sessionId, authoritative);
+		expect(app.conversation.running).toBe(true);
+		expect(app.conversation.liveContent).toBe('');
+		expect(text.plainText).toBe('');
+		expect(liveRegion.visible).toBe(false);
+		const finalNode = app.transcript.findDescendantById(`entry:${event.id}`)!;
+		const markdown = finalNode.getChildren()[0] as MarkdownRenderable;
+		expect(markdown).toBeInstanceOf(MarkdownRenderable);
+		expect(markdown.content).toBe(authoritative);
+		expect(markdown.streaming).toBe(false);
+		runtime.commit(event);
+		expect(app.transcript.getChildren().filter((node) => node.id === finalNode.id)).toEqual([
+			finalNode,
+		]);
+		await native.renderOnce();
+		const pending: Promise<void>[] = [];
+		const collectHighlights = (node: Renderable) => {
+			if (node instanceof CodeRenderable) pending.push(node.highlightingDone);
+			for (const child of node.getChildren()) collectHighlights(child);
+		};
+		collectHighlights(markdown);
+		await Promise.all(pending);
+		await native.renderOnce();
+		const frame = native.captureCharFrame();
+		expect(frame.match(/This is a Markdown heading/g)).toHaveLength(1);
+		expect(frame).not.toContain('## This');
+		expect(frame).toContain('bold and italic');
+		expect(frame).not.toContain('**bold**');
+		expect(frame).not.toContain('_italic_');
+		expect(frame).toContain('const answer = 42;');
+		expect(frame).not.toContain('```');
+		expect(frame).toContain('Authoritative final text.');
+		releases.at(-1)!.resolve();
+		await waitFor(() => !app.conversation.running);
+		expect(app.transcript.findDescendantById('live-output')).toBe(live);
+		expect(app.transcript.getChildren().filter((node) => node.id === finalNode.id)).toEqual([
+			finalNode,
+		]);
+	} finally {
+		for (const release of releases) release.resolve();
+		await app.shutdown();
+		highlight.mockRestore();
+		await parser.destroy();
+		await rm(directory, { recursive: true, force: true });
 	}
 });
 
