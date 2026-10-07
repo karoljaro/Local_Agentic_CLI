@@ -11,6 +11,11 @@ type BuildContextResult = {
 	messages: ModelMessage[];
 };
 
+type MessageGroupSize = {
+	serializedCharacters: number;
+	messageCount: number;
+};
+
 const DEFAULT_MAX_CONTEXT_CHARACTERS = 120_000;
 
 export class ContextBudgetExceededError extends Error {
@@ -36,9 +41,7 @@ export class ContextBuilder {
 			content: options.systemPrompt,
 		};
 
-		if (measureMessages([this.systemMessage]) > this.maxContextCharacters) {
-			throw new ContextBudgetExceededError(this.maxContextCharacters);
-		}
+		ensureWithinBudget(measureMessages([this.systemMessage]), this.maxContextCharacters);
 	}
 
 	assertPromptFits(prompt: string, messageId: MessageId): void {
@@ -59,19 +62,26 @@ export class ContextBuilder {
 	}
 
 	fit(messages: ModelMessage[]): ModelMessage[] {
+		const serializedMessageLengths = new Map<ModelMessage, number>();
 		const systemMessages = messages.filter((message) => message.role === 'system');
 		const conversationMessages = messages.filter((message) => message.role !== 'system');
 		const turns = groupMessagesIntoTurns(conversationMessages);
+		const systemSize = measureMessages(systemMessages, serializedMessageLengths);
 
 		if (turns.length === 0) {
-			return ensureWithinBudget(systemMessages, this.maxContextCharacters);
+			ensureWithinBudget(systemSize, this.maxContextCharacters);
+			return systemMessages;
 		}
 
 		const currentTurn = turns.at(-1) ?? [];
+		const currentTurnSize = measureMessages(currentTurn, serializedMessageLengths);
 		const selectedTurns: ModelMessage[][] = [currentTurn];
-		const mandatoryMessages = [...systemMessages, ...currentTurn];
+		let selectedSize: MessageGroupSize = {
+			serializedCharacters: systemSize.serializedCharacters + currentTurnSize.serializedCharacters,
+			messageCount: systemSize.messageCount + currentTurnSize.messageCount,
+		};
 
-		ensureWithinBudget(mandatoryMessages, this.maxContextCharacters);
+		ensureWithinBudget(selectedSize, this.maxContextCharacters);
 
 		for (let index = turns.length - 2; index >= 0; index -= 1) {
 			const turn = turns[index];
@@ -80,13 +90,17 @@ export class ContextBuilder {
 				continue;
 			}
 
-			const candidateTurns = [turn, ...selectedTurns];
-			const candidateMessages = [...systemMessages, ...candidateTurns.flat()];
+			const turnSize = measureMessages(turn, serializedMessageLengths);
+			const candidateSize: MessageGroupSize = {
+				serializedCharacters: selectedSize.serializedCharacters + turnSize.serializedCharacters,
+				messageCount: selectedSize.messageCount + turnSize.messageCount,
+			};
 
-			if (measureMessages(candidateMessages) > this.maxContextCharacters) {
+			if (measureArraySize(candidateSize) > this.maxContextCharacters) {
 				break;
 			}
 
+			selectedSize = candidateSize;
 			selectedTurns.unshift(turn);
 		}
 
@@ -109,15 +123,28 @@ const groupMessagesIntoTurns = (messages: ModelMessage[]): ModelMessage[][] => {
 	return turns;
 };
 
-const ensureWithinBudget = (
-	messages: ModelMessage[],
-	maxContextCharacters: number,
-): ModelMessage[] => {
-	if (measureMessages(messages) > maxContextCharacters) {
+const ensureWithinBudget = (size: MessageGroupSize, maxContextCharacters: number): void => {
+	if (measureArraySize(size) > maxContextCharacters) {
 		throw new ContextBudgetExceededError(maxContextCharacters);
 	}
-
-	return messages;
 };
 
-const measureMessages = (messages: ModelMessage[]): number => JSON.stringify(messages).length;
+const measureMessages = (
+	messages: ModelMessage[],
+	serializedMessageLengths = new Map<ModelMessage, number>(),
+): MessageGroupSize => {
+	let serializedCharacters = 0;
+	for (const message of messages) {
+		let length = serializedMessageLengths.get(message);
+		if (length === undefined) {
+			length = JSON.stringify(message).length;
+			serializedMessageLengths.set(message, length);
+		}
+		serializedCharacters += length;
+	}
+	return { serializedCharacters, messageCount: messages.length };
+};
+
+// Groups form one array: count brackets once and a comma between every message.
+const measureArraySize = (size: MessageGroupSize): number =>
+	2 + size.serializedCharacters + Math.max(0, size.messageCount - 1);
