@@ -1,9 +1,15 @@
 const TOOL_LABELS: Record<string, string> = {
+	list_directory: 'List directory',
+	find_files: 'Find files',
+	search_text: 'Search text',
 	list_files: 'List files',
 	search_file: 'Search workspace',
 	read_file: 'Read file',
 	create_file: 'Create file',
 	edit_file: 'Edit file',
+	replace_file: 'Replace file',
+	move_file: 'Move file',
+	delete_path: 'Delete path',
 };
 
 export const formatToolName = (toolName: string): string => {
@@ -22,7 +28,18 @@ export const getPrimaryToolTarget = (toolInput: unknown): string | undefined => 
 		return undefined;
 	}
 
-	for (const key of ['path', 'query', 'pattern', 'resource']) {
+	const source = toolInput['source'];
+	const destination = toolInput['destination'];
+	if (
+		typeof source === 'string' &&
+		source.trim().length > 0 &&
+		typeof destination === 'string' &&
+		destination.trim().length > 0
+	) {
+		return `${truncateInline(source.trim(), 48)} → ${truncateInline(destination.trim(), 48)}`;
+	}
+
+	for (const key of ['path', 'query', 'pattern', 'source', 'destination', 'resource']) {
 		const value = toolInput[key];
 		if (typeof value === 'string' && value.trim().length > 0) {
 			return truncateInline(value.trim(), 100);

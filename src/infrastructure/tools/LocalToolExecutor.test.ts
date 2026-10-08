@@ -5,16 +5,21 @@ import type {
 import { EditWorkspaceFile } from '@/application/use-cases/file-operations/EditWorkspaceFile';
 import { LocalToolRegistry } from './LocalToolExecutor';
 import { defineLocalTool } from './LocalTool';
-import { listFilesTool } from './providers/ListFilesProvider';
+import { listDirectoryTool } from './providers/ListDirectoryProvider';
+import { findFilesTool } from './providers/FindFilesProvider';
 import { readFileTool } from './providers/ReadFileProvider';
-import { searchFileTool } from './providers/SearchFileProvider';
+import { searchTextTool } from './providers/SearchTextProvider';
+import { replaceFileTool } from './providers/ReplaceFileProvider';
+import { moveFileTool } from './providers/MoveFileProvider';
+import { deletePathTool } from './providers/DeletePathProvider';
 import { createFileTool } from './providers/CreateFileProvider';
 import { editFileTool } from './providers/EditFileProvider';
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import { describe, expect, spyOn, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 
 import { createLocalToolExecutor } from '@/composition/factories/createLocalToolExecutor';
 import { createTempDirectory } from '@/test-support/createTempDirectory';
@@ -23,6 +28,76 @@ const createTempWorkspace = async (): Promise<{
 	directory: string;
 	cleanup: () => Promise<void>;
 }> => createTempDirectory('local-tool-executor-');
+
+const contentVersion = (content: string): string =>
+	createHash('sha256').update(content).digest('hex');
+
+const recordingWorkspaceFiles = (
+	record: (input: unknown, options: WorkspaceExecutionOptions) => void,
+): WorkspaceFilePort => ({
+	listDirectory: async (input, options = {}) => {
+		record(input, options);
+		return { path: input.path ?? '.', entries: [], truncated: false };
+	},
+	findFiles: async (input, options = {}) => {
+		record(input, options);
+		return { files: [], truncated: false };
+	},
+	readFile: async (input, options = {}) => {
+		record(input, options);
+		return { path: input.path, content: 'target' };
+	},
+	writeFile: async (input, options = {}) => {
+		record(input, options);
+		return { path: input.path, content: input.content };
+	},
+	createFile: async (input, options = {}) => {
+		record(input, options);
+		return { path: input.path, content: input.content };
+	},
+	moveFile: async (input, options = {}) => {
+		record(input, options);
+		return { ...input, moved: true };
+	},
+	deletePath: async (input, options = {}) => {
+		record(input, options);
+		return { path: input.path, type: 'file', deleted: true };
+	},
+});
+
+const allWorkspaceRequests = [
+	{ toolName: 'list_directory', toolInput: {} },
+	{ toolName: 'find_files', toolInput: { pattern: '**/*.ts' } },
+	{ toolName: 'read_file', toolInput: { path: 'file' } },
+	{ toolName: 'search_text', toolInput: { query: 'target' } },
+	{ toolName: 'create_file', toolInput: { path: 'new', content: 'created' } },
+	{
+		toolName: 'edit_file',
+		toolInput: { path: 'file', edits: [{ oldText: 'target', newText: '$&' }] },
+	},
+	{
+		toolName: 'replace_file',
+		toolInput: { path: 'file', content: 'replacement', expectedVersion: contentVersion('target') },
+	},
+	{ toolName: 'move_file', toolInput: { source: 'file', destination: 'renamed' } },
+	{ toolName: 'delete_path', toolInput: { path: 'renamed' } },
+];
+
+const registryWithWorkspaceFiles = (
+	files: WorkspaceFilePort,
+	search: Parameters<typeof searchTextTool>[0],
+): LocalToolRegistry =>
+	new LocalToolRegistry([
+		listDirectoryTool(files, { maxEntries: 10 }),
+		findFilesTool(files, { maxEntries: 10 }),
+		readFileTool(files, { maxFileBytes: 1024, maxCharacters: 100, maxLines: 10 }),
+		searchTextTool(search),
+		createFileTool(files, { maxFileBytes: 1024 }),
+		editFileTool(new EditWorkspaceFile(files), { maxFileBytes: 1024 }),
+		replaceFileTool(files, { maxFileBytes: 1024 }),
+		moveFileTool(files),
+		deletePathTool(files),
+	]);
 
 type ReadInput = {
 	path: string;
@@ -96,137 +171,21 @@ const readAllPages = async (
 };
 
 describe('LocalToolRegistry', () => {
-	test('lists local tool definitions', () => {
-		const executor = createLocalToolExecutor();
-
-		expect(executor.listTools()).toEqual([
-			{
-				name: 'list_files',
-				deduplicate: true,
-				description:
-					'Recursively list file paths in the workspace or under an optional relative path. Use this to discover project structure or locate files by name or extension. Do not use it to search file contents; use search_file instead.',
-				parameters: {
-					type: 'object',
-					required: [],
-					additionalProperties: false,
-					properties: {
-						path: {
-							type: 'string',
-							minLength: 1,
-							description:
-								'Optional relative file or directory path. Defaults to the workspace root.',
-						},
-					},
-				},
-			},
-			{
-				name: 'read_file',
-				description:
-					'Read a bounded range from a UTF-8 text file in the current workspace. Use startLine/endLine to select lines or startOffset as a zero-based UTF-16 cursor. When nextRead is returned, pass it unchanged to continue from the first unreturned character. Output startLine/endLine describe touched lines, which may be partial. truncated describes a partial-file view; only nextRead indicates forward content remains.',
-				parameters: {
-					type: 'object',
-					required: ['path'],
-					additionalProperties: false,
-					properties: {
-						path: {
-							type: 'string',
-							minLength: 1,
-							description: 'Relative path to a file in the current workspace.',
-						},
-						startLine: {
-							type: 'integer',
-							minimum: 1,
-							maximum: Number.MAX_SAFE_INTEGER,
-							description:
-								'Optional one-based first line. Defaults to 1 when startOffset is absent.',
-						},
-						startOffset: {
-							type: 'integer',
-							minimum: 0,
-							maximum: Number.MAX_SAFE_INTEGER,
-							description:
-								'Optional zero-based UTF-16 offset into the decoded file. Cannot accompany startLine. Pass nextRead unchanged for continuation.',
-						},
-						endLine: {
-							type: 'integer',
-							minimum: 1,
-							maximum: Number.MAX_SAFE_INTEGER,
-							description:
-								'Optional one-based last line, inclusive; excludes its following newline.',
-						},
-					},
-				},
-			},
-			{
-				name: 'search_file',
-				deduplicate: true,
-				description:
-					'Search workspace files for exact text. Use | for alternatives. Returns a bounded list of paths, line numbers, and excerpts; truncated indicates more matches exist.',
-				parameters: {
-					type: 'object',
-					required: ['query'],
-					additionalProperties: false,
-					properties: {
-						query: {
-							type: 'string',
-							minLength: 1,
-							description: 'Exact text or | separated alternatives.',
-						},
-					},
-				},
-			},
-			{
-				name: 'create_file',
-				description:
-					'Create a new UTF-8 file in an existing workspace directory. Fails if the file already exists.',
-				requiresApproval: true,
-				invalidatesWorkspaceCache: true,
-				parameters: {
-					type: 'object',
-					required: ['path', 'content'],
-					additionalProperties: false,
-					properties: {
-						path: {
-							type: 'string',
-							minLength: 1,
-							description: 'The path for the new file, relative to the workspace root.',
-						},
-						content: {
-							type: 'string',
-							description: 'The complete content of the new file.',
-						},
-					},
-				},
-			},
-			{
-				name: 'edit_file',
-				description:
-					'Replace exact text in a UTF-8 file in the current workspace. Use this after reading the target file.',
-				requiresApproval: true,
-				invalidatesWorkspaceCache: true,
-				parameters: {
-					type: 'object',
-					required: ['path', 'oldText', 'newText'],
-					additionalProperties: false,
-					properties: {
-						path: {
-							type: 'string',
-							minLength: 1,
-							description: 'The path to the file to edit, relative to the workspace root.',
-						},
-						newText: {
-							type: 'string',
-							description: 'The replacement text. May be empty to remove oldText.',
-						},
-						oldText: {
-							type: 'string',
-							minLength: 1,
-							description:
-								'The exact text to replace. The edit will only be applied if this text appears exactly once.',
-						},
-					},
-				},
-			},
+	test('lists the final model-visible tools', () => {
+		expect(
+			createLocalToolExecutor()
+				.listTools()
+				.map((tool) => tool.name),
+		).toEqual([
+			'list_directory',
+			'find_files',
+			'read_file',
+			'search_text',
+			'create_file',
+			'edit_file',
+			'replace_file',
+			'move_file',
+			'delete_path',
 		]);
 	});
 
@@ -235,19 +194,19 @@ describe('LocalToolRegistry', () => {
 
 		expect(
 			executor.prepare({
-				toolName: 'search_file',
+				toolName: 'search_text',
 				toolInput: { query: '  needle  ' },
 			}),
 		).toMatchObject({
-			toolName: 'search_file',
-			toolInput: { query: 'needle' },
+			toolName: 'search_text',
+			toolInput: { query: '  needle  ' },
 		});
 		expect(() =>
 			executor.prepare({
-				toolName: 'search_file',
+				toolName: 'search_text',
 				toolInput: { query: 'needle', unexpected: true },
 			}),
-		).toThrow('Invalid arguments for tool search_file');
+		).toThrow('Invalid arguments for tool search_text');
 		expect(() =>
 			executor.prepare({
 				toolName: 'missing_tool',
@@ -256,26 +215,36 @@ describe('LocalToolRegistry', () => {
 		).toThrow('Unknown tool requested by model: missing_tool');
 	});
 
-	test('lists workspace file paths', async () => {
+	test('lists typed entries one level deep by default', async () => {
 		const { directory, cleanup } = await createTempWorkspace();
-
 		try {
 			await mkdir(join(directory, 'src', 'nested'), { recursive: true });
 			await writeFile(join(directory, 'src', 'first.ts'), 'first', 'utf8');
 			await writeFile(join(directory, 'src', 'nested', 'second.ts'), 'second', 'utf8');
-
 			const executor = createLocalToolExecutor({ workspaceRoot: directory });
-			const result = await executor.execute({
-				toolName: 'list_files',
-				toolInput: {},
+			expect(
+				(await executor.execute({ toolName: 'list_directory', toolInput: {} })).output,
+			).toEqual({
+				path: '.',
+				entries: [{ path: 'src', type: 'directory' }],
+				truncated: false,
 			});
-
-			expect(result).toEqual({
-				toolName: 'list_files',
-				output: {
-					files: ['src/first.ts', 'src/nested/second.ts'],
-					truncated: false,
-				},
+			expect(
+				(await executor.execute({ toolName: 'list_directory', toolInput: { path: 'src' } })).output,
+			).toEqual({
+				path: 'src',
+				entries: [
+					{ path: 'src/first.ts', type: 'file' },
+					{ path: 'src/nested', type: 'directory' },
+				],
+				truncated: false,
+			});
+			expect(
+				(await executor.execute({ toolName: 'find_files', toolInput: { pattern: '**/*.ts' } }))
+					.output,
+			).toEqual({
+				files: ['src/first.ts', 'src/nested/second.ts'],
+				truncated: false,
 			});
 		} finally {
 			await cleanup();
@@ -295,7 +264,7 @@ describe('LocalToolRegistry', () => {
 				toolInput: { path: 'src/file.txt' },
 			});
 
-			expect(result).toEqual({
+			expect(result).toMatchObject({
 				toolName: 'read_file',
 				output: {
 					path: 'src/file.txt',
@@ -326,7 +295,7 @@ describe('LocalToolRegistry', () => {
 				},
 			});
 
-			expect(result).toEqual({
+			expect(result).toMatchObject({
 				toolName: 'create_file',
 				output: {
 					path: 'src/new-file.ts',
@@ -357,7 +326,7 @@ describe('LocalToolRegistry', () => {
 				toolInput: { path: 'file.txt', startLine: 2, endLine: 4 },
 			});
 
-			expect(result.output).toEqual({
+			expect(result.output).toMatchObject({
 				path: 'file.txt',
 				content: 'two\nthree',
 				startLine: 2,
@@ -383,7 +352,7 @@ describe('LocalToolRegistry', () => {
 				toolInput: { path: 'empty.txt' },
 			});
 
-			expect(result.output).toEqual({
+			expect(result.output).toMatchObject({
 				path: 'empty.txt',
 				content: '',
 				startLine: 1,
@@ -599,7 +568,7 @@ describe('LocalToolRegistry', () => {
 			await writeFile(join(directory, 'file.txt'), 'one\ntwo\n', 'utf8');
 			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 
-			expect(await readPage(executor, { path: 'file.txt' })).toEqual({
+			expect(await readPage(executor, { path: 'file.txt' })).toMatchObject({
 				path: 'file.txt',
 				content: 'one\ntwo\n',
 				startLine: 1,
@@ -607,7 +576,9 @@ describe('LocalToolRegistry', () => {
 				totalLines: 3,
 				truncated: false,
 			});
-			expect(await readPage(executor, { path: 'file.txt', startLine: 2, endLine: 2 })).toEqual({
+			expect(
+				await readPage(executor, { path: 'file.txt', startLine: 2, endLine: 2 }),
+			).toMatchObject({
 				path: 'file.txt',
 				content: 'two',
 				startLine: 2,
@@ -615,7 +586,7 @@ describe('LocalToolRegistry', () => {
 				totalLines: 3,
 				truncated: true,
 			});
-			expect(await readPage(executor, { path: 'file.txt', startLine: 3 })).toEqual({
+			expect(await readPage(executor, { path: 'file.txt', startLine: 3 })).toMatchObject({
 				path: 'file.txt',
 				content: '',
 				startLine: 3,
@@ -726,12 +697,12 @@ describe('LocalToolRegistry', () => {
 
 			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({
-				toolName: 'search_file',
+				toolName: 'search_text',
 				toolInput: { query: 'needle' },
 			});
 
 			expect(result).toEqual({
-				toolName: 'search_file',
+				toolName: 'search_text',
 				output: {
 					returnedMatches: 1,
 					returnedFiles: 1,
@@ -758,12 +729,12 @@ describe('LocalToolRegistry', () => {
 
 			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({
-				toolName: 'search_file',
+				toolName: 'search_text',
 				toolInput: { query: 'missing' },
 			});
 
 			expect(result).toEqual({
-				toolName: 'search_file',
+				toolName: 'search_text',
 				output: {
 					returnedMatches: 0,
 					returnedFiles: 0,
@@ -789,12 +760,12 @@ describe('LocalToolRegistry', () => {
 
 			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({
-				toolName: 'search_file',
+				toolName: 'search_text',
 				toolInput: { query: 'UserRepository tests' },
 			});
 
 			expect(result).toEqual({
-				toolName: 'search_file',
+				toolName: 'search_text',
 				output: {
 					returnedMatches: 0,
 					returnedFiles: 0,
@@ -807,115 +778,28 @@ describe('LocalToolRegistry', () => {
 		}
 	});
 
-	test('searches pipe-separated alternatives', async () => {
+	test('searches pipes and whitespace literally without hidden query syntax', async () => {
 		const { directory, cleanup } = await createTempWorkspace();
-
 		try {
-			const functionNames = ['add', 'subtract', 'multiply', 'divide'];
-			const query = [...functionNames, 'calculate', 'arithmetic'].join('|');
-			const pythonFunctionSignature = (name: string): string =>
-				`def ${name}(a: float, b: float) -> float:`;
-
-			await mkdir(join(directory, 'src'));
 			await writeFile(
-				join(directory, 'src', 'calculator.py'),
-				[
-					pythonFunctionSignature('add'),
-					'    return a + b',
-					'',
-					pythonFunctionSignature('subtract'),
-					'    return a - b',
-					'',
-					pythonFunctionSignature('multiply'),
-					'    return a * b',
-					'',
-					pythonFunctionSignature('divide'),
-					'    return a / b',
-				].join('\n'),
+				join(directory, 'literal.txt'),
+				'left|right\n  padded  \nleft\nright\n',
 				'utf8',
 			);
-
 			const executor = createLocalToolExecutor({ workspaceRoot: directory });
-			const result = await executor.execute({
-				toolName: 'search_file',
-				toolInput: {
-					query,
-				},
-			});
-
-			expect(result).toEqual({
-				toolName: 'search_file',
-				output: {
-					returnedMatches: 4,
+			for (const [query, line, text] of [
+				['left|right', 1, 'left|right'],
+				['  padded  ', 2, '  padded  '],
+			] as const) {
+				const output = (await executor.execute({ toolName: 'search_text', toolInput: { query } }))
+					.output;
+				expect(output).toEqual({
+					returnedMatches: 1,
 					returnedFiles: 1,
-					matches: [
-						{
-							path: 'src/calculator.py',
-							line: 1,
-							text: pythonFunctionSignature('add'),
-						},
-						{
-							path: 'src/calculator.py',
-							line: 4,
-							text: pythonFunctionSignature('subtract'),
-						},
-						{
-							path: 'src/calculator.py',
-							line: 7,
-							text: pythonFunctionSignature('multiply'),
-						},
-						{
-							path: 'src/calculator.py',
-							line: 10,
-							text: pythonFunctionSignature('divide'),
-						},
-					],
+					matches: [{ path: 'literal.txt', line, text }],
 					truncated: false,
-				},
-			});
-		} finally {
-			await cleanup();
-		}
-	});
-
-	test('searches pipe-separated terms without definition-only fallback', async () => {
-		const { directory, cleanup } = await createTempWorkspace();
-
-		try {
-			await mkdir(join(directory, 'src'));
-			await writeFile(
-				join(directory, 'src', 'calculator.py'),
-				['def add(a, b):', '    return a + b', ''].join('\n'),
-				'utf8',
-			);
-			await writeFile(join(directory, 'src', 'usage.ts'), 'calculator.divide(10, 2);\n', 'utf8');
-
-			const executor = createLocalToolExecutor({ workspaceRoot: directory });
-			const result = await executor.execute({
-				toolName: 'search_file',
-				toolInput: { query: 'add|divide' },
-			});
-
-			expect(result).toEqual({
-				toolName: 'search_file',
-				output: {
-					returnedMatches: 2,
-					returnedFiles: 2,
-					matches: [
-						{
-							path: 'src/calculator.py',
-							line: 1,
-							text: 'def add(a, b):',
-						},
-						{
-							path: 'src/usage.ts',
-							line: 1,
-							text: 'calculator.divide(10, 2);',
-						},
-					],
-					truncated: false,
-				},
-			});
+				});
+			}
 		} finally {
 			await cleanup();
 		}
@@ -930,12 +814,12 @@ describe('LocalToolRegistry', () => {
 
 			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const result = await executor.execute({
-				toolName: 'search_file',
+				toolName: 'search_text',
 				toolInput: { query: 'SECRET_TOKEN' },
 			});
 
 			expect(result).toEqual({
-				toolName: 'search_file',
+				toolName: 'search_text',
 				output: {
 					returnedMatches: 1,
 					returnedFiles: 1,
@@ -954,7 +838,7 @@ describe('LocalToolRegistry', () => {
 		}
 	});
 
-	test('search_file preserves exact env and nested directory policy with real ripgrep', async () => {
+	test('search_text preserves exact env and nested directory policy with real ripgrep', async () => {
 		const { directory, cleanup } = await createTempWorkspace();
 		const marker = 'PHASE9_WORKSPACE_POLICY_MARKER';
 		const allowedPaths = [
@@ -994,11 +878,11 @@ describe('LocalToolRegistry', () => {
 			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			await expect(
 				executor.execute({
-					toolName: 'search_file',
+					toolName: 'search_text',
 					toolInput: { query: marker },
 				}),
 			).resolves.toEqual({
-				toolName: 'search_file',
+				toolName: 'search_text',
 				output: {
 					returnedMatches: 7,
 					returnedFiles: 7,
@@ -1017,12 +901,11 @@ describe('LocalToolRegistry', () => {
 		try {
 			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 
-			await expect(
-				executor.execute({
-					toolName: 'search_file',
-					toolInput: { query: ' ' },
-				}),
-			).rejects.toThrow('search_file requires a non-empty string query.');
+			for (const query of ['', 'first\nsecond', 'first\rsecond', 'first\0second']) {
+				await expect(
+					executor.execute({ toolName: 'search_text', toolInput: { query } }),
+				).rejects.toThrow('Invalid arguments for tool search_text');
+			}
 		} finally {
 			await cleanup();
 		}
@@ -1043,12 +926,12 @@ describe('LocalToolRegistry', () => {
 				maxSearchMatches: 2,
 			});
 			const result = await executor.execute({
-				toolName: 'search_file',
+				toolName: 'search_text',
 				toolInput: { query: 'needle' },
 			});
 
 			expect(result).toEqual({
-				toolName: 'search_file',
+				toolName: 'search_text',
 				output: {
 					returnedMatches: 2,
 					returnedFiles: 1,
@@ -1086,10 +969,10 @@ describe('LocalToolRegistry', () => {
 
 			const result = await executor.execute({
 				toolName: 'edit_file',
-				toolInput: { path: 'file.txt', oldText: 'target', newText },
+				toolInput: { path: 'file.txt', edits: [{ oldText: 'target', newText }] },
 			});
 
-			expect(result.output).toEqual({ path: 'file.txt', replaced: true, matchCount: 1 });
+			expect(result.output).toEqual({ path: 'file.txt', changed: true, editsApplied: 1 });
 			await expect(readFile(join(directory, 'file.txt'), 'utf8')).resolves.toBe(
 				`before ${newText} after`,
 			);
@@ -1110,8 +993,12 @@ describe('LocalToolRegistry', () => {
 				toolName: 'edit_file',
 				toolInput: {
 					path: 'src/file.ts',
-					oldText: 'const value = 1;',
-					newText: 'const value = 2;',
+					edits: [
+						{
+							oldText: 'const value = 1;',
+							newText: 'const value = 2;',
+						},
+					],
 				},
 			});
 
@@ -1119,8 +1006,8 @@ describe('LocalToolRegistry', () => {
 				toolName: 'edit_file',
 				output: {
 					path: 'src/file.ts',
-					replaced: true,
-					matchCount: 1,
+					changed: true,
+					editsApplied: 1,
 				},
 			});
 			await expect(readFile(join(directory, 'src', 'file.ts'), 'utf8')).resolves.toBe(
@@ -1153,10 +1040,14 @@ describe('LocalToolRegistry', () => {
 				toolName: 'edit_file',
 				toolInput: {
 					path: 'demo.py',
-					oldText:
-						'def find_user_by_email(self, email):\n    for user in self.users:\n        if user.email == email:\n            return user\n    return None',
-					newText:
-						'def find_user_by_email(self, email):\n    for user in self.users:\n        if user.email.lower() == email.lower():\n            return user\n    return None',
+					edits: [
+						{
+							oldText:
+								'def find_user_by_email(self, email):\n    for user in self.users:\n        if user.email == email:\n            return user\n    return None',
+							newText:
+								'def find_user_by_email(self, email):\n    for user in self.users:\n        if user.email.lower() == email.lower():\n            return user\n    return None',
+						},
+					],
 				},
 			});
 
@@ -1186,8 +1077,12 @@ describe('LocalToolRegistry', () => {
 				toolName: 'edit_file',
 				toolInput: {
 					path: 'literal.txt',
-					oldText: 'before\\nvalue',
-					newText: 'after\\r\\nvalue',
+					edits: [
+						{
+							oldText: 'before\\nvalue',
+							newText: 'after\\r\\nvalue',
+						},
+					],
 				},
 			});
 
@@ -1206,7 +1101,7 @@ describe('LocalToolRegistry', () => {
 			await writeFile(join(directory, 'json.txt'), 'literal\\nvalue', 'utf8');
 			const executor = createLocalToolExecutor({ workspaceRoot: directory });
 			const toolInput: unknown = JSON.parse(
-				'{"path":"json.txt","oldText":"literal\\\\nvalue","newText":"updated\\\\nvalue"}',
+				'{"path":"json.txt","edits":[{"oldText":"literal\\\\nvalue","newText":"updated\\\\nvalue"}]}',
 			);
 
 			await executor.execute({
@@ -1236,8 +1131,12 @@ describe('LocalToolRegistry', () => {
 					toolName: 'edit_file',
 					toolInput: {
 						path: 'file.txt',
-						oldText: 'short',
-						newText: 'long replacement',
+						edits: [
+							{
+								oldText: 'short',
+								newText: 'long replacement',
+							},
+						],
 					},
 				}),
 			).rejects.toThrow('File content is too large');
@@ -1259,8 +1158,12 @@ describe('LocalToolRegistry', () => {
 					toolName: 'edit_file',
 					toolInput: {
 						path: 'file.txt',
-						oldText: 'missing',
-						newText: 'value',
+						edits: [
+							{
+								oldText: 'missing',
+								newText: 'value',
+							},
+						],
 					},
 				}),
 			).rejects.toThrow('oldText was not found in file');
@@ -1282,8 +1185,12 @@ describe('LocalToolRegistry', () => {
 					toolName: 'edit_file',
 					toolInput: {
 						path: 'file.txt',
-						oldText: 'hello',
-						newText: 'hi',
+						edits: [
+							{
+								oldText: 'hello',
+								newText: 'hi',
+							},
+						],
 					},
 				}),
 			).rejects.toThrow('oldText appears multiple times in file');
@@ -1303,8 +1210,12 @@ describe('LocalToolRegistry', () => {
 					toolName: 'edit_file',
 					toolInput: {
 						path: '../outside.txt',
-						oldText: 'hello',
-						newText: 'hi',
+						edits: [
+							{
+								oldText: 'hello',
+								newText: 'hi',
+							},
+						],
 					},
 				}),
 			).rejects.toThrow('Cannot access file outside workspace');
@@ -1316,54 +1227,21 @@ describe('LocalToolRegistry', () => {
 
 describe('LocalToolRegistry execution options', () => {
 	test('all providers forward the same signal outside parsed arguments and schemas', async () => {
-		const controller = new AbortController();
-		const options = { signal: controller.signal };
+		const options = { signal: new AbortController().signal };
 		const received: WorkspaceExecutionOptions[] = [];
 		const inputs: unknown[] = [];
-		const files: WorkspaceFilePort = {
-			listFiles: async (input, execution = {}) => {
-				inputs.push(input);
-				received.push(execution);
-				return { files: [], truncated: false };
-			},
-			readFile: async (input, execution = {}) => {
-				inputs.push(input);
-				received.push(execution);
-				return { path: input.path, content: 'target' };
-			},
-			writeFile: async (input, execution = {}) => {
-				inputs.push(input);
-				received.push(execution);
-				return { path: input.path, content: input.content };
-			},
-			createFile: async (input, execution = {}) => {
-				inputs.push(input);
-				received.push(execution);
-				return { path: input.path, content: input.content };
-			},
+		const record = (input: unknown, execution: WorkspaceExecutionOptions) => {
+			inputs.push(input);
+			received.push(execution);
 		};
-		const tools = new LocalToolRegistry([
-			listFilesTool(files, { maxEntries: 10 }),
-			readFileTool(files, { maxFileBytes: 1024, maxCharacters: 100, maxLines: 10 }),
-			searchFileTool({
-				search: async (input, execution = {}) => {
-					inputs.push(input);
-					received.push(execution);
-					return { returnedMatches: 0, returnedFiles: 0, matches: [], truncated: false };
-				},
-			}),
-			createFileTool(files, { maxFileBytes: 1024 }),
-			editFileTool(new EditWorkspaceFile(files), { maxFileBytes: 1024 }),
-		]);
-		for (const request of [
-			{ toolName: 'list_files', toolInput: {} },
-			{ toolName: 'read_file', toolInput: { path: 'file' } },
-			{ toolName: 'search_file', toolInput: { query: 'target' } },
-			{ toolName: 'create_file', toolInput: { path: 'new', content: 'created' } },
-			{ toolName: 'edit_file', toolInput: { path: 'file', oldText: 'target', newText: '$&' } },
-		])
-			await tools.execute(request, options);
-		expect(received).toHaveLength(6);
+		const tools = registryWithWorkspaceFiles(recordingWorkspaceFiles(record), {
+			search: async (input, execution = {}) => {
+				record(input, execution);
+				return { returnedMatches: 0, returnedFiles: 0, matches: [], truncated: false };
+			},
+		});
+		for (const request of allWorkspaceRequests) await tools.execute(request, options);
+		expect(received).toHaveLength(11);
 		for (const execution of received) expect(execution).toBe(options);
 		for (const input of inputs) expect(input).not.toHaveProperty('signal');
 		expect(JSON.stringify(tools.listTools())).not.toContain('signal');
@@ -1396,7 +1274,17 @@ describe('LocalToolRegistry execution options', () => {
 
 describe('LocalToolRegistry prepared execution', () => {
 	test('raw execution parses once and executes normalized input with invocation options', async () => {
-		const schema = z.strictObject({ path: z.string().trim(), limit: z.coerce.number().default(2) });
+		let parses = 0;
+		const schema = z.strictObject({
+			path: z
+				.string()
+				.trim()
+				.overwrite((value) => {
+					parses++;
+					return value;
+				}),
+			limit: z.coerce.number().default(2),
+		});
 		const inputs: z.output<typeof schema>[] = [];
 		const receivedOptions: WorkspaceExecutionOptions[] = [];
 		const registry = new LocalToolRegistry([
@@ -1411,74 +1299,54 @@ describe('LocalToolRegistry prepared execution', () => {
 				},
 			}),
 		]);
-		const parse = spyOn(schema, 'parse');
-		try {
+		{
 			const options = { signal: new AbortController().signal };
 			const result = await registry.execute(
 				{ toolName: 'normalized', toolInput: { path: ' file ', limit: '3' } },
 				options,
 			);
-			expect(parse).toHaveBeenCalledTimes(1);
+			expect(parses).toBe(1);
 			expect(inputs).toEqual([{ path: 'file', limit: 3 }]);
 			expect(result.output).toBe(inputs[0]);
 			expect(receivedOptions).toEqual([options]);
 			expect(receivedOptions[0]).toBe(options);
-		} finally {
-			parse.mockRestore();
 		}
 	});
 
 	test('preparing all workspace tools performs zero workspace IO', () => {
 		let io = 0;
-		const files: WorkspaceFilePort = {
-			listFiles: async () => {
+		const registry = registryWithWorkspaceFiles(
+			recordingWorkspaceFiles(() => {
 				io++;
-				return { files: [], truncated: false };
-			},
-			readFile: async (input) => {
-				io++;
-				return { path: input.path, content: 'target' };
-			},
-			writeFile: async (input) => {
-				io++;
-				return { path: input.path, content: input.content };
-			},
-			createFile: async (input) => {
-				io++;
-				return { path: input.path, content: input.content };
-			},
-		};
-		const registry = new LocalToolRegistry([
-			listFilesTool(files, { maxEntries: 10 }),
-			readFileTool(files, { maxFileBytes: 1024, maxCharacters: 100, maxLines: 10 }),
-			searchFileTool({
+			}),
+			{
 				search: async () => {
 					io++;
 					return { returnedMatches: 0, returnedFiles: 0, matches: [], truncated: false };
 				},
-			}),
-			createFileTool(files, { maxFileBytes: 1024 }),
-			editFileTool(new EditWorkspaceFile(files), { maxFileBytes: 1024 }),
-		]);
-		const prepared = [
-			{ toolName: 'list_files', toolInput: {} },
-			{ toolName: 'read_file', toolInput: { path: 'file' } },
-			{ toolName: 'search_file', toolInput: { query: ' target ' } },
-			{ toolName: 'create_file', toolInput: { path: 'new', content: 'created' } },
-			{ toolName: 'edit_file', toolInput: { path: 'file', oldText: 'target', newText: '$&' } },
-		].map((request) => registry.prepare(request));
+			},
+		);
+		const prepared = allWorkspaceRequests.map((request) => registry.prepare(request));
 		expect(io).toBe(0);
 		expect(prepared.map((execution) => execution.requiresApproval)).toEqual([
 			false,
 			false,
 			false,
+			false,
+			true,
+			true,
+			true,
 			true,
 			true,
 		]);
 		expect(prepared.map((execution) => execution.deduplicate)).toEqual([
 			true,
+			true,
 			false,
 			true,
+			false,
+			false,
+			false,
 			false,
 			false,
 		]);
@@ -1486,6 +1354,10 @@ describe('LocalToolRegistry prepared execution', () => {
 			false,
 			false,
 			false,
+			false,
+			true,
+			true,
+			true,
 			true,
 			true,
 		]);

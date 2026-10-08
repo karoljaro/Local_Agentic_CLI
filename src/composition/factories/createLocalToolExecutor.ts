@@ -5,9 +5,13 @@ import { NodeWorkspaceFileSystem } from '@/infrastructure/file-system/NodeWorksp
 import { LocalToolRegistry } from '@/infrastructure/tools/LocalToolExecutor';
 import { createFileTool } from '@/infrastructure/tools/providers/CreateFileProvider';
 import { editFileTool } from '@/infrastructure/tools/providers/EditFileProvider';
-import { listFilesTool } from '@/infrastructure/tools/providers/ListFilesProvider';
+import { listDirectoryTool } from '@/infrastructure/tools/providers/ListDirectoryProvider';
+import { findFilesTool } from '@/infrastructure/tools/providers/FindFilesProvider';
 import { readFileTool } from '@/infrastructure/tools/providers/ReadFileProvider';
-import { searchFileTool } from '@/infrastructure/tools/providers/SearchFileProvider';
+import { searchTextTool } from '@/infrastructure/tools/providers/SearchTextProvider';
+import { replaceFileTool } from '@/infrastructure/tools/providers/ReplaceFileProvider';
+import { moveFileTool } from '@/infrastructure/tools/providers/MoveFileProvider';
+import { deletePathTool } from '@/infrastructure/tools/providers/DeletePathProvider';
 import { RipgrepSearch } from '@/infrastructure/tools/ripgrep/RipgrepSearch';
 
 const DEFAULT_MAX_FILE_BYTES = 200_000;
@@ -31,6 +35,9 @@ export const createLocalToolExecutor = (
 ): LocalToolRegistry => {
 	const workspaceRoot = resolve(options.workspaceRoot ?? process.cwd());
 	const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+	const maxEntries = options.maxListFiles ?? DEFAULT_MAX_LIST_FILES;
+	const maxLines = options.maxReadLines ?? DEFAULT_MAX_READ_LINES;
+	const maxCharacters = options.maxReadCharacters ?? DEFAULT_MAX_READ_CHARACTERS;
 	const workspaceFiles = new NodeWorkspaceFileSystem(workspaceRoot);
 	const searchOptions = {
 		workspaceRoot,
@@ -40,26 +47,34 @@ export const createLocalToolExecutor = (
 	};
 
 	if (
-		[searchOptions.maxMatches, searchOptions.maxMatchTextLength, searchOptions.timeoutMs].some(
-			(value) => !Number.isFinite(value) || value <= 0,
-		)
+		[
+			maxFileBytes,
+			maxEntries,
+			maxLines,
+			maxCharacters,
+			searchOptions.maxMatches,
+			searchOptions.maxMatchTextLength,
+			searchOptions.timeoutMs,
+		].some((value) => !Number.isSafeInteger(value) || value <= 0)
 	) {
-		throw new Error('Search limits must be positive numbers.');
+		throw new Error('Workspace tool limits must be positive safe integers.');
 	}
 
 	return new LocalToolRegistry([
-		listFilesTool(workspaceFiles, {
-			maxEntries: options.maxListFiles ?? DEFAULT_MAX_LIST_FILES,
-		}),
+		listDirectoryTool(workspaceFiles, { maxEntries }),
+		findFilesTool(workspaceFiles, { maxEntries }),
 		readFileTool(workspaceFiles, {
 			maxFileBytes,
-			maxLines: options.maxReadLines ?? DEFAULT_MAX_READ_LINES,
-			maxCharacters: options.maxReadCharacters ?? DEFAULT_MAX_READ_CHARACTERS,
+			maxLines,
+			maxCharacters,
 		}),
-		searchFileTool(new RipgrepSearch(searchOptions)),
+		searchTextTool(new RipgrepSearch(searchOptions)),
 		createFileTool(workspaceFiles, {
 			maxFileBytes,
 		}),
 		editFileTool(new EditWorkspaceFile(workspaceFiles), { maxFileBytes }),
+		replaceFileTool(workspaceFiles, { maxFileBytes }),
+		moveFileTool(workspaceFiles),
+		deletePathTool(workspaceFiles),
 	]);
 };

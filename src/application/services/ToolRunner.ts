@@ -154,6 +154,9 @@ export class ToolRunner {
 			let executionFailure: { error: Error } | undefined;
 
 			if (previousResult === undefined) {
+				// A failed mutation may still leave changed paths (for example created parents).
+				// Approval denial and cancellation before execution leave cached reads intact.
+				if (execution.invalidatesWorkspaceCache) this.toolResultReferences.clear();
 				try {
 					result = await execution.execute(options);
 				} catch (caughtError) {
@@ -182,7 +185,6 @@ export class ToolRunner {
 				if (cacheKey !== undefined && previousResult === undefined) {
 					this.toolResultReferences.set(cacheKey, { sourceToolCallId: toolCallId });
 				}
-				if (execution.invalidatesWorkspaceCache) this.toolResultReferences.clear();
 				this.recordToolExecution(
 					toolName,
 					executionStartedAt,

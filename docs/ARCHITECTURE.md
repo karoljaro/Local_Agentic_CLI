@@ -30,7 +30,7 @@ Important pieces:
 - `ContextBuilder`, which keeps the current turn and the newest complete historical turns within a configured character budget;
 - `InMemoryAgentMetrics`, which retains bounded resource summaries for the latest completed turns;
 - `SessionReducer`, which rebuilds chat/model state from durable events;
-- `EditWorkspaceFile`, which owns exact-match replacement and optimistic concurrency policy.
+- `EditWorkspaceFile`, which owns exact-match batch validation and optimistic concurrency policy.
 
 Application code should depend on ports and domain types, not concrete adapters.
 
@@ -44,17 +44,49 @@ Application code should depend on ports and domain types, not concrete adapters.
 - `RipgrepSearch` for content search;
 - `LocalToolRegistry` and local tool definitions for model-visible workspace tools.
 
-Read-only tools run automatically. Mutating tools currently require approval:
+Read-only tools run automatically. Mutating tools require approval:
 
-- read-only: `list_files`, `search_file`, `read_file`;
-- mutating: `create_file`, `edit_file`.
+- read-only: `list_directory`, `find_files`, `read_file`, `search_text`;
+- mutating: `create_file`, `edit_file`, `replace_file`, `move_file`, `delete_path`.
 
-Tool results are atomic: a tool call is validated, executed, and only then appended to model context as a complete result.
-Each local tool owns one Zod input schema, its execution function, and approval/cache metadata. The registry generates the JSON Schema sent to Ollama from that same input schema and prepares every complete tool-call batch before execution starts.
-`read_file` bounds each result by line count and character count, returning range metadata for continuation.
-`search_file` parses ripgrep NDJSON incrementally and stops the process after detecting that the bounded result is truncated.
-Repeated `list_files` and `search_file` calls within one turn reuse the earlier result through a short persisted tool-call reference. `read_file` is always executed again, and successful workspace mutations clear the references.
-`edit_file` applies `oldText` and `newText` exactly after JSON/schema parsing. It does not reinterpret literal escaped line-break sequences.
+Each local tool owns one strict Zod input schema, its bound execution function, and approval/cache
+metadata. The registry generates the model JSON Schema from that schema. A complete model-call
+batch is prepared once before execution: provider selection and input parsing happen once, and
+execution uses the prepared function without another lookup. Raw public execution also validates.
+`ToolRunner` owns approval, cancellation, lifecycle persistence, and result references; providers
+never request approval. Results enter model context only after a completed or failed event.
+
+`list_directory` defaults to one level, permits depth 1–5, and returns bounded typed entries.
+`find_files` performs bounded path discovery with `*`, `**`, and `?` glob matching.
+`search_text` accepts literal single-line text and uses a fixed ripgrep binary/options; incremental NDJSON parsing,
+result limits, timeout, and process cleanup remain inside the search adapter.
+`read_file` preserves bounded lines/characters and exact UTF-16 `nextRead` continuation. Its
+content version is a SHA-256 digest of decoded text, required for whole-file replacement.
+Repeated listing, finding, and searching in one turn reuse persisted result references;
+`read_file` always executes again. Approved mutation attempts clear those references before
+execution, including failures that may have created parent directories.
+
+`create_file` safely creates missing parents and publishes completed content without overwrite.
+`edit_file` validates 1–50 unique, nonoverlapping exact matches against the original contents and
+performs one final write. Edit strings remain literal after JSON/schema decoding.
+Edits and replacements whose resulting contents equal the original return `changed: false`
+without a write; the edit count describes validated replacements.
+`replace_file` requires a matching read version; edits and replacements also check for changes
+between their internal read and write, then publish through a same-directory temporary file and
+atomic rename. These checks do not promise protection from every external race or crash durability.
+`move_file` handles regular files with exclusive hard-link creation followed by source unlink;
+it refuses overwrite and is not an atomic two-name transaction. `delete_path` uses unlink or rmdir
+and accepts only files or empty directories. Move/delete reject symlinks and the workspace root.
+Empty newly created parents can remain after failure or cancellation; source-unlink failure can
+leave both move paths. Completed creates report any leftover temporary file in `warnings`;
+failed writes retain their original cause and identify any failed cleanup. Temporary paths are
+owned through exclusive FileHandles and only owned files are cleaned. Cancellation is checked
+between preparation steps, while filesystem commit
+and cleanup already started are awaited before reporting their actual outcome.
+
+All workspace tools enforce lexical and realpath containment and the protected-path/env policy in
+the filesystem/search adapters. No model-facing shell, process, git, package-manager, arbitrary
+network, directory-move, or recursive-delete capability is registered.
 
 ### Composition
 
@@ -126,6 +158,8 @@ Tool-calling model responses are persisted as one `assistant.tool_calls.complete
 tool execution starts. The event keeps the assistant content and the complete tool-call batch, so
 rebuilding a finished session produces the same model context as the live agent loop. Incomplete
 batches are excluded from rebuilt model messages until every call has a completed or failed event.
+Historical tool names and results remain opaque persisted data; replay does not resolve or execute
+them through the current registry, so renamed tools require no model-visible aliases.
 
 ## Current Boundaries
 
@@ -150,7 +184,6 @@ Input schemas do not replace filesystem safety. Workspace adapters still enforce
 
 Not part of the current stable base:
 
-- command execution;
 - long-running background tasks;
 - remote providers beyond Ollama;
 - persistent settings UI;

@@ -36,7 +36,8 @@ export const defineLocalTool = <InputSchema extends z.ZodType>(
 			const parsedInput = inputSchema.parse(input);
 			return {
 				toolName: definition.name,
-				toolInput: parsedInput,
+				// Serializable call data is a projection, not the mutable bound execution input.
+				toolInput: structuredClone(parsedInput),
 				requiresApproval: definition.requiresApproval === true,
 				deduplicate: definition.deduplicate === true,
 				invalidatesWorkspaceCache: definition.invalidatesWorkspaceCache === true,

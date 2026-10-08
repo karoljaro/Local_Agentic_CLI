@@ -19,22 +19,20 @@ export const editFileTool = (
 	return defineLocalTool({
 		name: EDIT_FILE_TOOL_NAME,
 		description:
-			'Replace exact text in a UTF-8 file in the current workspace. Use this after reading the target file.',
+			'Edit a workspace-relative file after reading it. Each oldText must occur once in the original; edits cannot overlap. All edits commit together.',
 		requiresApproval: true,
 		invalidatesWorkspaceCache: true,
 		inputSchema: z.strictObject({
-			path: z
-				.string()
-				.trim()
+			path: z.string().trim().min(1),
+			edits: z
+				.array(
+					z.strictObject({
+						oldText: z.string().min(1),
+						newText: z.string().describe('Literal replacement; empty deletes the matched text.'),
+					}),
+				)
 				.min(1)
-				.describe('The path to the file to edit, relative to the workspace root.'),
-			oldText: z
-				.string()
-				.min(1)
-				.describe(
-					'The exact text to replace. The edit will only be applied if this text appears exactly once.',
-				),
-			newText: z.string().describe('The replacement text. May be empty to remove oldText.'),
+				.max(50),
 		}),
 		execute: async (input, executionOptions) =>
 			editWorkspaceFile.execute(

@@ -87,7 +87,12 @@ describe('RipgrepSearch', () => {
 		);
 		await search.search({ query: ' first | second | first || ' }, { signal: controller.signal });
 		expect(commands).toHaveLength(2);
-		const excluded = ['--glob=!**/node_modules/**', '--glob=!**/.git/**', '--glob=!**/.agent/**'];
+		const excluded = [
+			'--glob=!**/node_modules/**',
+			'--glob=!**/.git/**',
+			'--glob=!**/.agent/**',
+			'--glob=!**/.env*/**',
+		];
 		const common = [
 			'--json',
 			'--fixed-strings',
@@ -95,8 +100,9 @@ describe('RipgrepSearch', () => {
 			'--color=never',
 			'--sort=path',
 			'--max-columns=500',
+			...(process.platform === 'win32' ? ['--glob-case-insensitive'] : []),
 		];
-		const patterns = ['--regexp', 'first', '--regexp', 'second', '.'];
+		const patterns = ['--regexp', ' first | second | first || ', '.'];
 		expect(commands[0]?.cmd.slice(1)).toEqual([
 			...common,
 			'--glob=!**/.env*',
@@ -260,7 +266,7 @@ describe('RipgrepSearch', () => {
 		);
 
 		await expect(search.search({ query: 'needle' })).rejects.toThrow(
-			'search_file timed out after 250ms.',
+			'search_text timed out after 250ms.',
 		);
 	});
 
@@ -272,7 +278,7 @@ describe('RipgrepSearch', () => {
 		const search = createSearch(runCommand);
 
 		await expect(search.search({ query: 'needle' })).rejects.toThrow(
-			'search_file failed: ripgrep binary not found',
+			'search_text unavailable: ripgrep binary not found',
 		);
 	});
 
@@ -282,7 +288,7 @@ describe('RipgrepSearch', () => {
 		);
 
 		await expect(search.search({ query: 'needle' })).rejects.toThrow(
-			'search_file failed: rg exited with code 2',
+			'search_text failed: rg exited with code 2',
 		);
 	});
 
@@ -293,7 +299,7 @@ describe('RipgrepSearch', () => {
 		);
 
 		await expect(search.search({ query: 'needle' })).rejects.toThrow(
-			`search_file failed: ${'x'.repeat(1000)}...`,
+			`search_text failed: ${'x'.repeat(1000)}...`,
 		);
 	});
 
@@ -301,7 +307,7 @@ describe('RipgrepSearch', () => {
 		const search = createSearch(createSequenceRunner([successful('not-json\n'), noMatches()]));
 
 		await expect(search.search({ query: 'needle' })).rejects.toThrow(
-			'search_file failed: invalid rg JSON output',
+			'search_text failed: invalid rg JSON output',
 		);
 	});
 

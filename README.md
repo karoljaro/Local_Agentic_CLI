@@ -7,7 +7,7 @@
 <br>
 
 > [!NOTE]
-> This CLI is intentionally in a simple MVP state. It does not include extra UI polish, rich tool timelines, diff previews, command execution, or settings yet. The focus is the simplest working local agent loop.
+> This CLI is intentionally in a simple MVP state. It does not include extra UI polish, rich tool timelines, diff previews, or settings yet. The focus is the simplest working local agent loop.
 
 Local Agentic CLI is a local terminal coding agent for Ollama models. It is an MVP focused on a simple working loop: chat with a local model, let the model inspect the current workspace, approve file edits, and persist the session as JSONL events.
 
@@ -30,15 +30,12 @@ Implemented:
 - loading previous chat messages when continuing a session
 - tool calling through Ollama
 - multi-step tool loop with an iteration limit
-- per-turn deduplication for repeated `list_files` and `search_file` calls
+- per-turn deduplication for repeated directory listing, file discovery, and content searches
 - one Zod-backed registry for tool schemas, validation, execution, approval, and cache policy
 - bounded in-memory diagnostics for model rounds, request sizes, and tool time/output sizes
 - workspace tools:
-  - `list_files`
-  - `search_file`
-  - `read_file`
-  - `create_file`
-  - `edit_file`
+  - `list_directory`, `find_files`, `read_file`, `search_text`
+  - `create_file`, `edit_file`, `replace_file`, `move_file`, `delete_path`
 - approval prompt before mutating tools
 - concise live tool status and persisted tool success/failure rows
 - path safety checks for file tools
@@ -46,7 +43,6 @@ Implemented:
 
 Not implemented yet:
 
-- command execution tool
 - diff preview before edit approval
 - settings screen or persistent model configuration
 
@@ -56,10 +52,10 @@ The current MVP loop is:
 
 ```text
 user prompt
--> model may request list_files/search_file/read_file/create_file/edit_file
--> CLI executes safe read/list/search tools automatically
--> CLI asks for approval before create_file/edit_file
--> approved edits are applied to workspace files
+-> model may request bounded workspace tools
+-> CLI executes read/list/find/search tools automatically
+-> CLI asks for approval before each mutation
+-> approved changes are applied to workspace files
 -> events are persisted to the current session
 -> model returns the final answer
 ```
@@ -68,65 +64,61 @@ If a mutating tool is denied, the turn ends immediately. This prevents the model
 
 ## Tools
 
-### `list_files`
+Every path is relative to the workspace root. The model has bounded file tools and no shell,
+command, git, package-manager, or arbitrary network tool.
 
-Recursively lists file paths in the current workspace, or under an optional relative path:
+| Tool | Input | Behavior |
+| --- | --- | --- |
+| `list_directory` | `path?`, `depth?` | Lists typed file/directory entries; one level by default, at most five levels. |
+| `find_files` | `pattern`, `path?` | Finds files with bounded `*`, `**`, and `?` globs. A pattern without `/` matches basenames; with `/`, paths relative to the selected directory. |
+| `read_file` | `path`, `startLine?`, `endLine?`, `startOffset?` | Reads bounded UTF-8 text, with exact continuation and a content `version`. |
+| `search_text` | `query` | Searches literal single-line text and returns bounded paths, line numbers, and excerpts. Pipes and spaces remain literal. |
+| `create_file` | `path`, `content` | Creates a new file, including safe missing parent directories; refuses an existing target. |
+| `edit_file` | `path`, `edits` | Applies 1–50 exact replacements to one existing file in one write. |
+| `replace_file` | `path`, `content`, `expectedVersion` | Replaces an existing file only if its version matches a previous read. |
+| `move_file` | `source`, `destination` | Moves one regular file, creating safe destination parents and refusing overwrite. |
+| `delete_path` | `path` | Deletes one file or empty directory; never deletes recursively. |
 
-```ts
+Discovery and search results expose `truncated` when their configured limits are reached. Listing
+returns `entries` with a `type`; filename discovery returns `files`; content search returns
+`matches` plus `returnedMatches` and `returnedFiles`. Narrow a discovery request when truncated.
+
+`read_file` defaults to at most 400 lines and 20,000 UTF-16 characters per result. Lines are
+one-based and an `endLine` is inclusive. When `nextRead` is present, pass that object unchanged to
+`read_file` to continue from the first unreturned character, including long lines and CRLF content.
+Only `nextRead` means forward content remains; `truncated` can also describe a selected line range.
+Do not combine `startLine` and `startOffset`. The returned `version` is a SHA-256 digest of decoded
+content for `replace_file`; a stale version fails without overwriting the newer contents.
+
+Nested creation requires one call:
+
+```json
 {
-  path?: string;
+  "path": "src/features/auth/services/AuthService.ts",
+  "content": "export class AuthService {}\n"
 }
 ```
 
-Use it to discover project structure. It is not a content search tool.
+For `edit_file`, each edit has `oldText` and `newText`. Every `oldText` must match exactly once in
+the original file, and edit ranges must not overlap. All edits validate before the final write;
+missing, ambiguous, or overlapping text leaves file contents unchanged. Replacement strings are
+literal JSON-decoded text; sequences such as `\\n` are not interpreted again.
+Edits and whole-file replacements return `changed: false` and skip the write when the resulting
+contents equal the existing file. `editsApplied` counts validated exact replacements.
 
-### `search_file`
+All five mutation tools require interactive approval. Use the arrow keys and Enter, press `y` to
+approve, or press `n`/`Esc` to deny. Deny is selected by default. Press `d` to toggle full input details.
 
-Searches the current workspace with ripgrep and returns a bounded list of paths, line numbers, and text excerpts. The result contains `returnedMatches`, `returnedFiles`, and `truncated`. Ripgrep output is parsed incrementally and the process is stopped after one match beyond the configured limit. Common internal directories such as `.git`, `.agent`, and `node_modules` are ignored.
+Tools reject workspace escapes and protected paths, including `.git`, `.agent`, `node_modules`,
+and secret `.env*` files. The allowed env files are `.env.dev`, `.env.development`, and `.env.example`.
+Moves and deletions refuse symlinks. Text reads and writes respect the configured byte limit.
 
-### `read_file`
-
-Reads a bounded range from a UTF-8 file in the current workspace:
-
-```ts
-{
-  path: string;
-  startLine?: number;
-  endLine?: number;
-}
-```
-
-The default output is limited to 400 lines and 20,000 characters. Results include `startLine`, `endLine`, `totalLines`, and `truncated`, allowing the model to continue from the next range. Paths outside the workspace are rejected.
-
-### `create_file`
-
-Creates a new UTF-8 file in an existing workspace directory:
-
-```ts
-{
-  path: string;
-  content: string;
-}
-```
-
-The tool fails if the file already exists. `create_file` requires interactive approval.
-
-### `edit_file`
-
-Replaces exact text in a UTF-8 file:
-
-```ts
-{
-  path: string;
-  oldText: string;
-  newText: string;
-}
-```
-
-The edit is applied only when `oldText` appears exactly once. `oldText` and `newText` are used exactly as decoded from the model's JSON arguments; literal sequences such as `\\n` are not converted into line breaks.
-
-`edit_file` requires interactive approval. Use the arrow keys and Enter, press `y` to approve,
-or press `n`/`Esc` to deny. Deny is selected by default. Press `d` to toggle full input details.
+Creation publishes completed file contents exclusively; edits and replacements publish through
+an atomic rename. Missing parent directories can remain after failed or cancelled creation/moves.
+If a completed create cannot remove its temporary file, the result includes a relative-path cleanup warning.
+A move uses an exclusive link followed by source removal, so both names can remain if removal
+fails; it is not an atomic two-name transaction. Cancellation is checked before filesystem commit;
+a commit already in progress is awaited and recorded truthfully.
 
 ## Architecture
 
@@ -291,6 +283,5 @@ modes and verifies ripgrep with a real search. It does not require a running Oll
 
 Likely next work:
 
-- add a guarded `run_command` tool with an allowlist
 - show a compact diff before edit approval
 - move model defaults into settings

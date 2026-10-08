@@ -15,16 +15,12 @@ export const createFileTool = (
 	defineLocalTool({
 		name: CREATE_FILE_TOOL_NAME,
 		description:
-			'Create a new UTF-8 file in an existing workspace directory. Fails if the file already exists.',
+			'Create a new UTF-8 file and missing parent directories. Never overwrites. Path is workspace-relative.',
 		requiresApproval: true,
 		invalidatesWorkspaceCache: true,
 		inputSchema: z.strictObject({
-			path: z
-				.string()
-				.trim()
-				.min(1)
-				.describe('The path for the new file, relative to the workspace root.'),
-			content: z.string().describe('The complete content of the new file.'),
+			path: z.string().trim().min(1),
+			content: z.string(),
 		}),
 		execute: async (input, executionOptions) => {
 			const file = await workspaceFiles.createFile(
@@ -38,6 +34,7 @@ export const createFileTool = (
 			return {
 				path: file.path,
 				created: true,
+				...(file.warnings === undefined ? {} : { warnings: file.warnings }),
 			};
 		},
 	});

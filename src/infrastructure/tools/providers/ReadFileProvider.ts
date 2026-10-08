@@ -1,6 +1,7 @@
 import type { WorkspaceFilePort } from '@/application/ports/WorkspaceFilePort';
 import { z } from 'zod';
 import { defineLocalTool, type LocalTool } from '../LocalTool';
+import { contentVersion } from '../contentVersion';
 
 const READ_FILE_TOOL_NAME = 'read_file';
 
@@ -12,24 +13,22 @@ type ReadFileProviderOptions = {
 
 const readFileInputSchema = z
 	.strictObject({
-		path: z.string().trim().min(1).describe('Relative path to a file in the current workspace.'),
+		path: z.string().trim().min(1),
 		startLine: z
 			.int()
 			.min(1)
 			.optional()
-			.describe('Optional one-based first line. Defaults to 1 when startOffset is absent.'),
+			.describe('First line, one-based; default 1. Cannot accompany startOffset.'),
 		startOffset: z
 			.int()
 			.min(0)
 			.optional()
-			.describe(
-				'Optional zero-based UTF-16 offset into the decoded file. Cannot accompany startLine. Pass nextRead unchanged for continuation.',
-			),
+			.describe('UTF-16 cursor, zero-based. Prefer the returned nextRead for continuation.'),
 		endLine: z
 			.int()
 			.min(1)
 			.optional()
-			.describe('Optional one-based last line, inclusive; excludes its following newline.'),
+			.describe('Last line, inclusive; excludes its following newline.'),
 	})
 	.refine((input) => input.startOffset === undefined || input.startLine === undefined, {
 		message: 'startOffset and startLine must not be supplied together',
@@ -64,7 +63,7 @@ export const readFileTool = (
 	return defineLocalTool({
 		name: READ_FILE_TOOL_NAME,
 		description:
-			'Read a bounded range from a UTF-8 text file in the current workspace. Use startLine/endLine to select lines or startOffset as a zero-based UTF-16 cursor. When nextRead is returned, pass it unchanged to continue from the first unreturned character. Output startLine/endLine describe touched lines, which may be partial. truncated describes a partial-file view; only nextRead indicates forward content remains.',
+			'Read a workspace-relative UTF-8 file or line range. Pass nextRead unchanged to continue losslessly; only nextRead means more remains. Line metadata may describe partial lines. version guards replace_file.',
 		inputSchema: readFileInputSchema,
 		execute: async (input, executionOptions) => {
 			const file = await workspaceFiles.readFile(
@@ -75,7 +74,7 @@ export const readFileTool = (
 				executionOptions,
 			);
 
-			return sliceFile(file, input, options);
+			return { ...sliceFile(file, input, options), version: contentVersion(file.content) };
 		},
 	});
 };

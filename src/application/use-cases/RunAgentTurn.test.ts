@@ -2027,7 +2027,8 @@ test('normalized prepared input is approved, persisted, deduplicated and execute
 			expect(executor.preparedExecutions[index]!.execute).toBeFunction();
 			expect(call.arguments).not.toHaveProperty('signal');
 		}
-		expect(batch.toolCalls[0]!.arguments).toBe(providerInputs[0]);
+		expect(batch.toolCalls[0]!.arguments).toEqual(providerInputs[0]);
+		expect(batch.toolCalls[0]!.arguments).not.toBe(providerInputs[0]);
 		const completed = originalEvents.filter((event) => event.type === 'tool.call.completed');
 		expect(completed).toHaveLength(2);
 		expect(completed[0]!.output).toEqual({ query: 'needle', limit: 2, matches: ['result'] });

@@ -64,7 +64,7 @@ type BoundedSearchResult = {
 	truncated: boolean;
 };
 
-const EXCLUDED_GLOBS = PROTECTED_DIRECTORIES.map((name) => `!**/${name}/**`);
+const EXCLUDED_GLOBS = [...PROTECTED_DIRECTORIES.map((name) => `!**/${name}/**`), '!**/.env*/**'];
 const SAFE_ENV_GLOBS = SAFE_ENV_BASENAMES.map((name) => `**/${name}`);
 const MAX_STDERR_LENGTH = 1000;
 const rgPath = resolveRipgrepPath();
@@ -86,11 +86,7 @@ export class RipgrepSearch implements WorkspaceSearchPort {
 		const { signal } = executionOptions;
 		const { query } = input;
 		throwIfAborted(signal);
-		const alternatives = query
-			.split('|')
-			.map((part) => part.trim())
-			.filter(Boolean);
-		const patterns = [...new Set(alternatives.length > 0 ? alternatives : [query])];
+		const patterns = [query];
 		const commonInput = {
 			patterns,
 			workspaceRoot,
@@ -161,6 +157,8 @@ const runRipgrep = async ({
 		'--color=never',
 		'--sort=path',
 		'--max-columns=500',
+		// Match the filesystem adapter's case-insensitive protected-name policy on Windows.
+		...(process.platform === 'win32' ? ['--glob-case-insensitive'] : []),
 		...globs.map((glob) => `--glob=${glob}`),
 		...patterns.flatMap((pattern) => ['--regexp', pattern]),
 		'.',
@@ -186,14 +184,14 @@ const runRipgrep = async ({
 		});
 	} catch (caughtError) {
 		if (isNodeErrorCode(caughtError, 'ENOENT')) {
-			throw new Error(`search_file failed: ripgrep binary not found: ${rgPath}`);
+			throw new Error('search_text unavailable: ripgrep binary not found.');
 		}
 
 		throw caughtError;
 	}
 
 	if (result.exitCode === 143 && !result.stoppedEarly) {
-		throw new Error(`search_file timed out after ${timeoutMs}ms.`);
+		throw new Error(`search_text timed out after ${timeoutMs}ms.`);
 	}
 
 	if (result.exitCode !== 0 && result.exitCode !== 1 && !result.stoppedEarly) {
@@ -201,7 +199,7 @@ const runRipgrep = async ({
 			? truncate(result.stderr.trim(), MAX_STDERR_LENGTH)
 			: `rg exited with code ${result.exitCode}`;
 
-		throw new Error(`search_file failed: ${message}`);
+		throw new Error(`search_text failed: ${message}`);
 	}
 
 	throwIfAborted(signal);
@@ -323,7 +321,7 @@ const parseRipgrepMatch = (
 	return {
 		path: path.replace(/^\.[\\/]/, ''),
 		line: lineNumber,
-		text: truncate(text.trimEnd(), maxMatchTextLength),
+		text: truncate(text.replace(/\r?\n$/, ''), maxMatchTextLength),
 	};
 };
 
@@ -333,7 +331,7 @@ const parseRipgrepJsonLine = (line: string): RipgrepMatchEvent => {
 	} catch (caughtError) {
 		const message = caughtError instanceof Error ? caughtError.message : String(caughtError);
 
-		throw new Error(`search_file failed: invalid rg JSON output: ${message}`);
+		throw new Error(`search_text failed: invalid rg JSON output: ${message}`);
 	}
 };
 

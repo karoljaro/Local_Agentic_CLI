@@ -3,7 +3,7 @@ import { describe, expect, spyOn, test } from 'bun:test';
 import { z } from 'zod';
 import { defineLocalTool, type LocalTool } from '@/infrastructure/tools/LocalTool';
 import { LocalToolRegistry } from '@/infrastructure/tools/LocalToolExecutor';
-import { listFilesTool } from '@/infrastructure/tools/providers/ListFilesProvider';
+import { listDirectoryTool } from '@/infrastructure/tools/providers/ListDirectoryProvider';
 import type { WorkspaceFilePort } from '../ports/WorkspaceFilePort';
 
 import type { ClockPort } from '@/application/ports/ClockPort';
@@ -66,7 +66,16 @@ const searchTool: ToolDefinition = {
 
 describe('ToolRunner', () => {
 	test('parses and selects a provider exactly once through runner execution', async () => {
-		const schema = z.strictObject({ query: z.string().trim() });
+		let parses = 0;
+		const schema = z.strictObject({
+			query: z
+				.string()
+				.trim()
+				.overwrite((value) => {
+					parses++;
+					return value;
+				}),
+		});
 		let executions = 0;
 		const executor = new LocalToolRegistry([
 			defineLocalTool({
@@ -79,7 +88,6 @@ describe('ToolRunner', () => {
 				},
 			}),
 		]);
-		const parse = spyOn(schema, 'parse');
 		const providers = (executor as unknown as { toolsByName: Map<string, LocalTool> }).toolsByName;
 		const select = spyOn(providers, 'get');
 		try {
@@ -94,10 +102,9 @@ describe('ToolRunner', () => {
 			]);
 			await runner.executeToolCalls(asSessionId('session-1'), records);
 			expect(executions).toBe(1);
-			expect(parse).toHaveBeenCalledTimes(1);
+			expect(parses).toBe(1);
 			expect(select).toHaveBeenCalledTimes(1);
 		} finally {
-			parse.mockRestore();
 			select.mockRestore();
 		}
 	});
@@ -767,7 +774,7 @@ describe('ToolRunner prepared metadata', () => {
 					.catch((error: unknown) => error);
 				expect(approvals).toBe(1);
 				expect(mutations).toBe(outcome === 'success' || outcome === 'failure' ? 1 : 0);
-				expect(searches).toBe(outcome === 'success' ? 2 : 1);
+				expect(searches).toBe(outcome === 'success' || outcome === 'failure' ? 2 : 1);
 				expect(raw).toHaveBeenCalledTimes(0);
 				expect(definitions).toHaveBeenCalledTimes(1);
 				expect(
@@ -781,7 +788,7 @@ describe('ToolRunner prepared metadata', () => {
 					}
 				).toolResultReferences;
 				expect(cache.size).toBe(1);
-				if (outcome === 'success') {
+				if (outcome === 'success' || outcome === 'failure') {
 					expect([...cache.values()][0]?.sourceToolCallId).toBe(next[1]!.call.id);
 				} else {
 					expect([...cache.values()][0]?.sourceToolCallId).toBe(first[0]!.call.id);
@@ -789,7 +796,7 @@ describe('ToolRunner prepared metadata', () => {
 				if (outcome === 'failure') {
 					expect(
 						store.events.filter((event) => event.type === 'tool.call.completed').at(-1),
-					).toMatchObject({ output: { cached: true, sourceToolCallId: first[0]!.call.id } });
+					).toMatchObject({ output: { version: 2 } });
 					expect(store.events.find((event) => event.type === 'tool.call.failed')).toMatchObject({
 						error: { code: 'TOOL_FAILED', message: 'mutation failed' },
 					});
@@ -909,12 +916,21 @@ test('valid batch preparation performs no execution, approval or session lifecyc
 	expect(store.events).toEqual([]);
 });
 
-test('repeated normalized list_files calls reference the original result in order', async () => {
+test('repeated normalized list_directory calls reference the original result in order', async () => {
 	let listings = 0;
 	const files: WorkspaceFilePort = {
-		listFiles: async () => {
+		listDirectory: async () => {
 			listings++;
-			return { files: ['src/file.ts'], truncated: false };
+			return { path: 'src', entries: [{ path: 'src/file.ts', type: 'file' }], truncated: false };
+		},
+		findFiles: async () => {
+			throw new Error('unexpected find');
+		},
+		moveFile: async () => {
+			throw new Error('unexpected move');
+		},
+		deletePath: async () => {
+			throw new Error('unexpected delete');
 		},
 		readFile: async () => {
 			throw new Error('unexpected read');
@@ -926,7 +942,7 @@ test('repeated normalized list_files calls reference the original result in orde
 			throw new Error('unexpected create');
 		},
 	};
-	const registry = new LocalToolRegistry([listFilesTool(files, { maxEntries: 10 })]);
+	const registry = new LocalToolRegistry([listDirectoryTool(files, { maxEntries: 10 })]);
 	const store = new InMemorySessionStore();
 	const runner = new ToolRunner({
 		sessionStore: new SessionService(store),
@@ -935,9 +951,9 @@ test('repeated normalized list_files calls reference the original result in orde
 		toolExecutor: registry,
 	});
 	const records = runner.prepareToolCalls([
-		{ name: 'list_files', arguments: { path: ' src ' } },
-		{ name: 'list_files', arguments: { path: 'src' } },
-		{ name: 'list_files', arguments: { path: 'src' } },
+		{ name: 'list_directory', arguments: { path: ' src ' } },
+		{ name: 'list_directory', arguments: { path: 'src' } },
+		{ name: 'list_directory', arguments: { path: 'src' } },
 	]);
 	const result = await runner.executeToolCalls(sessionId, records);
 	expect(listings).toBe(1);
@@ -945,7 +961,11 @@ test('repeated normalized list_files calls reference the original result in orde
 	expect(completed.map((event) => event.toolCallId)).toEqual(
 		records.map((record) => record.call.id),
 	);
-	expect(completed[0]!.output).toEqual({ files: ['src/file.ts'], truncated: false });
+	expect(completed[0]!.output).toEqual({
+		path: 'src',
+		entries: [{ path: 'src/file.ts', type: 'file' }],
+		truncated: false,
+	});
 	for (const event of completed.slice(1))
 		expect(event.output).toMatchObject({ cached: true, sourceToolCallId: records[0]!.call.id });
 	expect(result).toEqual({});

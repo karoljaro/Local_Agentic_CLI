@@ -4,7 +4,13 @@ import { join } from 'node:path';
 import { describe, expect, test } from 'bun:test';
 
 import type {
-	ListWorkspaceFilesInput,
+	FindWorkspaceFilesInput,
+	ListWorkspaceDirectoryInput,
+	WorkspaceDirectoryList,
+	MoveWorkspaceFileInput,
+	WorkspaceFileMove,
+	DeleteWorkspacePathInput,
+	WorkspacePathDeletion,
 	ReadWorkspaceFileInput,
 	WorkspaceExecutionOptions,
 	WorkspaceFile,
@@ -21,7 +27,17 @@ class RecordingWorkspaceFilePort implements WorkspaceFilePort {
 
 	constructor(private readonly content = 'before target after') {}
 
-	async listFiles(_input: ListWorkspaceFilesInput): Promise<WorkspaceFileList> {
+	async findFiles(_input: FindWorkspaceFilesInput): Promise<WorkspaceFileList> {
+		throw new Error('not used');
+	}
+
+	async listDirectory(_input: ListWorkspaceDirectoryInput): Promise<WorkspaceDirectoryList> {
+		throw new Error('not used');
+	}
+	async moveFile(_input: MoveWorkspaceFileInput): Promise<WorkspaceFileMove> {
+		throw new Error('not used');
+	}
+	async deletePath(_input: DeleteWorkspacePathInput): Promise<WorkspacePathDeletion> {
 		throw new Error('not used');
 	}
 
@@ -58,8 +74,7 @@ describe('EditWorkspaceFile', () => {
 		const workspaceFiles = new RecordingWorkspaceFilePort();
 		await new EditWorkspaceFile(workspaceFiles).execute({
 			path: 'file.txt',
-			oldText: 'target',
-			newText,
+			edits: [{ oldText: 'target', newText }],
 			maxFileBytes: 1024,
 		});
 
@@ -80,8 +95,7 @@ describe('EditWorkspaceFile', () => {
 		await expect(
 			new EditWorkspaceFile(workspaceFiles).execute({
 				path: 'file.txt',
-				oldText: 'target',
-				newText: '$&',
+				edits: [{ oldText: 'target', newText: '$&' }],
 				maxFileBytes: 1024,
 			}),
 		).rejects.toThrow(error);
@@ -104,8 +118,7 @@ describe('EditWorkspaceFile', () => {
 			await expect(
 				new EditWorkspaceFile(new ChangingWorkspaceFileSystem(directory)).execute({
 					path: 'file.txt',
-					oldText: 'target',
-					newText: '$&',
+					edits: [{ oldText: 'target', newText: '$&' }],
 					maxFileBytes: 1024,
 				}),
 			).rejects.toThrow('File changed since it was read');
@@ -121,8 +134,7 @@ describe('EditWorkspaceFile', () => {
 
 		await editWorkspaceFile.execute({
 			path: 'file.txt',
-			oldText: 'target',
-			newText: 'replacement',
+			edits: [{ oldText: 'target', newText: 'replacement' }],
 			maxFileBytes: 1024,
 		});
 
@@ -132,6 +144,90 @@ describe('EditWorkspaceFile', () => {
 			expectedContent: 'before target after',
 			maxFileBytes: 1024,
 		});
+	});
+
+	test('validates edits against original text and writes once in source order', async () => {
+		const files = new RecordingWorkspaceFilePort('alpha beta gamma');
+		let writes = 0;
+		const write = files.writeFile.bind(files);
+		files.writeFile = async (input) => {
+			writes++;
+			return write(input);
+		};
+		await expect(
+			new EditWorkspaceFile(files).execute({
+				path: 'file.txt',
+				edits: [
+					{ oldText: 'gamma', newText: '$&' },
+					{ oldText: 'alpha', newText: 'beta' },
+					{ oldText: 'beta', newText: 'B' },
+				],
+				maxFileBytes: 1024,
+			}),
+		).resolves.toEqual({ path: 'file.txt', changed: true, editsApplied: 3 });
+		expect(writes).toBe(1);
+		expect(files.writeInput?.content).toBe('beta B $&');
+		expect(files.writeInput?.expectedContent).toBe('alpha beta gamma');
+	});
+
+	test.each([
+		[
+			[
+				{ oldText: 'target', newText: 'ok' },
+				{ oldText: 'missing', newText: 'x' },
+			],
+			'oldText was not found',
+		],
+		[
+			[
+				{ oldText: 'target', newText: 'ok' },
+				{ oldText: 'target after', newText: 'x' },
+			],
+			'Edits overlap',
+		],
+		[
+			[
+				{ oldText: 'target', newText: 'ok' },
+				{ oldText: 'target', newText: 'x' },
+			],
+			'Edits overlap',
+		],
+		[[{ oldText: '', newText: 'ok' }], 'nonempty oldText'],
+		[[], 'Provide 1–50 edits'],
+	] as const)('rejects invalid batches without any write: %j', async (edits, message) => {
+		const files = new RecordingWorkspaceFilePort();
+		await expect(
+			new EditWorkspaceFile(files).execute({
+				path: 'file.txt',
+				edits: edits.map((edit) => ({ ...edit })),
+				maxFileBytes: 1024,
+			}),
+		).rejects.toThrow(message);
+		expect(files.writeInput).toBeUndefined();
+	});
+
+	test('rejects overlapping occurrences of oldText as ambiguous', async () => {
+		const files = new RecordingWorkspaceFilePort('aaa');
+		await expect(
+			new EditWorkspaceFile(files).execute({
+				path: 'file.txt',
+				edits: [{ oldText: 'aa', newText: 'b' }],
+				maxFileBytes: 1024,
+			}),
+		).rejects.toThrow('oldText appears multiple times');
+		expect(files.writeInput).toBeUndefined();
+	});
+
+	test('reports an unchanged result without rewriting identical content', async () => {
+		const files = new RecordingWorkspaceFilePort();
+		await expect(
+			new EditWorkspaceFile(files).execute({
+				path: 'file.txt',
+				edits: [{ oldText: 'target', newText: 'target' }],
+				maxFileBytes: 1024,
+			}),
+		).resolves.toEqual({ path: 'file.txt', changed: false, editsApplied: 1 });
+		expect(files.writeInput).toBeUndefined();
 	});
 });
 
@@ -150,7 +246,7 @@ describe('EditWorkspaceFile cooperative cancellation', () => {
 		expect(
 			await new EditWorkspaceFile(files)
 				.execute(
-					{ path: 'file.txt', oldText: 'target', newText: '$&', maxFileBytes: 1024 },
+					{ path: 'file.txt', edits: [{ oldText: 'target', newText: '$&' }], maxFileBytes: 1024 },
 					options,
 				)
 				.then(
@@ -174,10 +270,10 @@ describe('EditWorkspaceFile cooperative cancellation', () => {
 		};
 		await expect(
 			new EditWorkspaceFile(files).execute(
-				{ path: 'file.txt', oldText: 'target', newText: '$&', maxFileBytes: 1024 },
+				{ path: 'file.txt', edits: [{ oldText: 'target', newText: '$&' }], maxFileBytes: 1024 },
 				options,
 			),
-		).resolves.toMatchObject({ replaced: true });
+		).resolves.toMatchObject({ changed: true, editsApplied: 1 });
 		expect(files.writeInput?.content).toBe('before $& after');
 		expect(files.writeInput).not.toHaveProperty('signal');
 	});
