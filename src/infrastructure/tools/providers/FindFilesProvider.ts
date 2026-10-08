@@ -9,7 +9,7 @@ export const findFilesTool = (
 	defineLocalTool({
 		name: 'find_files',
 		description:
-			'Find file paths recursively by glob, without searching contents. Workspace-relative path limits the directory; default root. Results and traversal are bounded.',
+			'Find file paths recursively by glob, without searching contents. path scopes the search; default root.',
 		deduplicate: true,
 		inputSchema: z.strictObject({
 			pattern: z
@@ -17,7 +17,7 @@ export const findFilesTool = (
 				.min(1)
 				.max(200)
 				.describe(
-					'Glob: *, **, ?. Without / matches basenames; with / matches paths relative to the selected directory.',
+					'Only *, **, ? wildcards. Without / matches basenames; with / matches paths relative to path.',
 				),
 			path: z.string().trim().min(1).optional(),
 		}),

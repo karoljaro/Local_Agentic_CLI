@@ -11,7 +11,7 @@ export const replaceFileTool = (
 	defineLocalTool({
 		name: 'replace_file',
 		description:
-			'Replace all content of an existing workspace-relative UTF-8 file. Read first and pass its version as expectedVersion; stale versions fail. Use edit_file for small changes.',
+			'Replace all text of an existing UTF-8 file; rejects stale versions. Use edit_file for local changes.',
 		requiresApproval: true,
 		invalidatesWorkspaceCache: true,
 		inputSchema: z.strictObject({
@@ -20,7 +20,7 @@ export const replaceFileTool = (
 			expectedVersion: z
 				.string()
 				.regex(/^[a-f0-9]{64}$/)
-				.describe('version returned by read_file.'),
+				.describe('version from read_file for this file.'),
 		}),
 		execute: async (input, executionOptions) => {
 			const file = await files.readFile(

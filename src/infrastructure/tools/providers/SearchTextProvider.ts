@@ -6,7 +6,7 @@ export const searchTextTool = (search: WorkspaceSearchPort): LocalTool =>
 	defineLocalTool({
 		name: 'search_text',
 		description:
-			'Find literal text inside workspace files. Returns bounded path/line/excerpt matches; truncated means narrow the query. Use find_files for filenames.',
+			'Find literal text in files; returns bounded path/line/excerpt matches. If truncated, narrow the query.',
 		deduplicate: true,
 		inputSchema: z.strictObject({
 			query: z
@@ -14,7 +14,7 @@ export const searchTextTool = (search: WorkspaceSearchPort): LocalTool =>
 				.min(1)
 				.max(20_000)
 				.regex(/^[^\r\n\0]+$/, 'Query must be single-line text without null characters.')
-				.describe('Exact single-line text; whitespace and | are literal, not regex.'),
+				.describe('Literal single-line text; preserves whitespace and |.'),
 		}),
 		execute: (input, executionOptions) => search.search(input, executionOptions),
 	});

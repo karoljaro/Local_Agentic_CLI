@@ -18,17 +18,9 @@ const readFileInputSchema = z
 			.int()
 			.min(1)
 			.optional()
-			.describe('First line, one-based; default 1. Cannot accompany startOffset.'),
-		startOffset: z
-			.int()
-			.min(0)
-			.optional()
-			.describe('UTF-16 cursor, zero-based. Prefer the returned nextRead for continuation.'),
-		endLine: z
-			.int()
-			.min(1)
-			.optional()
-			.describe('Last line, inclusive; excludes its following newline.'),
+			.describe('One-based; default 1. Cannot accompany startOffset.'),
+		startOffset: z.int().min(0).optional().describe('Zero-based UTF-16 cursor.'),
+		endLine: z.int().min(1).optional().describe('Inclusive; excludes the following newline.'),
 	})
 	.refine((input) => input.startOffset === undefined || input.startLine === undefined, {
 		message: 'startOffset and startLine must not be supplied together',
@@ -63,7 +55,7 @@ export const readFileTool = (
 	return defineLocalTool({
 		name: READ_FILE_TOOL_NAME,
 		description:
-			'Read a workspace-relative UTF-8 file or line range. Pass nextRead unchanged to continue losslessly; only nextRead means more remains. Line metadata may describe partial lines. version guards replace_file.',
+			'Read current UTF-8 text or a line range. Pass nextRead unchanged for lossless continuation; only nextRead means more remains. Line metadata may describe partial lines.',
 		inputSchema: readFileInputSchema,
 		execute: async (input, executionOptions) => {
 			const file = await workspaceFiles.readFile(

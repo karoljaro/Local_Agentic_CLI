@@ -6,7 +6,7 @@ export const deletePathTool = (files: WorkspaceFilePort): LocalTool =>
 	defineLocalTool({
 		name: 'delete_path',
 		description:
-			'Delete one workspace-relative file or empty directory. Rejects symlinks, protected paths and workspace root. Nonempty directories must be emptied explicitly.',
+			'Delete one file or empty directory, never recursively. Rejects symlinks, protected paths and workspace root.',
 		requiresApproval: true,
 		invalidatesWorkspaceCache: true,
 		inputSchema: z.strictObject({ path: z.string().trim().min(1) }),

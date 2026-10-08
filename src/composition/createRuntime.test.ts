@@ -68,7 +68,7 @@ describe('createRuntime direct API', () => {
 			{
 				baseUrl: 'http://localhost:11434',
 				model: 'gemma4:12b-it-qat',
-				systemPrompt: 'You are a local coding agent.',
+				systemPrompt: 'Use workspace-relative paths.',
 				budget: 120_000,
 				keepAlive: 0,
 			},
@@ -85,7 +85,7 @@ describe('createRuntime direct API', () => {
 			{
 				baseUrl: 'http://localhost:11434',
 				model: 'gemma4:12b-it-qat',
-				systemPrompt: 'You are a local coding agent.',
+				systemPrompt: 'Use workspace-relative paths.',
 				budget: 120_000,
 				keepAlive: 0,
 			},

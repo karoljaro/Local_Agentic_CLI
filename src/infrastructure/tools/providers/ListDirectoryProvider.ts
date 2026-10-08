@@ -9,7 +9,7 @@ export const listDirectoryTool = (
 	defineLocalTool({
 		name: 'list_directory',
 		description:
-			'Inspect directory entries, including empty directories. Paths are workspace-relative; defaults to root and one level. Use depth for a bounded tree, find_files for filename patterns.',
+			'Inspect file and directory entries, including empty directories. Default path is root; depth selects a bounded tree.',
 		deduplicate: true,
 		inputSchema: z.strictObject({
 			path: z.string().trim().min(1).optional(),

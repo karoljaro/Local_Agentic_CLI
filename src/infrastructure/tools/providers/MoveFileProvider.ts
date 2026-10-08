@@ -6,7 +6,7 @@ export const moveFileTool = (files: WorkspaceFilePort): LocalTool =>
 	defineLocalTool({
 		name: 'move_file',
 		description:
-			'Move or rename one workspace-relative regular file. Creates missing destination parents; fails if destination exists. Symlinks and directories are rejected.',
+			'Move or rename one regular file; creates missing destination parents and fails if destination exists. Rejects symlinks and directories.',
 		requiresApproval: true,
 		invalidatesWorkspaceCache: true,
 		inputSchema: z.strictObject({

@@ -15,7 +15,7 @@ export const createFileTool = (
 	defineLocalTool({
 		name: CREATE_FILE_TOOL_NAME,
 		description:
-			'Create a new UTF-8 file and missing parent directories. Never overwrites. Path is workspace-relative.',
+			'Create a new UTF-8 file and missing parent directories; never overwrite existing paths.',
 		requiresApproval: true,
 		invalidatesWorkspaceCache: true,
 		inputSchema: z.strictObject({

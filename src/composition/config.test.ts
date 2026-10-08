@@ -3,12 +3,19 @@ import { describe, expect, test } from 'bun:test';
 import { readConfig } from './config';
 
 describe('readConfig', () => {
+	test('keeps the default system guidance compact and provider-independent', () => {
+		const prompt = readConfig({}).SYSTEM_PROMPT;
+		expect(prompt).toContain('workspace-relative');
+		expect(prompt.length).toBeLessThanOrEqual(400);
+		expect(prompt).not.toMatch(/ollama|gemma|llama/i);
+	});
+
 	test('uses defaults when env values are missing', () => {
 		expect(readConfig({})).toEqual({
 			OLLAMA_BASE_URL: 'http://localhost:11434',
 			OLLAMA_MODEL: 'gemma4:12b-it-qat',
 			OLLAMA_KEEP_ALIVE: '0',
-			SYSTEM_PROMPT: 'You are a local coding agent.',
+			SYSTEM_PROMPT: 'Use workspace-relative paths.',
 			MAX_CONTEXT_CHARACTERS: 120_000,
 		});
 	});

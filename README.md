@@ -214,11 +214,13 @@ Configuration is read from environment variables. A `.env` file can be used.
 ```env
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=gemma4:12b-it-qat
-SYSTEM_PROMPT=You are a local coding agent.
+SYSTEM_PROMPT=
 MAX_CONTEXT_CHARACTERS=120000
 ```
 
 Defaults are defined in `src/composition/config.ts`.
+
+Leave `SYSTEM_PROMPT` unset or blank to use the built-in guidance. A nonblank value replaces that guidance, including the workspace-relative path rule.
 
 `MAX_CONTEXT_CHARACTERS` limits serialized model messages. The current turn is always kept intact; older complete turns are removed from oldest to newest when the limit is reached.
 

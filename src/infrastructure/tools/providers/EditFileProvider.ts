@@ -19,7 +19,7 @@ export const editFileTool = (
 	return defineLocalTool({
 		name: EDIT_FILE_TOOL_NAME,
 		description:
-			'Edit a workspace-relative file after reading it. Each oldText must occur once in the original; edits cannot overlap. All edits commit together.',
+			'Apply local exact edits after reading the file. Each oldText must match once in the original; no overlaps. All edits commit together.',
 		requiresApproval: true,
 		invalidatesWorkspaceCache: true,
 		inputSchema: z.strictObject({
@@ -28,7 +28,7 @@ export const editFileTool = (
 				.array(
 					z.strictObject({
 						oldText: z.string().min(1),
-						newText: z.string().describe('Literal replacement; empty deletes the matched text.'),
+						newText: z.string().describe('Literal text; empty deletes the match.'),
 					}),
 				)
 				.min(1)

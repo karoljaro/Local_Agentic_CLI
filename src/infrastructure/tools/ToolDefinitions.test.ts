@@ -102,6 +102,20 @@ describe('production model tool definitions', () => {
 			type: 'string',
 			pattern: '^[a-f0-9]{64}$',
 		});
+		expect(
+			properties(definitions.get('replace_file')!)['expectedVersion']!['description'],
+		).toContain('read_file');
+		expect(definitions.get('read_file')!.description).toMatch(/nextRead unchanged/);
+		expect(properties(definitions.get('read_file')!)['startOffset']!['description']).toContain(
+			'UTF-16',
+		);
+		expect(properties(definitions.get('find_files')!)['pattern']!['description']).toContain(
+			'*, **, ?',
+		);
+		expect(definitions.get('edit_file')!.description).toMatch(/once.*original.*overlap/);
+		expect(definitions.get('delete_path')!.description).toMatch(
+			/empty directory.*never recursively/,
+		);
 	});
 
 	test('preserves literal search and edit strings during preparation', () => {
@@ -149,9 +163,9 @@ describe('production model tool definitions', () => {
 
 	test('keeps production model definitions compact without constraining ordinary schema maintenance', () => {
 		const definitions = createLocalToolExecutor().listTools();
-		// Nine orthogonal tools replace the 3,258-character five-tool baseline. This allows
-		// almost twice that footprint while catching accidental manuals or schema duplication.
-		expect(JSON.stringify(definitions.map(toOllamaTool)).length).toBeLessThanOrEqual(6_500);
+		// Phase 15 removed repeated guidance from the 4,679-character nine-tool surface.
+		// Keep ample maintenance headroom while catching manuals or schema duplication.
+		expect(JSON.stringify(definitions.map(toOllamaTool)).length).toBeLessThanOrEqual(6_000);
 		for (const tool of definitions) {
 			expect(tool.description.length).toBeLessThanOrEqual(230);
 			assertSchemaDescriptionsBounded(tool.parameters);
