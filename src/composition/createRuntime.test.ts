@@ -1,3 +1,6 @@
+import { SYNTHETIC_MODEL } from '@/test-support/modelFixtures';
+import { JsonModelPreferenceStore } from '@/infrastructure/persistence/JsonModelPreferenceStore';
+import { OllamaModelCatalog } from '@/infrastructure/model/OllamaModelCatalog';
 import { describe, expect, spyOn, test } from 'bun:test';
 
 import { SessionService } from '@/application/services/SessionService';
@@ -16,7 +19,7 @@ import { readConfig, type AppConfig } from './config';
 
 const config = {
 	OLLAMA_BASE_URL: 'http://localhost:11434',
-	OLLAMA_MODEL: 'initial-model',
+	OLLAMA_MODEL: SYNTHETIC_MODEL,
 	OLLAMA_KEEP_ALIVE: '0',
 	SYSTEM_PROMPT: 'test',
 	MAX_CONTEXT_CHARACTERS: 120_000,
@@ -27,6 +30,20 @@ const withMemoryRuntime = async (
 	runtimeConfig: AppConfig = config,
 ) => {
 	const events: AgentEvent[] = [];
+	const preferenceRead = spyOn(
+		JsonModelPreferenceStore.prototype,
+		'readLastSelectedModel',
+	).mockResolvedValue(undefined);
+	const preferenceWrite = spyOn(
+		JsonModelPreferenceStore.prototype,
+		'writeLastSelectedModel',
+	).mockResolvedValue(undefined);
+	const catalog = spyOn(OllamaModelCatalog.prototype, 'listModels').mockResolvedValue({
+		models: [
+			{ name: runtimeConfig.OLLAMA_MODEL ?? SYNTHETIC_MODEL },
+			...(runtimeConfig.OLLAMA_MODEL === undefined ? [] : [{ name: 'next-model' }]),
+		],
+	});
 	const read = spyOn(JsonlSessionStore.prototype, 'readSessionEvents').mockImplementation(
 		async (sessionId) => events.filter((event) => event.sessionId === sessionId),
 	);
@@ -39,8 +56,13 @@ const withMemoryRuntime = async (
 		{ sessionId: id },
 	]);
 	try {
-		await run(createRuntime(runtimeConfig), events);
+		const runtime = createRuntime(runtimeConfig);
+		await runtime.initializeModels();
+		await run(runtime, events);
 	} finally {
+		preferenceRead.mockRestore();
+		preferenceWrite.mockRestore();
+		catalog.mockRestore();
 		read.mockRestore();
 		append.mockRestore();
 		list.mockRestore();
@@ -53,7 +75,7 @@ const run = async (runtime: Runtime, signal?: AbortSignal) => {
 	for await (const delta of runtime.runTurn({
 		sessionId: id,
 		prompt: 'hello',
-		modelName: runtime.getModelName(),
+		...(runtime.getModelName() === undefined ? {} : { modelName: runtime.getModelName()! }),
 		...(signal === undefined ? {} : { signal }),
 	}))
 		deltas.push(delta);
@@ -67,8 +89,8 @@ describe('createRuntime direct API', () => {
 			{},
 			{
 				baseUrl: 'http://localhost:11434',
-				model: 'gemma4:12b-it-qat',
-				systemPrompt: 'Use workspace-relative paths.',
+				model: SYNTHETIC_MODEL,
+				systemPrompt: 'You are a local coding agent.',
 				budget: 120_000,
 				keepAlive: 0,
 			},
@@ -84,8 +106,8 @@ describe('createRuntime direct API', () => {
 			},
 			{
 				baseUrl: 'http://localhost:11434',
-				model: 'gemma4:12b-it-qat',
-				systemPrompt: 'Use workspace-relative paths.',
+				model: SYNTHETIC_MODEL,
+				systemPrompt: 'You are a local coding agent.',
 				budget: 120_000,
 				keepAlive: 0,
 			},
@@ -94,14 +116,14 @@ describe('createRuntime direct API', () => {
 			'explicit env',
 			{
 				OLLAMA_BASE_URL: ' http://127.0.0.1:22123/ ',
-				OLLAMA_MODEL: ' fixture-model ',
+				OLLAMA_MODEL: ` ${SYNTHETIC_MODEL} `,
 				SYSTEM_PROMPT: ' fixture prompt ',
 				MAX_CONTEXT_CHARACTERS: ' 240 ',
 				OLLAMA_KEEP_ALIVE: ' 2m ',
 			},
 			{
 				baseUrl: 'http://127.0.0.1:22123',
-				model: 'fixture-model',
+				model: SYNTHETIC_MODEL,
 				systemPrompt: 'fixture prompt',
 				budget: 240,
 				keepAlive: '2m',
@@ -129,7 +151,7 @@ describe('createRuntime direct API', () => {
 				async () =>
 					withMemoryRuntime(async (runtime, events) => {
 						expect(runtime.getModelName()).toBe(expected.model);
-						expect(await runtime.listModels()).toEqual([]);
+						expect((await runtime.listModels())[0]?.name).toBe(expected.model);
 						expect(await run(runtime)).toEqual([{ contentDelta: 'answer' }]);
 						const committed = [...events];
 						await expect(
@@ -137,14 +159,16 @@ describe('createRuntime direct API', () => {
 								for await (const _delta of runtime.runTurn({
 									sessionId: id,
 									prompt: 'x'.repeat(expected.budget),
-									modelName: runtime.getModelName(),
+									...(runtime.getModelName() === undefined
+										? {}
+										: { modelName: runtime.getModelName()! }),
 								})) {
 									// Oversized prompts must reject before streaming or persistence.
 								}
 							})(),
 						).rejects.toBeInstanceOf(ContextBudgetExceededError);
 						expect(events).toEqual(committed);
-						expect(urls).toEqual([`${expected.baseUrl}/api/tags`, `${expected.baseUrl}/api/chat`]);
+						expect(urls).toEqual([`${expected.baseUrl}/api/chat`]);
 					}, readConfig(env)),
 			);
 		});
@@ -297,23 +321,27 @@ describe('createRuntime direct API', () => {
 			async (_url, init) => {
 				const body = JSON.parse(String(init?.body));
 				requests.push(body);
-				return body.stream ? response() : unloaded.promise;
+				return body.stream
+					? response()
+					: body.keep_alive === 0
+						? unloaded.promise
+						: Response.json({ model: body.model, done: true, done_reason: 'load' });
 			},
 			async () =>
 				withMemoryRuntime(async (runtime) => {
 					const switching = runtime.switchModel('  next-model  ');
-					expect(runtime.getModelName()).toBe('initial-model');
-					expect(requests).toMatchObject([{ model: 'initial-model', stream: false }]);
+					expect(runtime.getModelName()).toBe(SYNTHETIC_MODEL);
+					await Promise.resolve();
+					await Promise.resolve();
 					unloaded.resolve(new Response(''));
 					expect(await switching).toBe('next-model');
 					await run(runtime);
 					expect(requests).toMatchObject([
-						{ model: 'initial-model', stream: false },
+						{ model: SYNTHETIC_MODEL, stream: false },
+						{ model: 'next-model', stream: false },
 						{ model: 'next-model', stream: true },
 					]);
-					await expect(runtime.switchModel(' ')).rejects.toThrow(
-						'Ollama model name cannot be empty.',
-					);
+					await expect(runtime.switchModel(' ')).rejects.toThrow('Model name cannot be empty.');
 					expect(runtime.getModelName()).toBe('next-model');
 				}),
 		);
@@ -330,17 +358,18 @@ describe('createRuntime direct API', () => {
 				throw cause;
 			},
 			async () => {
-				const runtime = createRuntime(config);
-				await expect(runtime.switchModel('next', request.signal)).rejects.toBe(cause);
-				expect(runtime.getModelName()).toBe('initial-model');
-				await expect(runtime.unloadCurrentModel({ signal: request.signal })).rejects.toBe(cause);
-				request.abort('custom');
-				await expect(runtime.switchModel('next', request.signal)).rejects.toHaveProperty(
-					'name',
-					'AbortError',
-				);
-				expect(runtime.getModelName()).toBe('initial-model');
-				expect(fetches).toBe(2);
+				await withMemoryRuntime(async (runtime) => {
+					await expect(runtime.switchModel('next-model', request.signal)).rejects.toBe(cause);
+					expect(runtime.getModelName()).toBe(SYNTHETIC_MODEL);
+					await expect(runtime.unloadCurrentModel({ signal: request.signal })).rejects.toBe(cause);
+					request.abort('custom');
+					await expect(runtime.switchModel('next', request.signal)).rejects.toHaveProperty(
+						'name',
+						'AbortError',
+					);
+					expect(runtime.getModelName()).toBe(SYNTHETIC_MODEL);
+					expect(fetches).toBe(2);
+				});
 			},
 		);
 	});

@@ -1,3 +1,4 @@
+import { SYNTHETIC_MODEL } from '@/test-support/modelFixtures';
 import { describe, expect, test } from 'bun:test';
 
 import { getCommandSuggestions, parseCommand } from './commands';
@@ -5,9 +6,9 @@ import { getCommandSuggestions, parseCommand } from './commands';
 describe('commands', () => {
 	test('parses screen and direct-model commands from one registry', () => {
 		expect(parseCommand('/model')).toEqual({ type: 'select-model' });
-		expect(parseCommand('/model llama3.2')).toEqual({
+		expect(parseCommand(`/model ${SYNTHETIC_MODEL}`)).toEqual({
 			type: 'switch-model',
-			modelName: 'llama3.2',
+			modelName: SYNTHETIC_MODEL,
 		});
 		expect(parseCommand('/resume')).toEqual({ type: 'resume-session' });
 		expect(parseCommand('normal prompt')).toBeNull();

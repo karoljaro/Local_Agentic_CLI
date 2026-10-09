@@ -20,6 +20,7 @@ import { TemporalClock } from '@/infrastructure/runtime/TemporalClock';
 import type { SessionId } from '@/domain/Ids';
 import type { AgentEvent } from '@/domain/AgentEvent';
 import type { StoredSession } from '@/application/ports/SessionStorePort';
+import type { ModelSelectionState } from '@/application/services/ModelSelection';
 
 export type { RuntimeListModelsOptions } from '@/composition/model/OllamaModelRuntime';
 export type { AgentMetricsSnapshot } from '@/application/services/InMemoryAgentMetrics';
@@ -31,7 +32,9 @@ export type Runtime = {
 	readSessionPreviewEvents: (sessionId: SessionId) => Promise<AgentEvent[]>;
 	listSessions: () => Promise<StoredSession[]>;
 	workspacePath: string;
-	getModelName: () => string;
+	getModelName: () => string | undefined;
+	getModelSelection: () => ModelSelectionState;
+	initializeModels: (signal?: AbortSignal) => Promise<ModelSelectionState>;
 	getAgentMetrics: (sessionId?: SessionId) => AgentMetricsSnapshot;
 	listModels: (
 		signal?: AbortSignal,
@@ -72,12 +75,17 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 
 	return {
 		createSessionId: () => idGenerator.nextSessionId(),
-		runTurn: (input) => runAgentTurn.run(input),
+		runTurn: async function* (input) {
+			const modelName = await modelRuntime.requireModel(input.signal);
+			yield* runAgentTurn.run({ ...input, modelName });
+		},
 		listSessionEvents: (sessionId) => sessionStore.activateSession(sessionId),
 		readSessionPreviewEvents: (sessionId) => sessionStore.readPreviewEvents(sessionId),
 		listSessions: () => sessionStore.listSessions(),
 		workspacePath: process.cwd(),
 		getModelName: () => modelRuntime.getModelName(),
+		getModelSelection: () => modelRuntime.getModelSelection(),
+		initializeModels: (signal) => modelRuntime.initialize(signal),
 		getAgentMetrics: (sessionId) => agentMetrics.snapshot(sessionId),
 		listModels: async (signal, options) =>
 			(await modelRuntime.listModels({ ...options, signal })).models,

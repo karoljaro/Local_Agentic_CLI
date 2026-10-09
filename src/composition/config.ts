@@ -16,7 +16,10 @@ const positiveInteger = (defaultValue: number) =>
 
 const ConfigSchema = z.object({
 	OLLAMA_BASE_URL: envString('http://localhost:11434').pipe(z.url()),
-	OLLAMA_MODEL: envString('gemma4:12b-it-qat'),
+	OLLAMA_MODEL: z.preprocess(
+		(value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+		z.string().trim().min(1).optional(),
+	),
 	OLLAMA_KEEP_ALIVE: envString('0'),
 	SYSTEM_PROMPT: envString('Use workspace-relative paths.'),
 	MAX_CONTEXT_CHARACTERS: positiveInteger(120_000),

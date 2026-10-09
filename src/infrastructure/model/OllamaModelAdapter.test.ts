@@ -1,3 +1,4 @@
+import { SYNTHETIC_MODEL } from '@/test-support/modelFixtures';
 import { describe, expect, test } from 'bun:test';
 
 import { asMessageId, asToolCallId } from '@/domain/Ids';
@@ -45,7 +46,7 @@ describe('OllamaModelAdapter', () => {
 				return new Response('{"message":{"content":"Done"},"done":true}\n');
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
+				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
 				await collectAsyncIterable(
 					adapter.streamChat({
@@ -72,7 +73,7 @@ describe('OllamaModelAdapter', () => {
 				);
 
 				expect(requestBody).toEqual({
-					model: 'gemma4:12b-it-qat',
+					model: SYNTHETIC_MODEL,
 					messages: [
 						{
 							role: 'assistant',
@@ -113,7 +114,7 @@ describe('OllamaModelAdapter', () => {
 				);
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter('http://localhost:11434/', ' test-model ');
+				const adapter = new OllamaModelAdapter('http://localhost:11434/', ` ${SYNTHETIC_MODEL} `);
 
 				const chunks = await collectAsyncIterable(
 					adapter.streamChat({
@@ -133,7 +134,7 @@ describe('OllamaModelAdapter', () => {
 
 				expect(requestUrl).toBe('http://localhost:11434/api/chat');
 				expect(requestBody).toEqual({
-					model: 'test-model',
+					model: SYNTHETIC_MODEL,
 					messages: [
 						{
 							role: 'system',
@@ -161,12 +162,12 @@ describe('OllamaModelAdapter', () => {
 				return new Response('{"done":true}\n', { status: 200 });
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter('http://localhost:11434', 'test-model', '0');
+				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL, '0');
 
 				await collectAsyncIterable(adapter.streamChat({ messages: [] }));
 
 				expect(requestBody).toEqual({
-					model: 'test-model',
+					model: SYNTHETIC_MODEL,
 					messages: [],
 					keep_alive: 0,
 					stream: true,
@@ -190,14 +191,14 @@ describe('OllamaModelAdapter', () => {
 				return new Response('{"done":true,"done_reason":"unload"}', { status: 200 });
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter('http://localhost:11434/', ' test-model ');
+				const adapter = new OllamaModelAdapter('http://localhost:11434/', ` ${SYNTHETIC_MODEL} `);
 
 				await adapter.unload({ signal: abortController.signal });
 
 				expect(requestUrl).toBe('http://localhost:11434/api/chat');
 				expect(requestSignal).toBe(abortController.signal);
 				expect(requestBody).toEqual({
-					model: 'test-model',
+					model: SYNTHETIC_MODEL,
 					messages: [],
 					keep_alive: 0,
 					stream: false,
@@ -217,7 +218,7 @@ describe('OllamaModelAdapter', () => {
 				return new Response('{"done":true}\n', { status: 200 });
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
+				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
 				await collectAsyncIterable(
 					adapter.streamChat({
@@ -241,7 +242,7 @@ describe('OllamaModelAdapter', () => {
 				return new Response('{"done":true}\n', { status: 200 });
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
+				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
 				await collectAsyncIterable(adapter.streamChat({ messages: [] }));
 
@@ -263,7 +264,7 @@ describe('OllamaModelAdapter', () => {
 				);
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
+				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 				const tool = {
 					name: 'read_file',
 					description: 'Read a file',
@@ -287,7 +288,7 @@ describe('OllamaModelAdapter', () => {
 				);
 
 				expect(requestBody).toEqual({
-					model: 'gemma4:12b-it-qat',
+					model: SYNTHETIC_MODEL,
 					messages: [],
 					tools: [
 						{
@@ -324,7 +325,7 @@ describe('OllamaModelAdapter', () => {
 				});
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
+				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
 				const chunks = await collectAsyncIterable(adapter.streamChat({ messages: [] }));
 
@@ -346,7 +347,7 @@ describe('OllamaModelAdapter', () => {
 				);
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
+				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
 				const chunks = await collectAsyncIterable(adapter.streamChat({ messages: [] }));
 
@@ -378,7 +379,7 @@ describe('OllamaModelAdapter', () => {
 		await withMockedFetch(
 			async () => new Response('model not found', { status: 404 }),
 			async () => {
-				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
+				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
 				await expect(collectAsyncIterable(adapter.streamChat({ messages: [] }))).rejects.toThrow(
 					'Ollama request failed with status 404',
@@ -405,7 +406,7 @@ describe('OllamaModelAdapter', () => {
 				);
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
+				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
 				await expect(collectAsyncIterable(adapter.streamChat({ messages: [] }))).rejects.toThrow(
 					'Invalid Ollama stream JSON',
@@ -435,7 +436,7 @@ describe('OllamaModelAdapter', () => {
 				);
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
+				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 				const iterator = adapter.streamChat({ messages: [] })[Symbol.asyncIterator]();
 
 				await expect(iterator.next()).resolves.toEqual({
@@ -477,7 +478,7 @@ describe('OllamaModelAdapter', () => {
 				return response;
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
+				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 				const iterator = adapter
 					.streamChat({ messages: [], signal: abortController.signal })
 					[Symbol.asyncIterator]();
@@ -496,7 +497,7 @@ describe('OllamaModelAdapter', () => {
 		await withMockedFetch(
 			async () => new Response('{"error":"model failed"}\n', { status: 200 }),
 			async () => {
-				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
+				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
 				await expect(collectAsyncIterable(adapter.streamChat({ messages: [] }))).rejects.toThrow(
 					'Ollama stream failed: model failed',
@@ -514,7 +515,7 @@ describe('OllamaModelAdapter', () => {
 				);
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
+				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
 				await expect(collectAsyncIterable(adapter.streamChat({ messages: [] }))).rejects.toThrow(
 					'Ollama stream failed: model failed',
@@ -532,7 +533,7 @@ describe('OllamaModelAdapter', () => {
 				);
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
+				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
 				await expect(collectAsyncIterable(adapter.streamChat({ messages: [] }))).rejects.toThrow(
 					'Ollama stream ended before completion.',
@@ -550,7 +551,7 @@ describe('OllamaModelAdapter', () => {
 				);
 			},
 			async () => {
-				const adapter = new OllamaModelAdapter('http://localhost:11434', 'gemma4:12b-it-qat');
+				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
 				await expect(collectAsyncIterable(adapter.streamChat({ messages: [] }))).rejects.toThrow(
 					'Invalid Ollama tool arguments for read_file',
@@ -564,5 +565,137 @@ describe('OllamaModelAdapter', () => {
 		expect(() => new OllamaModelAdapter('http://localhost:11434', ' ')).toThrow(
 			'Ollama model name cannot be empty.',
 		);
+	});
+});
+
+describe('Ollama model management boundaries', () => {
+	for (const message of [
+		`model '${SYNTHETIC_MODEL}' not found`,
+		`model "${SYNTHETIC_MODEL}" not found`,
+		'model not found',
+	]) {
+		test(`model-specific JSON 404 unload is already-unloaded success: ${message}`, async () => {
+			await withMockedFetch(
+				async () => Response.json({ error: message }, { status: 404 }),
+				async () => {
+					const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
+					await expect(adapter.unload()).resolves.toBeUndefined();
+				},
+			);
+		});
+	}
+
+	for (const [status, body] of [
+		[404, '{"error":"route not found"}'],
+		[404, 'Not Found'],
+		[404, '{"error":"model \'other-model\' not found"}'],
+		[403, '{"error":"permission denied"}'],
+		[500, '{"error":"internal server error"}'],
+	] as const)
+		test(`unrelated unload HTTP ${status} retains the provider error: ${body}`, async () => {
+			await withMockedFetch(
+				async () => new Response(body, { status }),
+				async () => {
+					const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
+					await expect(adapter.unload()).rejects.toThrow(
+						`Ollama model unload failed with status ${status}: ${body}`,
+					);
+				},
+			);
+		});
+
+	test('unload transport failure remains the original failure', async () => {
+		const cause = new Error('connection refused');
+		await withMockedFetch(
+			async () => {
+				throw cause;
+			},
+			async () => {
+				await expect(
+					new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL).unload(),
+				).rejects.toBe(cause);
+			},
+		);
+	});
+
+	for (const keepAlive of [undefined, '0', '0s', '0m', '-1', '2m'])
+		test(`manual activation requests a real load for keep-alive ${keepAlive}`, async () => {
+			const signal = new AbortController().signal;
+			await withMockedFetch(
+				async (url, init) => {
+					expect(String(url)).toBe('http://localhost:11434/api/chat');
+					expect(init?.signal).toBe(signal);
+					expect(JSON.parse(String(init?.body))).toEqual({
+						model: SYNTHETIC_MODEL,
+						messages: [],
+						stream: false,
+					});
+					return Response.json({ model: SYNTHETIC_MODEL, done: true, done_reason: 'load' });
+				},
+				async () => {
+					await expect(
+						new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL, keepAlive).activate({
+							signal,
+						}),
+					).resolves.toBeUndefined();
+				},
+			);
+		});
+
+	for (const [status, payload, hint] of [
+		[404, `model '${SYNTHETIC_MODEL}' not found`, true],
+		[400, `model '${SYNTHETIC_MODEL}' does not support tools`, true],
+		[500, 'failed to load model: unsupported model architecture', true],
+		[404, 'route not found', false],
+		[403, 'permission denied', false],
+		[500, 'failed to load model: permission denied', false],
+		[500, 'failed to load model: connection refused', false],
+		[500, 'internal server error', false],
+	] as const)
+		test(`model-specific inference/activation recovery classification: ${status} ${payload}`, async () => {
+			for (const operation of ['activate', 'inference'] as const)
+				await withMockedFetch(
+					async () => Response.json({ error: payload }, { status }),
+					async () => {
+						const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
+						let caught: unknown;
+						try {
+							if (operation === 'activate') await adapter.activate();
+							else await collectAsyncIterable(adapter.streamChat({ messages: [] }));
+						} catch (error) {
+							caught = error;
+						}
+						expect(caught).toBeInstanceOf(Error);
+						const message = (caught as Error).message;
+						expect(message).toContain(payload);
+						expect(message.includes('Use /model')).toBe(hint);
+					},
+				);
+		});
+
+	test('streamed model-specific error includes guidance without misclassifying generic stream failure', async () => {
+		for (const [error, hint] of [
+			[`model '${SYNTHETIC_MODEL}' not found`, true],
+			['does not support tools', true],
+			['network outage', false],
+		] as const) {
+			await withMockedFetch(
+				async () => new Response(JSON.stringify({ error }) + '\n'),
+				async () => {
+					let caught: unknown;
+					try {
+						await collectAsyncIterable(
+							new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL).streamChat({
+								messages: [],
+							}),
+						);
+					} catch (error) {
+						caught = error;
+					}
+					expect((caught as Error).message).toContain(`Ollama stream failed: ${error}`);
+					expect((caught as Error).message.includes('Use /model')).toBe(hint);
+				},
+			);
+		}
 	});
 });

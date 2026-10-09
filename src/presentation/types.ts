@@ -14,6 +14,8 @@ export type PresentationRuntime = Pick<
 	Runtime,
 	| 'createSessionId'
 	| 'getModelName'
+	| 'getModelSelection'
+	| 'initializeModels'
 	| 'listModels'
 	| 'listSessions'
 	| 'listSessionEvents'

@@ -1,3 +1,4 @@
+import { SYNTHETIC_MODEL } from '@/test-support/modelFixtures';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -153,7 +154,7 @@ test('slash suggestions navigate and Tab completes; model picker selects and res
 	}
 });
 
-test('session picker previews without activation; navigation/select resumes durable history and model', async () => {
+test('session picker previews without activation; navigation/select resumes durable history while retaining runtime model', async () => {
 	const runtime = new FakeTerminalRuntime();
 	const sessionId = asSessionId('saved-session');
 	const events = [
@@ -171,7 +172,9 @@ test('session picker previews without activation; navigation/select resumes dura
 		ui.mockInput.pressEnter();
 		await settle(ui);
 		expect(runtime.activations).toContain(sessionId);
-		expect(runtime.switches).toEqual(['saved-model']);
+		expect(runtime.switches).toEqual([]);
+		expect(runtime.getModelName()).toBe(SYNTHETIC_MODEL);
+		expect(runtime.events.get(sessionId)).toEqual(events);
 		expect(ui.captureCharFrame()).toContain('Previously committed answer.');
 		expect(ui.app.composer.focused).toBe(true);
 		ui.mockInput.pressKey('F3');
@@ -701,7 +704,7 @@ test('model picker failure displays the runtime error and keeps the previous mod
 		ui.mockInput.pressArrow('down');
 		ui.mockInput.pressEnter();
 		await settle(ui);
-		expect(runtime.getModelName()).toBe('test-model');
+		expect(runtime.getModelName()).toBe(SYNTHETIC_MODEL);
 		expect(ui.captureCharFrame()).toContain('Unload failed');
 		expect(ui.app.composer.focused).toBe(false);
 		ui.mockInput.pressEscape();
@@ -808,3 +811,119 @@ test.each([
 		await ui.app.shutdown();
 	}
 });
+
+test('selection-required header and startup notice direct to the existing picker, and successful selection updates the header', async () => {
+	const runtime = new FakeTerminalRuntime();
+	runtime.model = undefined;
+	const ui = await setup(runtime);
+	try {
+		expect(ui.captureCharFrame()).toContain('No model selected · /model');
+		expect(ui.captureCharFrame()).toContain('Use /model to choose one.');
+		ui.mockInput.pressKey('F2');
+		await settle(ui);
+		expect(ui.captureCharFrame()).toContain(SYNTHETIC_MODEL);
+		ui.mockInput.pressEnter();
+		await settle(ui);
+		expect(runtime.getModelName()).toBe(SYNTHETIC_MODEL);
+		expect(headerContent(ui.app)).toContain(SYNTHETIC_MODEL);
+		expect(headerContent(ui.app)).not.toContain('No model selected');
+		expect(ui.app.composer.focused).toBe(true);
+	} finally {
+		await ui.app.shutdown();
+	}
+});
+
+test('picker refresh detects a disappeared current selection, clears the header and allows recovery', async () => {
+	const runtime = new FakeTerminalRuntime();
+	const ui = await setup(runtime);
+	let refresh = false;
+	runtime.listModels = async (_signal?: AbortSignal, options?: { forceRefresh?: boolean }) => {
+		refresh = options?.forceRefresh === true;
+		runtime.model = undefined;
+		return [{ name: 'other-model' }];
+	};
+	try {
+		ui.mockInput.pressKey('F2');
+		await settle(ui);
+		expect(refresh).toBe(true);
+		expect(headerContent(ui.app)).toContain('No model selected');
+		ui.mockInput.pressEnter();
+		await settle(ui);
+		expect(runtime.model).toBe('other-model');
+		expect(headerContent(ui.app)).toContain('other-model');
+	} finally {
+		await ui.app.shutdown();
+	}
+});
+
+test('failed activation clears an unloaded old selection, shows the real error, and the picker can recover', async () => {
+	const runtime = new FakeTerminalRuntime();
+	const ui = await setup(runtime);
+	let fail = true;
+	runtime.switchModel = async (name) => {
+		runtime.model = undefined;
+		if (fail)
+			throw new Error('Model activation failed. Use /model to choose another installed model.');
+		runtime.model = name;
+		return name;
+	};
+	try {
+		ui.mockInput.pressKey('F2');
+		await settle(ui);
+		ui.mockInput.pressArrow('down');
+		ui.mockInput.pressEnter();
+		await settle(ui);
+		expect(headerContent(ui.app)).toContain('No model selected');
+		expect(ui.app.conversation.history.at(-1)?.content).toContain(
+			'Model activation failed. Use /model',
+		);
+		expect(
+			ui.app.conversation.history.some((entry) => entry.content.startsWith('Model switched')),
+		).toBe(false);
+		expect(ui.app.composer.focused).toBe(false);
+		ui.mockInput.pressEscape();
+		ui.mockInput.pressKey('F2');
+		await settle(ui);
+		fail = false;
+		ui.mockInput.pressEnter();
+		await settle(ui);
+		expect(runtime.getModelName()).toBe(SYNTHETIC_MODEL);
+		expect(headerContent(ui.app)).toContain(SYNTHETIC_MODEL);
+		expect(ui.app.composer.focused).toBe(true);
+	} finally {
+		await ui.app.shutdown();
+	}
+});
+
+test('header cannot claim the candidate during pending activation', async () => {
+	const runtime = new FakeTerminalRuntime();
+	const pending = createDeferred<string>();
+	runtime.switchModel = async (name) => {
+		runtime.model = undefined;
+		await pending.promise;
+		runtime.model = name;
+		return name;
+	};
+	const ui = await setup(runtime);
+	try {
+		ui.mockInput.pressKey('F2');
+		await settle(ui);
+		ui.mockInput.pressArrow('down');
+		ui.mockInput.pressEnter();
+		await settle(ui);
+		expect(headerContent(ui.app)).toContain('Switching model…');
+		expect(headerContent(ui.app)).not.toContain('other-model');
+		pending.resolve('other-model');
+		await settle(ui);
+		expect(headerContent(ui.app)).toContain('other-model');
+	} finally {
+		pending.resolve('other-model');
+		await ui.app.shutdown();
+	}
+});
+
+// The full-screen picker covers the header, so inspect its existing text node while open.
+const headerContent = (app: TerminalApp): string =>
+	(app as unknown as { model: TextRenderable }).model.content.chunks
+		.map((chunk) => chunk.text)
+		.join('');

@@ -1,3 +1,4 @@
+import { SYNTHETIC_MODEL } from '@/test-support/modelFixtures';
 import { expect, test } from 'bun:test';
 import { ContextBuilder } from '@/application/services/ContextBuilder';
 import { SessionService } from '@/application/services/SessionService';
@@ -69,10 +70,15 @@ class ControlledRuntime implements PresentationRuntime {
 	readonly listeners = new Set<(event: AgentEvent) => void>();
 	readonly loaded: AgentEvent[] = [];
 	readonly switches: string[] = [];
-	model = 'test-model';
+	model = SYNTHETIC_MODEL;
 	disposals = 0;
 	createSessionId = () => asSessionId('session-1');
 	getModelName = () => this.model;
+	getModelSelection: PresentationRuntime['getModelSelection'] = () => ({
+		status: 'selected',
+		modelName: this.model,
+	});
+	initializeModels: PresentationRuntime['initializeModels'] = async () => this.getModelSelection();
 	listModels = async () => [];
 	listSessions = async () => [];
 	listSessionEvents = async (id: SessionId) =>
@@ -140,7 +146,7 @@ test('submission locks immediately and uses the selected runtime model and sessi
 		expect(p.runtime.turns).toHaveLength(1);
 		expect(turn.input).toMatchObject({
 			sessionId: asSessionId('session-1'),
-			modelName: 'test-model',
+			modelName: SYNTHETIC_MODEL,
 			prompt: 'question',
 		});
 		expect(turn.input.signal).toBeInstanceOf(AbortSignal);
@@ -416,7 +422,7 @@ for (const ending of ['finish', 'failure'] as const) {
 			const old = await p.start();
 			const oldCallback = [...p.runtime.listeners][0]!;
 			await old.delta('old partial');
-			await p.conversation.selectSession(asSessionId('session-2'), false);
+			await p.conversation.selectSession(asSessionId('session-2'));
 			expect(old.input.signal?.aborted).toBe(true);
 			const newer = await p.start();
 			await newer.delta('new live');
@@ -439,8 +445,8 @@ test('switching away and back fences old same-session callbacks and finalizers',
 	try {
 		const old = await p.start();
 		const oldCallback = [...p.runtime.listeners][0]!;
-		await p.conversation.selectSession(asSessionId('session-2'), false);
-		await p.conversation.selectSession(asSessionId('session-1'), false);
+		await p.conversation.selectSession(asSessionId('session-2'));
+		await p.conversation.selectSession(asSessionId('session-1'));
 		const newer = await p.start();
 		await newer.delta('new live');
 		oldCallback(assistantMessageCompletedEvent({ content: 'stale same-session callback' }));
@@ -506,7 +512,7 @@ test('stale session load cannot replace current durable history', async () => {
 	try {
 		const loading = conversation.initialize();
 		expect(conversation.submit('too early')).toBe(false);
-		await conversation.selectSession(asSessionId('session-2'), false);
+		await conversation.selectSession(asSessionId('session-2'));
 		old.resolve([promptSubmittedEvent({ prompt: 'old loaded' })]);
 		await loading;
 		expect(conversation.history.map((entry) => entry.content)).toEqual(['new loaded']);
@@ -517,7 +523,7 @@ test('stale session load cannot replace current durable history', async () => {
 	}
 });
 
-test('resume replays durable history, clears incomplete activity and restores latest model once', async () => {
+test('resume replays durable history and preserves runtime selection independently of historical model', async () => {
 	const runtime = new ControlledRuntime();
 	runtime.loaded.push(
 		promptSubmittedEvent({ modelName: 'saved-model' }),
@@ -527,11 +533,12 @@ test('resume replays durable history, clears incomplete activity and restores la
 	);
 	const conversation = new Conversation(runtime, () => undefined);
 	try {
-		await conversation.initialize(undefined, true);
+		await conversation.initialize();
 		expect(conversation.history.map((entry) => entry.content)).toEqual(['Hello', 'saved answer']);
 		expect(conversation.activeTools).toEqual([]);
-		expect(conversation.modelName).toBe('saved-model');
-		expect(runtime.switches).toEqual(['saved-model']);
+		expect(conversation.modelName).toBe(SYNTHETIC_MODEL);
+		expect(runtime.switches).toEqual([]);
+		expect(runtime.loaded[0]).toMatchObject({ modelName: 'saved-model' });
 		runtime.publish(assistantMessageCompletedEvent({ content: 'redelivered' }));
 		expect(conversation.history).toHaveLength(2);
 	} finally {
@@ -539,23 +546,29 @@ test('resume replays durable history, clears incomplete activity and restores la
 	}
 });
 
-test('model restoration failure preserves previous model and the resumed durable history', async () => {
+test('missing historical model never triggers a switch or changes durable history; runtime can recover manually', async () => {
 	const runtime = new ControlledRuntime();
-	runtime.loaded.push(promptSubmittedEvent({ modelName: 'saved-model' }));
-	runtime.switchModel = async (name) => {
-		runtime.switches.push(name);
-		throw new Error('unload failed');
-	};
+	const historical = promptSubmittedEvent({ modelName: 'removed-model' });
+	runtime.loaded.push(historical);
+	runtime.getModelSelection = () => ({
+		status: 'unavailable',
+		message: 'Configured model is unavailable. Use /model to choose another installed model.',
+	});
+	runtime.initializeModels = async () => runtime.getModelSelection();
 	const conversation = new Conversation(runtime, () => undefined);
 	try {
-		await conversation.initialize(undefined, true);
-		expect(conversation.modelName).toBe('test-model');
-		expect(conversation.history.map((entry) => [entry.kind, entry.content])).toEqual([
-			['user', 'Hello'],
-			['error', 'unload failed'],
+		await conversation.initialize();
+		expect(runtime.switches).toEqual([]);
+		expect(runtime.loaded).toEqual([historical]);
+		expect(conversation.history.map((entry) => entry.content)).toEqual([
+			'Hello',
+			'Configured model is unavailable. Use /model to choose another installed model.',
 		]);
-		expect(runtime.switches).toEqual(['saved-model']);
-		expect(conversation.loading).toBe(false);
+		expect(await conversation.switchModel('other-model')).toBe(true);
+		expect(conversation.modelName).toBe('other-model');
+		expect(runtime.loaded[0]?.type === 'prompt.submitted' && runtime.loaded[0].modelName).toBe(
+			'removed-model',
+		);
 	} finally {
 		await conversation.dispose();
 	}
@@ -575,7 +588,7 @@ test('model switch awaits runtime, updates metadata once and uses the returned m
 	try {
 		const switched = p.conversation.switchModel('other-model');
 		await entered.promise;
-		expect(p.conversation.modelName).toBe('test-model');
+		expect(p.conversation.modelName).toBe(SYNTHETIC_MODEL);
 		release.resolve();
 		expect(await switched).toBe(true);
 		expect(p.conversation.modelName).toBe('other-model');
@@ -597,7 +610,7 @@ test('model switch failure preserves previous model and records the actual runti
 	};
 	try {
 		expect(await p.conversation.switchModel('other-model')).toBe(false);
-		expect(p.conversation.modelName).toBe('test-model');
+		expect(p.conversation.modelName).toBe(SYNTHETIC_MODEL);
 		expect(p.conversation.history.map((entry) => [entry.kind, entry.content])).toEqual([
 			['error', 'actual unload failure'],
 		]);
@@ -619,8 +632,8 @@ test('resume ignores a foreign latest model as well as foreign durable messages'
 	];
 	const conversation = new Conversation(runtime, () => undefined);
 	try {
-		await conversation.initialize(undefined, true);
-		expect(runtime.switches).toEqual(['saved-model']);
+		await conversation.initialize();
+		expect(runtime.switches).toEqual([]);
 		expect(conversation.history.map((entry) => entry.content)).toEqual(['Hello']);
 	} finally {
 		await conversation.dispose();
@@ -654,16 +667,22 @@ for (const restoring of [false, true]) {
 		const entered = createDeferred<void>();
 		const release = createDeferred<void>();
 		let signal: AbortSignal | undefined;
-		runtime.switchModel = async (_name, providedSignal) => {
+		const pendingOperation = async (providedSignal?: AbortSignal) => {
 			signal = providedSignal;
 			entered.resolve();
 			await release.promise;
 			throwIfAborted(providedSignal);
 			return 'unused';
 		};
+		runtime.switchModel = (_name, providedSignal) => pendingOperation(providedSignal);
+		if (restoring)
+			runtime.initializeModels = async (providedSignal) => ({
+				status: 'selected',
+				modelName: await pendingOperation(providedSignal),
+			});
 		if (restoring) runtime.loaded.push(promptSubmittedEvent({ modelName: 'saved-model' }));
 		const conversation = new Conversation(runtime, () => undefined);
-		const loading = conversation.initialize(undefined, restoring);
+		const loading = conversation.initialize();
 		if (!restoring) await loading;
 		const switching = restoring ? loading : conversation.switchModel('other-model');
 		await entered.promise;
@@ -676,7 +695,7 @@ for (const restoring of [false, true]) {
 		expect(complete).toBe(false);
 		release.resolve();
 		await Promise.all([switching, closing]);
-		expect(conversation.modelName).toBe('test-model');
+		expect(conversation.modelName).toBe(SYNTHETIC_MODEL);
 		expect(
 			conversation.history.filter((entry) => entry.kind === 'error' || entry.kind === 'notice'),
 		).toEqual([]);
@@ -698,7 +717,7 @@ test('session selection aborts an old model switch without appending its outcome
 	try {
 		const switching = p.conversation.switchModel('other-model');
 		await entered.promise;
-		await p.conversation.selectSession(asSessionId('session-2'), false);
+		await p.conversation.selectSession(asSessionId('session-2'));
 		expect(signal?.aborted).toBe(true);
 		release.resolve();
 		expect(await switching).toBe(false);
@@ -733,7 +752,9 @@ const realRuntime = (
 	});
 	const runtime: PresentationRuntime = {
 		createSessionId: () => asSessionId('session-1'),
-		getModelName: () => 'test-model',
+		getModelName: () => SYNTHETIC_MODEL,
+		getModelSelection: () => ({ status: 'selected', modelName: SYNTHETIC_MODEL }),
+		initializeModels: async () => ({ status: 'selected', modelName: SYNTHETIC_MODEL }),
 		workspacePath: '/workspace',
 		listModels: async () => [],
 		listSessions: () => service.listSessions(),

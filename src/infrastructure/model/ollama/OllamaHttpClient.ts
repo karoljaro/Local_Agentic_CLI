@@ -14,6 +14,17 @@ type GetInput = {
 	signal?: AbortSignal | undefined;
 };
 
+export class OllamaHttpError extends Error {
+	constructor(
+		prefix: string,
+		readonly status: number,
+		readonly responseText: string,
+	) {
+		super(`${prefix} with status ${status}: ${responseText}`);
+		this.name = 'OllamaHttpError';
+	}
+}
+
 export class OllamaHttpClient {
 	private readonly baseUrl: string;
 
@@ -32,8 +43,10 @@ export class OllamaHttpClient {
 		});
 
 		if (!response.ok) {
-			throw new Error(
-				`${errorPrefix} with status ${response.status}: ${await readBoundedResponseText(response)}`,
+			throw new OllamaHttpError(
+				errorPrefix,
+				response.status,
+				await readBoundedResponseText(response),
 			);
 		}
 
@@ -46,8 +59,10 @@ export class OllamaHttpClient {
 		});
 
 		if (!response.ok) {
-			throw new Error(
-				`${errorPrefix} with status ${response.status}: ${await readBoundedResponseText(response)}`,
+			throw new OllamaHttpError(
+				errorPrefix,
+				response.status,
+				await readBoundedResponseText(response),
 			);
 		}
 

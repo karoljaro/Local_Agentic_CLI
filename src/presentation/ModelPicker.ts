@@ -107,7 +107,7 @@ export class ModelPicker {
 		const input = this.input;
 		this.load = (async () => {
 			try {
-				const models = await runtime.listModels(this.request.signal);
+				const models = await runtime.listModels(this.request.signal, { forceRefresh: true });
 				if (this.closed || this.request.signal.aborted) return;
 				const current = runtime.getModelName();
 				input.options = models.map(
@@ -120,7 +120,12 @@ export class ModelPicker {
 				panel.height = Math.min(16, Math.max(7, models.length + 5));
 				const currentIndex = models.findIndex((model) => model.name === current);
 				if (currentIndex >= 0) input.setSelectedIndex(currentIndex);
-				status.content = models.length === 0 ? 'No models available' : `Current: ${current}`;
+				status.content =
+					models.length === 0
+						? 'No models available · install one in your provider'
+						: current === undefined
+							? 'No model selected · choose one'
+							: `Current: ${current}`;
 			} catch (error) {
 				if (this.closed || this.request.signal.aborted) return;
 				status.fg = '#e98282';

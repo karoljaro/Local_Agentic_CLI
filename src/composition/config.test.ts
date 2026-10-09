@@ -13,7 +13,6 @@ describe('readConfig', () => {
 	test('uses defaults when env values are missing', () => {
 		expect(readConfig({})).toEqual({
 			OLLAMA_BASE_URL: 'http://localhost:11434',
-			OLLAMA_MODEL: 'gemma4:12b-it-qat',
 			OLLAMA_KEEP_ALIVE: '0',
 			SYSTEM_PROMPT: 'Use workspace-relative paths.',
 			MAX_CONTEXT_CHARACTERS: 120_000,
@@ -30,7 +29,7 @@ describe('readConfig', () => {
 					SYSTEM_PROMPT: blank,
 					MAX_CONTEXT_CHARACTERS: blank,
 				}),
-			).toEqual(readConfig({}));
+			).toEqual({ ...readConfig({}), OLLAMA_MODEL: undefined });
 		});
 	}
 
@@ -63,7 +62,7 @@ describe('readConfig', () => {
 			}),
 		).toEqual({
 			OLLAMA_BASE_URL: 'http://localhost:11435',
-			OLLAMA_MODEL: 'gemma4:12b-it-qat',
+			OLLAMA_MODEL: undefined,
 			OLLAMA_KEEP_ALIVE: '2m',
 			SYSTEM_PROMPT: 'Custom prompt',
 			MAX_CONTEXT_CHARACTERS: 64_000,

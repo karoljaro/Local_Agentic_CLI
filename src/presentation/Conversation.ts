@@ -57,7 +57,7 @@ export class Conversation {
 	get sessionId(): SessionId {
 		return this.selection.id;
 	}
-	get modelName(): string {
+	get modelName(): string | undefined {
 		return this.runtime.getModelName();
 	}
 	get loading(): boolean {
@@ -76,18 +76,18 @@ export class Conversation {
 		return this.log.activeTools;
 	}
 
-	initialize(sessionId = this.sessionId, restoreModel = false): Promise<void> {
-		return this.selectSession(sessionId, restoreModel);
+	initialize(sessionId = this.sessionId): Promise<void> {
+		return this.selectSession(sessionId);
 	}
 
-	selectSession(sessionId: SessionId, restoreModel = true): Promise<void> {
-		const work = this.loadSession(sessionId, restoreModel);
+	selectSession(sessionId: SessionId): Promise<void> {
+		const work = this.loadSession(sessionId);
 		this.sessionLoads.add(work);
 		void work.finally(() => this.sessionLoads.delete(work));
 		return work;
 	}
 
-	private async loadSession(sessionId: SessionId, restoreModel: boolean): Promise<void> {
+	private async loadSession(sessionId: SessionId): Promise<void> {
 		if (this.disposed) return;
 		this.selection.controller.abort();
 		for (const request of this.modelRequests) request.abort();
@@ -113,14 +113,10 @@ export class Conversation {
 			if (!this.isSelected(selection)) return;
 			for (const event of events) this.applyEvent(selection, null, event);
 			this.log.clearActivity();
-			if (restoreModel) {
-				const model = latestModel(events, sessionId);
-				if (model !== undefined && model !== this.modelName) {
-					await this.runtime.switchModel(model, selection.controller.signal);
-					if (!this.isSelected(selection)) return;
-					this.emit({ type: 'metadata' });
-				}
-			}
+			const model = await this.runtime.initializeModels(selection.controller.signal);
+			if (!this.isSelected(selection)) return;
+			this.emit({ type: 'metadata' });
+			if (model.status !== 'selected') this.appendNotice(model.message, true);
 		} catch (error) {
 			if (this.isSelected(selection)) this.appendNotice(errorMessage(error), true);
 		} finally {
@@ -173,8 +169,9 @@ export class Conversation {
 			const selected = await this.runtime.switchModel(name, request.signal);
 			throwIfAborted(request.signal);
 			if (!this.isSelected(selection)) return false;
-			this.emit({ type: 'metadata' });
 			this.appendNotice(`Model switched to ${selected}.`);
+			const model = this.runtime.getModelSelection();
+			if (model.status === 'selected' && model.warning) this.appendNotice(model.warning);
 			return true;
 		} catch (error) {
 			if (this.isSelected(selection) && !(request.signal.aborted && isAbortError(error))) {
@@ -182,6 +179,7 @@ export class Conversation {
 			}
 			return false;
 		} finally {
+			if (this.isSelected(selection)) this.emit({ type: 'metadata' });
 			signal?.removeEventListener('abort', onAbort);
 			this.modelRequests.delete(request);
 		}
@@ -222,7 +220,7 @@ export class Conversation {
 			for await (const chunk of this.runtime.runTurn({
 				sessionId: turn.selection.id,
 				prompt,
-				modelName: this.modelName,
+				...(this.modelName === undefined ? {} : { modelName: this.modelName }),
 				signal: turn.controller.signal,
 			})) {
 				if (!this.isActive(turn)) return;
@@ -325,16 +323,3 @@ export class Conversation {
 
 const errorMessage = (error: unknown): string =>
 	error instanceof Error ? error.message : String(error);
-
-const latestModel = (events: AgentEvent[], sessionId: SessionId): string | undefined => {
-	for (let index = events.length - 1; index >= 0; index--) {
-		const event = events[index];
-		if (
-			event?.sessionId === sessionId &&
-			event.type === 'prompt.submitted' &&
-			event.modelName !== undefined
-		)
-			return event.modelName;
-	}
-	return undefined;
-};

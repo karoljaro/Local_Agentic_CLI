@@ -44,7 +44,7 @@ Implemented:
 Not implemented yet:
 
 - diff preview before edit approval
-- settings screen or persistent model configuration
+- settings screen
 
 ## Agent Loop
 
@@ -152,7 +152,7 @@ JSONL remains the source of truth. During one process, each active session is re
 
 - Bun 1.3 or newer (development and builds)
 - Ollama
-- a pulled local model matching the configured model name
+- an installed local model for inference (the CLI can start before any model is installed)
 
 Start Ollama:
 
@@ -213,8 +213,9 @@ Configuration is read from environment variables. A `.env` file can be used.
 
 ```env
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=gemma4:12b-it-qat
-SYSTEM_PROMPT=
+# Optional explicit override; use a name from the installed-model picker:
+# OLLAMA_MODEL=<installed-model-name>
+SYSTEM_PROMPT=You are a local coding agent.
 MAX_CONTEXT_CHARACTERS=120000
 ```
 
@@ -224,7 +225,26 @@ Leave `SYSTEM_PROMPT` unset or blank to use the built-in guidance. A nonblank va
 
 `MAX_CONTEXT_CHARACTERS` limits serialized model messages. The current turn is always kept intact; older complete turns are removed from oldest to newest when the limit is reached.
 
-The default model is still configured in code for now. It should move to user settings once settings exist.
+`OLLAMA_MODEL` is optional; unset or blank means no explicit model configuration. An installed
+explicit model wins over remembered preference. If it is unavailable, the CLI starts with a clear
+error and `/model` recovery; choosing another model affects this runtime without changing the
+external configuration. The next launch checks the explicit override again.
+
+Without an explicit override, startup uses the last successfully selected model if still installed,
+then the sole installed model. Multiple installed models require `/model`; zero installed models
+leave inference unavailable until you install and select one. Startup only discovers availability;
+it does not load or unload a model. Model-specific failures include `/model` recovery guidance;
+service, transport and permission failures retain their actual cause.
+
+Successful manual selection confirms provider activation, updates the header, and remembers the
+choice in `.agent/model-preference.json` as `{"lastSelectedModel":"<identifier>"}`. This small
+application preference is shared by sessions in the workspace. Writes use a temporary file and
+atomic rename; missing/corrupt preferences are ignored. A preference-write failure warns while
+keeping successful runtime activation. If activation fails after unloading the previous model,
+the header shows no selected model and the attempted choice is not remembered.
+
+Resuming a session retains the current runtime model selection. Historical model IDs in session
+events remain unchanged, even when those models are no longer installed.
 
 ## CLI Commands
 
@@ -251,6 +271,20 @@ Run all tests:
 ```bash
 bun test
 ```
+
+Ordinary tests use the shared synthetic `test-model` fixture with deterministic fakes/mocks.
+They require neither Ollama nor `TEST_MODEL`, and setting `TEST_MODEL` does not change them.
+For the optional single local model lifecycle smoke, configure an installed model explicitly:
+
+```bash
+TEST_MODEL=qwen3.5:9b bun run scripts/smoke-model.ts
+```
+
+The smoke prints the resolved model, discovers availability, checks unavailable-model recovery
+and remembered selection after restart in a disposable workspace, and times out after 20 seconds.
+Unset `TEST_MODEL` skips with `No live test model configured. Set TEST_MODEL=<installed-model>.`
+It never downloads models or uses a hidden model-name/ordering fallback. Provider failure or an
+unavailable configured test model is reported as a failed smoke without retries.
 
 Type check:
 
@@ -286,4 +320,4 @@ modes and verifies ripgrep with a real search. It does not require a running Oll
 Likely next work:
 
 - show a compact diff before edit approval
-- move model defaults into settings
+- add a settings UI if needed

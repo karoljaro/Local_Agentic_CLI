@@ -1,3 +1,4 @@
+import { SYNTHETIC_MODEL } from '@/test-support/modelFixtures';
 import { describe, expect, test } from 'bun:test';
 
 import { withMockedFetch } from '@/test-support/withMockedFetch';
@@ -16,7 +17,7 @@ describe('OllamaModelCatalog', () => {
 					JSON.stringify({
 						models: [
 							{
-								name: 'gemma4:12b-it-qat',
+								name: SYNTHETIC_MODEL,
 								modified_at: '2026-06-20T12:00:00Z',
 								size: 123,
 								details: {
@@ -34,7 +35,7 @@ describe('OllamaModelCatalog', () => {
 				await expect(catalog.listModels()).resolves.toEqual({
 					models: [
 						{
-							name: 'gemma4:12b-it-qat',
+							name: SYNTHETIC_MODEL,
 							modifiedAt: '2026-06-20T12:00:00Z',
 							parameterSize: '12B',
 							quantizationLevel: 'Q4_0',
@@ -55,13 +56,13 @@ describe('OllamaModelCatalog', () => {
 			async (_input, init) => {
 				receivedSignal = init?.signal;
 
-				return new Response(JSON.stringify({ models: [{ name: 'llama3.1:8b' }] }));
+				return new Response(JSON.stringify({ models: [{ name: SYNTHETIC_MODEL }] }));
 			},
 			async () => {
 				const catalog = new OllamaModelCatalog('http://localhost:11434');
 
 				await expect(catalog.listModels({ signal: controller.signal })).resolves.toEqual({
-					models: [{ name: 'llama3.1:8b' }],
+					models: [{ name: SYNTHETIC_MODEL }],
 				});
 				expect(receivedSignal).toBe(controller.signal);
 			},

@@ -82,7 +82,7 @@ export class TerminalApp {
 			flexShrink: 0,
 		});
 		this.model = new TextRenderable(renderer, {
-			content: runtime.getModelName(),
+			content: runtime.getModelName() ?? 'No model selected · /model',
 			fg: ACCENT,
 			flexGrow: 1,
 			truncate: true,
@@ -291,7 +291,9 @@ export class TerminalApp {
 	}
 
 	private updateStatus(): void {
-		this.model.content = this.runtime.getModelName();
+		this.model.content = this.commandRequest
+			? 'Switching model…'
+			: (this.runtime.getModelName() ?? 'No model selected · /model');
 		this.session.content = `session ${String(this.conversation.sessionId).slice(-4)}`;
 		this.activity.content = this.commandRequest
 			? 'Switching model…'
@@ -398,10 +400,7 @@ export class TerminalApp {
 			(sessionId) => {
 				this.composer.clear();
 				this.closePicker();
-				void this.conversation.selectSession(
-					sessionId ?? this.runtime.createSessionId(),
-					sessionId !== null,
-				);
+				void this.conversation.selectSession(sessionId ?? this.runtime.createSessionId());
 			},
 			() => this.closePicker(),
 		);
@@ -412,7 +411,10 @@ export class TerminalApp {
 		if (!this.picker) return;
 		const load = this.picker.load;
 		this.pickerLoads.add(load);
-		void load.finally(() => this.pickerLoads.delete(load));
+		void load.finally(() => {
+			this.pickerLoads.delete(load);
+			if (!this.disposed) this.updateStatus();
+		});
 		this.composer.blur();
 		this.suggestions.visible = false;
 		this.shell.add(this.picker.root);

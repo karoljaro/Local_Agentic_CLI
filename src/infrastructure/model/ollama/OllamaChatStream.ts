@@ -3,6 +3,7 @@ import {
 	toModelStreamChunk,
 	type OllamaChatStreamResponse,
 } from '@/infrastructure/model/mappers/OllamaChatMapper';
+import { modelStreamError } from './OllamaModelError';
 
 type ParsedOllamaStreamFrame = {
 	done: boolean;
@@ -11,6 +12,7 @@ type ParsedOllamaStreamFrame = {
 
 export async function* readOllamaChatStream(
 	body: ReadableStream<Uint8Array> | null,
+	modelName?: string,
 ): AsyncIterable<ModelStreamChunk> {
 	if (body === null) {
 		throw new Error('Ollama response did not include a stream body.');
@@ -35,7 +37,7 @@ export async function* readOllamaChatStream(
 			buffer = lines.pop() ?? '';
 
 			for (const line of lines) {
-				const frame = parseOllamaStreamFrame(line);
+				const frame = parseOllamaStreamFrame(line, modelName);
 
 				if (frame === undefined) {
 					continue;
@@ -51,7 +53,7 @@ export async function* readOllamaChatStream(
 
 		buffer += decoder.decode();
 
-		const finalFrame = parseOllamaStreamFrame(buffer);
+		const finalFrame = parseOllamaStreamFrame(buffer, modelName);
 
 		if (finalFrame !== undefined) {
 			isComplete ||= finalFrame.done;
@@ -75,7 +77,10 @@ export async function* readOllamaChatStream(
 	}
 }
 
-const parseOllamaStreamFrame = (line: string): ParsedOllamaStreamFrame | undefined => {
+const parseOllamaStreamFrame = (
+	line: string,
+	modelName?: string,
+): ParsedOllamaStreamFrame | undefined => {
 	const trimmedLine = line.trim();
 
 	if (trimmedLine.length === 0) {
@@ -93,7 +98,7 @@ const parseOllamaStreamFrame = (line: string): ParsedOllamaStreamFrame | undefin
 	}
 
 	if (response.error !== undefined) {
-		throw new Error(`Ollama stream failed: ${response.error}`);
+		throw modelStreamError(response.error, modelName);
 	}
 
 	const chunk = toModelStreamChunk(response);

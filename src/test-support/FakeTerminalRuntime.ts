@@ -4,6 +4,8 @@ import type { AgentEvent } from '@/domain/AgentEvent';
 import { asEventId, asSessionId, type SessionId } from '@/domain/Ids';
 import type { PresentationRuntime, TurnDelta, TurnInput } from '@/presentation/types';
 import { assistantMessageCompletedEvent, promptSubmittedEvent } from './AgentEventFixtures';
+import { SYNTHETIC_MODEL } from './modelFixtures';
+import type { ModelSelectionState } from '@/application/services/ModelSelection';
 
 export class FakeTerminalRuntime implements PresentationRuntime {
 	readonly workspacePath = '/test-workspace';
@@ -13,8 +15,8 @@ export class FakeTerminalRuntime implements PresentationRuntime {
 	readonly switches: string[] = [];
 	readonly previews: SessionId[] = [];
 	readonly activations: SessionId[] = [];
-	models: ListedModel[] = [{ name: 'test-model' }, { name: 'other-model' }];
-	model = 'test-model';
+	models: ListedModel[] = [{ name: SYNTHETIC_MODEL }, { name: 'other-model' }];
+	model: string | undefined = SYNTHETIC_MODEL;
 	approval: ToolApprovalHandler = async () => false;
 	private sessionIndex = 0;
 	private eventIndex = 0;
@@ -29,8 +31,19 @@ export class FakeTerminalRuntime implements PresentationRuntime {
 	createSessionId(): SessionId {
 		return asSessionId(`session-${++this.sessionIndex}`);
 	}
-	getModelName(): string {
+	getModelName(): string | undefined {
 		return this.model;
+	}
+	getModelSelection(): ModelSelectionState {
+		return this.model === undefined
+			? {
+					status: 'selection-required',
+					message: 'No available model is selected. Use /model to choose one.',
+				}
+			: { status: 'selected', modelName: this.model };
+	}
+	async initializeModels(): Promise<ModelSelectionState> {
+		return this.getModelSelection();
 	}
 	async listModels(): Promise<ListedModel[]> {
 		return this.models;
@@ -59,7 +72,7 @@ export class FakeTerminalRuntime implements PresentationRuntime {
 				sessionId: input.sessionId,
 				id: this.nextId(),
 				prompt: input.prompt,
-				modelName: this.model,
+				...(this.model === undefined ? {} : { modelName: this.model }),
 			}),
 		);
 		yield* this.script(input);

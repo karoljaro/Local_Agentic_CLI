@@ -1,3 +1,4 @@
+import { SYNTHETIC_MODEL } from '@/test-support/modelFixtures';
 import { SessionService } from '@/application/services/SessionService';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -393,7 +394,7 @@ describe('RunAgentTurn', () => {
 		for await (const chunk of useCase.run({
 			sessionId,
 			prompt: 'Say hello',
-			modelName: 'qwen3:8b',
+			modelName: SYNTHETIC_MODEL,
 		})) {
 			chunks.push(chunk);
 		}
@@ -418,7 +419,7 @@ describe('RunAgentTurn', () => {
 				messageId: asMessageId('message-2'),
 				sessionId,
 				prompt: 'Say hello',
-				modelName: 'qwen3:8b',
+				modelName: SYNTHETIC_MODEL,
 				type: 'prompt.submitted',
 				timestamp: asISODateTime('2026-06-09T12:00:00.000Z'),
 			},
