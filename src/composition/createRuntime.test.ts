@@ -1,4 +1,6 @@
 import { ContextBuilder, type CompiledContext } from '@/application/services/ContextBuilder';
+import { ModelSessionMemoryUpdater } from '@/application/services/ModelSessionMemoryUpdater';
+import { JsonSessionMemoryStore } from '@/infrastructure/persistence/JsonSessionMemoryStore';
 import { reduceAgentState } from '@/application/services/SessionReducer';
 import { assistantMessageCompletedEvent } from '@/test-support/AgentEventFixtures';
 import { asEventId, asMessageId } from '@/domain/Ids';
@@ -37,6 +39,13 @@ const withMemoryRuntime = async (
 	runtimeConfig: AppConfig = config,
 ) => {
 	const events: AgentEvent[] = [];
+	const memoryRead = spyOn(JsonSessionMemoryStore.prototype, 'read').mockResolvedValue(undefined);
+	const memoryWrite = spyOn(JsonSessionMemoryStore.prototype, 'write').mockResolvedValue(undefined);
+	const semanticUpdate = spyOn(ModelSessionMemoryUpdater.prototype, 'update').mockResolvedValue({
+		version: 1,
+		goal: null,
+		changes: [],
+	});
 	const preferenceRead = spyOn(
 		JsonModelPreferenceStore.prototype,
 		'readLastSelectedModel',
@@ -67,6 +76,9 @@ const withMemoryRuntime = async (
 		await runtime.initializeModels();
 		await run(runtime, events);
 	} finally {
+		memoryRead.mockRestore();
+		memoryWrite.mockRestore();
+		semanticUpdate.mockRestore();
 		preferenceRead.mockRestore();
 		preferenceWrite.mockRestore();
 		catalog.mockRestore();

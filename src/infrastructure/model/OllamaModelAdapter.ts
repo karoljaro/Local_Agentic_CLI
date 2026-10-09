@@ -43,6 +43,7 @@ export class OllamaModelAdapter implements ModelPort, ModelMemoryPort, ModelActi
 						? {}
 						: { tools: input.tools.map(toOllamaTool) }),
 					stream: true,
+					...(input.responseSchema === undefined ? {} : { format: input.responseSchema }),
 					options: {
 						num_ctx: input.contextProfile.contextWindowTokens,
 						num_predict: input.contextProfile.maxOutputTokens,
@@ -53,7 +54,11 @@ export class OllamaModelAdapter implements ModelPort, ModelMemoryPort, ModelActi
 				},
 			});
 
-			yield* readOllamaChatStream(response.body, this.modelName);
+			yield* readOllamaChatStream(
+				response.body,
+				this.modelName,
+				input.responseSchema === undefined ? undefined : 256000,
+			);
 		} catch (error) {
 			throw mapOllamaModelError(error, this.modelName);
 		}

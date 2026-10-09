@@ -5,6 +5,8 @@ import { createRuntime } from '@/composition/createRuntime';
 import { readConfig } from '@/composition/config';
 import { JsonlSessionStore } from '@/infrastructure/persistence/JsonlSessionStore';
 import { JsonModelPreferenceStore } from '@/infrastructure/persistence/JsonModelPreferenceStore';
+import { JsonSessionMemoryStore } from '@/infrastructure/persistence/JsonSessionMemoryStore';
+import { ModelSessionMemoryUpdater } from '@/application/services/ModelSessionMemoryUpdater';
 import { Conversation } from '@/presentation/Conversation';
 import {
 	promptSubmittedEvent,
@@ -88,6 +90,15 @@ for (const item of cases)
 			assistantMessageCompletedEvent({ sessionId, content: 'Historical answer' }),
 		];
 		const events: AgentEvent[] = [...historical];
+		const memoryRead = spyOn(JsonSessionMemoryStore.prototype, 'read').mockResolvedValue(undefined);
+		const memoryWrite = spyOn(JsonSessionMemoryStore.prototype, 'write').mockResolvedValue(
+			undefined,
+		);
+		const memoryUpdate = spyOn(ModelSessionMemoryUpdater.prototype, 'update').mockResolvedValue({
+			version: 1,
+			goal: null,
+			changes: [],
+		});
 		const reads = spyOn(JsonlSessionStore.prototype, 'readSessionEvents').mockImplementation(
 			async (id) => events.filter((event) => event.sessionId === id),
 		);
@@ -162,6 +173,9 @@ for (const item of cases)
 				},
 			);
 		} finally {
+			memoryRead.mockRestore();
+			memoryWrite.mockRestore();
+			memoryUpdate.mockRestore();
 			await conversation?.dispose();
 			reads.mockRestore();
 			appends.mockRestore();

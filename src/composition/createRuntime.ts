@@ -4,6 +4,9 @@ import { HistoryRetriever } from '@/application/services/HistoryRetriever';
 import { OllamaEmbeddingAdapter } from '@/infrastructure/model/OllamaEmbeddingAdapter';
 import { BinaryHistoryIndexStore } from '@/infrastructure/persistence/BinaryHistoryIndexStore';
 import { ContextBuilder } from '@/application/services/ContextBuilder';
+import { SessionMemoryService } from '@/application/services/SessionMemoryService';
+import { ModelSessionMemoryUpdater } from '@/application/services/ModelSessionMemoryUpdater';
+import { JsonSessionMemoryStore } from '@/infrastructure/persistence/JsonSessionMemoryStore';
 import {
 	InMemoryAgentMetrics,
 	type AgentMetricsSnapshot,
@@ -75,6 +78,18 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 					new BinaryHistoryIndexStore(),
 				);
 	const runAgentTurn = new RunAgentTurn({
+		sessionMemory: new SessionMemoryService(
+			sessionStore,
+			new JsonSessionMemoryStore(),
+			new ModelSessionMemoryUpdater(
+				modelRuntime,
+				{
+					contextWindowTokens: config.MODEL_CONTEXT_TOKENS,
+					maxOutputTokens: config.MODEL_MAX_OUTPUT_TOKENS,
+				},
+				() => modelRuntime.getModelName(),
+			),
+		),
 		...(historyRetriever === undefined ? {} : { historyRetriever }),
 		sessionStore,
 		model: modelRuntime,

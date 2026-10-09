@@ -13,6 +13,7 @@ type ParsedOllamaStreamFrame = {
 export async function* readOllamaChatStream(
 	body: ReadableStream<Uint8Array> | null,
 	modelName?: string,
+	maxStreamCharacters?: number,
 ): AsyncIterable<ModelStreamChunk> {
 	if (body === null) {
 		throw new Error('Ollama response did not include a stream body.');
@@ -22,6 +23,7 @@ export async function* readOllamaChatStream(
 	const decoder = new TextDecoder();
 	let buffer = '';
 	let isComplete = false;
+	let receivedCharacters = 0;
 
 	try {
 		while (true) {
@@ -31,7 +33,12 @@ export async function* readOllamaChatStream(
 				break;
 			}
 
-			buffer += decoder.decode(value, { stream: true });
+			const decoded = decoder.decode(value, { stream: true });
+			receivedCharacters += decoded.length;
+			if (maxStreamCharacters !== undefined && receivedCharacters > maxStreamCharacters) {
+				throw new Error('Structured model response exceeds transport limit.');
+			}
+			buffer += decoded;
 
 			const lines = buffer.split('\n');
 			buffer = lines.pop() ?? '';

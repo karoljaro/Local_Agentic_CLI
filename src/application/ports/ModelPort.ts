@@ -5,6 +5,8 @@ import type { ModelToolCall, ToolDefinition } from '@/domain/Tool';
 export type ModelChatInput = {
 	messages: ModelMessage[];
 	contextProfile: ModelContextProfile;
+	/** Optional provider-independent structured output contract for narrow operations. */
+	responseSchema?: Record<string, unknown>;
 	tools?: ToolDefinition[];
 	signal?: AbortSignal;
 };

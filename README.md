@@ -244,7 +244,7 @@ previous turns are retained as a contiguous recent window, newest first, then se
 If the next older complete turn does not fit, selection stops; its calls/results drop together.
 Durable events and resumed transcripts remain complete. An oversized active request fails before
 model invocation instead of truncating user text or tool results or reducing the output reservation.
-No summaries are implemented. The former `MAX_CONTEXT_CHARACTERS` setting is removed; migrate to
+The former `MAX_CONTEXT_CHARACTERS` setting is removed; migrate to
 these two token settings rather than converting its character value.
 
 The Ollama adapter requests no input truncation or context shifting. A reported `length` finish
@@ -267,6 +267,28 @@ completed turns are embedded incrementally; verified prefixes survive provider f
 timeouts. Unset configuration, provider/cache errors or embedding timeout fall back to Phase 16's
 recent whole-turn context without affecting durable history or ordinary chat. Caller cancellation
 still stops the turn. No retrieval panel or assistant-output diagnostics are added.
+
+Compact working memory keeps the current session's goal, settled decisions, persistent constraints,
+important file activity, completed/pending tasks and unresolved problems available beyond recent
+turns. It is derived state, separate from retrieval and canonical history. Successful tool events
+provide exact file observations; one optional structured operation after a normal completed turn
+uses the currently selected chat model for semantic updates. It adds at most one model request,
+with a 10-second deadline and up to 1024 output tokens. Failure never invalidates the completed
+answer. Denied, failed, interrupted and cancelled turns do not produce semantic completion updates.
+
+Memory lives in versioned atomic JSON at `.agent/session-memory/<session-id>.json`, with bounded
+collections and stable durable message/event provenance. It stores no file contents or transcript.
+Deleting/corrupting it leaves chat/history intact; exact activity can rebuild from events, while
+semantic notes become available again after a subsequent successful update. Semantic regeneration
+is not deterministic. No cross-session memory, background summarizer, new workspace tool or memory
+UI is added.
+
+The compiler appends one compact notes section to its single configured system message. Its entire
+cost is charged to the existing context estimate, capped at 1200 estimated tokens (less for small
+profiles), after mandatory system/tools/current turn/output/safety and before previous/retrieved
+turns. Whole lower-priority notes drop when necessary. Current user instructions, workspace/tool
+evidence and conflicting exact history override stale notes; filesystem tools remain authoritative
+for file contents. Retrieval still supplies exact historical detail even when memory cites its source.
 
 Search text is a bounded deterministic projection of conversation text and tool/path/query metadata;
 raw old tool results and large mutation bodies are excluded from embeddings. Retrieved payloads are

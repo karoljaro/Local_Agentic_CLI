@@ -6,6 +6,8 @@ import {
 } from '@/domain/ModelContextProfile';
 import type { ModelMessage } from '@/domain/ModelMessage';
 import type { ToolDefinition } from '@/domain/Tool';
+import { MEMORY_TOKEN_CAP, type SessionMemory } from '@/domain/SessionMemory';
+import { renderSessionMemory } from './SessionMemoryRenderer';
 import type { HistoryRetrieval } from './HistoryRetriever';
 import { groupMessagesIntoTurns, isRetrievableTurn } from './HistoryTurns';
 import {
@@ -27,6 +29,9 @@ export type ContextDiagnostics = {
 	estimatedFixedTokens: number;
 	estimatedActiveTurnTokens: number;
 	estimatedSelectedHistoryTokens: number;
+	estimatedMemoryTokens: number;
+	selectedMemoryItems: number;
+	droppedMemoryItems: number;
 	estimatedInputTokens: number;
 	selectedCompletedTurns: number;
 	droppedCompletedTurns: number;
@@ -76,14 +81,16 @@ export class ContextBuilder {
 		state: AgentState,
 		tools: ToolDefinition[] = [],
 		retrieval?: HistoryRetrieval,
+		memory?: SessionMemory,
 	): CompiledContext {
-		return this.compile(state.messages, tools, retrieval);
+		return this.compile(state.messages, tools, retrieval, memory);
 	}
 
 	private compile(
 		history: ModelMessage[],
 		tools: ToolDefinition[],
 		retrieval?: HistoryRetrieval,
+		memory?: SessionMemory,
 	): CompiledContext {
 		const turns = groupMessagesIntoTurns(history);
 		const safetyAllowanceTokens = Math.max(
@@ -100,6 +107,7 @@ export class ContextBuilder {
 			tools.reduce((total, tool) => total + estimateToolTokens(tool), 0);
 		const activeTurn = turns.at(-1) ?? [];
 		const estimatedActiveTurnTokens = measureTurn(activeTurn);
+		let renderedMemory = renderSessionMemory(this.systemMessage.content, undefined);
 		let estimatedSelectedHistoryTokens = 0;
 		let firstSelectedTurn = Math.max(0, turns.length - 1);
 		const completedTurns = Math.max(0, turns.length - 1);
@@ -111,7 +119,10 @@ export class ContextBuilder {
 		const semantic = retrieval !== undefined && retrieval.fallbackReason === undefined;
 		const diagnostics = (): ContextDiagnostics => {
 			const estimatedInputTokens =
-				estimatedFixedTokens + estimatedActiveTurnTokens + estimatedSelectedHistoryTokens;
+				estimatedFixedTokens +
+				estimatedActiveTurnTokens +
+				renderedMemory.tokens +
+				estimatedSelectedHistoryTokens;
 			return {
 				...this.contextProfile,
 				safetyAllowanceTokens,
@@ -119,6 +130,9 @@ export class ContextBuilder {
 				estimatedFixedTokens,
 				estimatedActiveTurnTokens,
 				estimatedSelectedHistoryTokens,
+				estimatedMemoryTokens: renderedMemory.tokens,
+				selectedMemoryItems: renderedMemory.selected.length,
+				droppedMemoryItems: renderedMemory.droppedItems,
 				estimatedInputTokens,
 				selectedCompletedTurns,
 				droppedCompletedTurns: completedTurns - selectedCompletedTurns,
@@ -136,6 +150,15 @@ export class ContextBuilder {
 		if (estimatedFixedTokens + estimatedActiveTurnTokens > estimatedInputLimitTokens) {
 			throw new ContextBudgetExceededError(diagnostics());
 		}
+		renderedMemory = renderSessionMemory(
+			this.systemMessage.content,
+			memory,
+			Math.min(
+				MEMORY_TOKEN_CAP,
+				Math.floor(estimatedInputLimitTokens / 8),
+				estimatedInputLimitTokens - estimatedFixedTokens - estimatedActiveTurnTokens,
+			),
+		);
 		for (
 			let index = turns.length - 2;
 			index >= (semantic ? Math.max(0, turns.length - 2) : 0);
@@ -145,6 +168,7 @@ export class ContextBuilder {
 			if (
 				estimatedFixedTokens +
 					estimatedActiveTurnTokens +
+					renderedMemory.tokens +
 					estimatedSelectedHistoryTokens +
 					turnCost >
 				estimatedInputLimitTokens
@@ -170,7 +194,11 @@ export class ContextBuilder {
 				if (index === undefined || selectedIndices.has(index)) continue;
 				const cost = measureTurn(turns[index]!);
 				if (
-					estimatedFixedTokens + estimatedActiveTurnTokens + estimatedSelectedHistoryTokens + cost >
+					estimatedFixedTokens +
+						estimatedActiveTurnTokens +
+						renderedMemory.tokens +
+						estimatedSelectedHistoryTokens +
+						cost >
 					estimatedInputLimitTokens
 				) {
 					skippedOversizedCandidates++;
@@ -187,7 +215,11 @@ export class ContextBuilder {
 			? [...selectedIndices].sort((a, b) => a - b).flatMap((index) => turns[index]!)
 			: turns.slice(firstSelectedTurn, -1).flat();
 		return {
-			messages: [this.systemMessage, ...selectedHistory, ...activeTurn],
+			messages: [
+				{ role: 'system', content: renderedMemory.content },
+				...selectedHistory,
+				...activeTurn,
+			],
 			tools,
 			contextProfile: this.contextProfile,
 			diagnostics: diagnostics(),

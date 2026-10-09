@@ -1,5 +1,6 @@
 import { isAbortError, throwIfAborted } from '../services/cancellation';
 import type { HistoryRetriever } from '../services/HistoryRetriever';
+import type { SessionMemoryService } from '../services/SessionMemoryService';
 import type {
 	AgentErrorOccurred,
 	AssistantMessageCompleted,
@@ -48,6 +49,7 @@ export type RunAgentTurnDependencies = {
 	model: ModelPort;
 	contextBuilder: ContextBuilder;
 	historyRetriever?: HistoryRetriever;
+	sessionMemory?: SessionMemoryService;
 	clock: ClockPort;
 	idGenerator: IdGeneratorPort;
 	toolExecutor?: ToolExecutorPort;
@@ -109,69 +111,105 @@ export class AgentLoop {
 
 		this.dependencies.contextBuilder.assertPromptFits(prompt, promptEvent.messageId, tools);
 
-		await this.dependencies.sessionStore.activateSession(sessionId);
+		const events = await this.dependencies.sessionStore.activateSession(sessionId);
+		try {
+			await this.dependencies.sessionMemory?.activate(sessionId, events);
+		} catch {
+			/* Optional memory cannot prevent chat. */
+		}
 		throwIfAborted(signal);
 		await this.dependencies.sessionStore.appendSessionEvent(promptEvent);
 		throwIfAborted(signal);
 
-		for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
-			throwIfAborted(signal);
-			const request = await this.buildModelInput(sessionId, tools, signal);
-			throwIfAborted(signal);
-			const result = yield* this.readModelResponse(
-				sessionId,
-				withSignal(request, signal),
-				turnMetrics,
-			);
+		let memoryFinalized = false;
+		try {
+			for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
+				throwIfAborted(signal);
+				const request = await this.buildModelInput(sessionId, tools, signal);
+				throwIfAborted(signal);
+				const result = yield* this.readModelResponse(
+					sessionId,
+					withSignal(request, signal),
+					turnMetrics,
+				);
 
-			throwIfAborted(signal);
+				throwIfAborted(signal);
 
-			if (toolRunner === undefined || tools.length === 0 || result.toolCalls.length === 0) {
-				await this.appendAssistantCompleted(sessionId, toContent(result));
-				return;
-			}
+				if (toolRunner === undefined || tools.length === 0 || result.toolCalls.length === 0) {
+					const final = await this.appendAssistantCompleted(sessionId, toContent(result));
+					await this.maintainMemory(
+						sessionId,
+						promptEvent.messageId,
+						final.messageId,
+						modelName,
+						signal,
+					);
+					memoryFinalized = true;
+					return;
+				}
 
-			let preparedToolCalls: PreparedModelToolCall[];
+				let preparedToolCalls: PreparedModelToolCall[];
 
-			try {
-				preparedToolCalls = toolRunner.prepareToolCalls(result.toolCalls);
-			} catch (caughtError) {
-				const error = toError(caughtError);
+				try {
+					preparedToolCalls = toolRunner.prepareToolCalls(result.toolCalls);
+				} catch (caughtError) {
+					const error = toError(caughtError);
 
-				await this.tryAppendAgentError(sessionId, error, 'MODEL_TOOL_CALL_INVALID');
-				throw error;
-			}
-
-			throwIfAborted(signal);
-			const persistedToolCalls = preparedToolCalls.map((record) => record.call);
-			await this.appendAssistantToolCallsCompleted(
-				sessionId,
-				toContent(result),
-				persistedToolCalls,
-			);
-			throwIfAborted(signal);
-			const { terminalMessage } = await toolRunner.executeToolCalls(
-				sessionId,
-				preparedToolCalls,
-				signal === undefined ? {} : { signal },
-			);
-			throwIfAborted(signal);
-
-			if (terminalMessage !== undefined) {
-				if (terminalMessage.length > 0) {
-					yield { contentDelta: terminalMessage };
+					await this.tryAppendAgentError(sessionId, error, 'MODEL_TOOL_CALL_INVALID');
+					throw error;
 				}
 
 				throwIfAborted(signal);
-				await this.appendAssistantCompleted(sessionId, terminalMessage);
-				return;
+				const persistedToolCalls = preparedToolCalls.map((record) => record.call);
+				await this.appendAssistantToolCallsCompleted(
+					sessionId,
+					toContent(result),
+					persistedToolCalls,
+				);
+				throwIfAborted(signal);
+				const { terminalMessage } = await toolRunner.executeToolCalls(
+					sessionId,
+					preparedToolCalls,
+					signal === undefined ? {} : { signal },
+				);
+				throwIfAborted(signal);
+
+				if (terminalMessage !== undefined) {
+					if (terminalMessage.length > 0) {
+						yield { contentDelta: terminalMessage };
+					}
+
+					throwIfAborted(signal);
+					await this.appendAssistantCompleted(sessionId, terminalMessage);
+					await this.maintainMemory(sessionId, promptEvent.messageId, undefined, modelName, signal);
+					memoryFinalized = true;
+					return;
+				}
 			}
+
+			const error = new Error('Tool iteration limit reached.');
+
+			await this.tryAppendAgentError(sessionId, error, 'TOOL_ITERATION_LIMIT_REACHED');
+			throw error;
+		} finally {
+			// Also captures truthful exact effects after failure/interruption; no semantic completion.
+			if (!memoryFinalized)
+				await this.maintainMemory(sessionId, promptEvent.messageId, undefined, modelName, signal);
 		}
+	}
 
-		const error = new Error('Tool iteration limit reached.');
-
-		await this.tryAppendAgentError(sessionId, error, 'TOOL_ITERATION_LIMIT_REACHED');
-		throw error;
+	private async maintainMemory(
+		sessionId: SessionId,
+		userId: string,
+		finalId: string | undefined,
+		modelName: string | undefined,
+		signal: AbortSignal | undefined,
+	) {
+		try {
+			await this.dependencies.sessionMemory?.finish(sessionId, userId, finalId, modelName, signal);
+		} catch {
+			/* A completed answer or primary turn error remains valid. */
+		}
 	}
 
 	private async buildModelInput(
@@ -195,6 +233,7 @@ export class AgentLoop {
 				state,
 				tools,
 				retrieval,
+				this.dependencies.sessionMemory?.snapshot(sessionId),
 			);
 			return { messages, contextProfile, ...(tools.length === 0 ? {} : { tools }) };
 		} catch (caughtError) {
@@ -249,7 +288,10 @@ export class AgentLoop {
 		return { contentDeltas, toolCalls };
 	}
 
-	private async appendAssistantCompleted(sessionId: SessionId, content: string): Promise<void> {
+	private async appendAssistantCompleted(
+		sessionId: SessionId,
+		content: string,
+	): Promise<AssistantMessageCompleted> {
 		const event: AssistantMessageCompleted = {
 			id: this.dependencies.idGenerator.nextEventId(),
 			messageId: this.dependencies.idGenerator.nextMessageId(),
@@ -260,6 +302,7 @@ export class AgentLoop {
 		};
 
 		await this.dependencies.sessionStore.appendSessionEvent(event);
+		return event;
 	}
 
 	private async appendAssistantToolCallsCompleted(

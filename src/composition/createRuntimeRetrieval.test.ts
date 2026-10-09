@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, test, beforeEach, afterEach, spyOn } from 'bun:test';
+import { ModelSessionMemoryUpdater } from '@/application/services/ModelSessionMemoryUpdater';
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -139,6 +140,15 @@ const assertDurableCompletion = async (
 };
 
 describe('createRuntime historical retrieval composition', () => {
+	let memoryUpdate: ReturnType<typeof spyOn>;
+	beforeEach(() => {
+		memoryUpdate = spyOn(ModelSessionMemoryUpdater.prototype, 'update').mockResolvedValue({
+			version: 1,
+			goal: null,
+			changes: [],
+		});
+	});
+	afterEach(() => memoryUpdate.mockRestore());
 	test('disabled embeddings make no retrieval requests and retain safe Phase 16 context', async () => {
 		await withWorkspace(async () => {
 			const baseline = await seedHistory();
@@ -162,7 +172,7 @@ describe('createRuntime historical retrieval composition', () => {
 					expect(await runCurrent(runtime)).toEqual([{ contentDelta: FINAL_ANSWER }]);
 					await assertDurableCompletion(runtime, baseline);
 					expect(chatRequests).toBe(1);
-					expect(await readdir('.agent')).toEqual(['sessions']);
+					expect(await readdir('.agent')).toEqual(['session-memory', 'sessions']);
 				},
 			);
 		});
@@ -273,7 +283,7 @@ describe('createRuntime historical retrieval composition', () => {
 						});
 						await assertDurableCompletion(runtime, baseline);
 						if (cache === 'corrupt') expect(await readFile(INDEX_FILE)).toEqual(corruptBytes);
-						else expect(await readdir('.agent')).toEqual(['sessions']);
+						else expect(await readdir('.agent')).toEqual(['session-memory', 'sessions']);
 					},
 				);
 			});
