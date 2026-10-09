@@ -6,6 +6,8 @@ import {
 } from '@/domain/ModelContextProfile';
 import type { ModelMessage } from '@/domain/ModelMessage';
 import type { ToolDefinition } from '@/domain/Tool';
+import type { HistoryRetrieval } from './HistoryRetriever';
+import { groupMessagesIntoTurns, isRetrievableTurn } from './HistoryTurns';
 import {
 	ESTIMATED_REQUEST_FRAMING_TOKENS,
 	estimateMessageTokens,
@@ -29,6 +31,12 @@ export type ContextDiagnostics = {
 	selectedCompletedTurns: number;
 	droppedCompletedTurns: number;
 	estimatedRemainingMarginTokens: number;
+	retrievalEnabled: boolean;
+	historicalCandidatesConsidered: number;
+	retrievedTurnCount: number;
+	retrievedEstimatedTokens: number;
+	skippedOversizedCandidates: number;
+	retrievalFallbackReason?: HistoryRetrieval['fallbackReason'];
 };
 
 export type CompiledContext = {
@@ -64,11 +72,19 @@ export class ContextBuilder {
 		this.compile([{ role: 'user', content: prompt, id: messageId }], tools);
 	}
 
-	build(state: AgentState, tools: ToolDefinition[] = []): CompiledContext {
-		return this.compile(state.messages, tools);
+	build(
+		state: AgentState,
+		tools: ToolDefinition[] = [],
+		retrieval?: HistoryRetrieval,
+	): CompiledContext {
+		return this.compile(state.messages, tools, retrieval);
 	}
 
-	private compile(history: ModelMessage[], tools: ToolDefinition[]): CompiledContext {
+	private compile(
+		history: ModelMessage[],
+		tools: ToolDefinition[],
+		retrieval?: HistoryRetrieval,
+	): CompiledContext {
 		const turns = groupMessagesIntoTurns(history);
 		const safetyAllowanceTokens = Math.max(
 			128,
@@ -88,6 +104,11 @@ export class ContextBuilder {
 		let firstSelectedTurn = Math.max(0, turns.length - 1);
 		const completedTurns = Math.max(0, turns.length - 1);
 		let selectedCompletedTurns = 0;
+		let retrievedTurnCount = 0;
+		let retrievedEstimatedTokens = 0;
+		let skippedOversizedCandidates = 0;
+		const selectedIndices = new Set<number>();
+		const semantic = retrieval !== undefined && retrieval.fallbackReason === undefined;
 		const diagnostics = (): ContextDiagnostics => {
 			const estimatedInputTokens =
 				estimatedFixedTokens + estimatedActiveTurnTokens + estimatedSelectedHistoryTokens;
@@ -102,12 +123,24 @@ export class ContextBuilder {
 				selectedCompletedTurns,
 				droppedCompletedTurns: completedTurns - selectedCompletedTurns,
 				estimatedRemainingMarginTokens: estimatedInputLimitTokens - estimatedInputTokens,
+				retrievalEnabled: retrieval?.enabled ?? false,
+				historicalCandidatesConsidered: retrieval?.candidatesConsidered ?? 0,
+				retrievedTurnCount,
+				retrievedEstimatedTokens,
+				skippedOversizedCandidates,
+				...(retrieval?.fallbackReason === undefined
+					? {}
+					: { retrievalFallbackReason: retrieval.fallbackReason }),
 			};
 		};
 		if (estimatedFixedTokens + estimatedActiveTurnTokens > estimatedInputLimitTokens) {
 			throw new ContextBudgetExceededError(diagnostics());
 		}
-		for (let index = turns.length - 2; index >= 0; index -= 1) {
+		for (
+			let index = turns.length - 2;
+			index >= (semantic ? Math.max(0, turns.length - 2) : 0);
+			index -= 1
+		) {
 			const turnCost = measureTurn(turns[index]!);
 			if (
 				estimatedFixedTokens +
@@ -120,26 +153,47 @@ export class ContextBuilder {
 			estimatedSelectedHistoryTokens += turnCost;
 			selectedCompletedTurns += 1;
 			firstSelectedTurn = index;
+			selectedIndices.add(index);
 		}
+		if (semantic) {
+			const byId = new Map<string, number>();
+			for (let index = 0; index < turns.length - 2; index++) {
+				const turn = turns[index]!;
+				if (isRetrievableTurn(turn)) byId.set(turn[0]!.id!, index);
+			}
+			const seen = new Set<string>();
+			for (const candidate of retrieval.candidates) {
+				if (retrievedTurnCount >= 3) break;
+				if (seen.has(candidate.turnId)) continue;
+				seen.add(candidate.turnId);
+				const index = byId.get(candidate.turnId);
+				if (index === undefined || selectedIndices.has(index)) continue;
+				const cost = measureTurn(turns[index]!);
+				if (
+					estimatedFixedTokens + estimatedActiveTurnTokens + estimatedSelectedHistoryTokens + cost >
+					estimatedInputLimitTokens
+				) {
+					skippedOversizedCandidates++;
+					continue;
+				}
+				selectedIndices.add(index);
+				estimatedSelectedHistoryTokens += cost;
+				retrievedEstimatedTokens += cost;
+				retrievedTurnCount++;
+				selectedCompletedTurns++;
+			}
+		}
+		const selectedHistory = semantic
+			? [...selectedIndices].sort((a, b) => a - b).flatMap((index) => turns[index]!)
+			: turns.slice(firstSelectedTurn, -1).flat();
 		return {
-			messages: [this.systemMessage, ...turns.slice(firstSelectedTurn).flat()],
+			messages: [this.systemMessage, ...selectedHistory, ...activeTurn],
 			tools,
 			contextProfile: this.contextProfile,
 			diagnostics: diagnostics(),
 		};
 	}
 }
-
-const groupMessagesIntoTurns = (messages: ModelMessage[]): ModelMessage[][] => {
-	const turns: ModelMessage[][] = [];
-	for (const message of messages) {
-		if (message.role === 'system')
-			throw new Error('Canonical model history must not contain system instructions.');
-		if (message.role === 'user' || turns.length === 0) turns.push([message]);
-		else turns.at(-1)!.push(message);
-	}
-	return turns;
-};
 
 const measureTurn = (turn: ModelMessage[]): number =>
 	turn.reduce((total, message) => total + estimateMessageTokens(message), 0);

@@ -218,6 +218,8 @@ OLLAMA_BASE_URL=http://localhost:11434
 SYSTEM_PROMPT=Use workspace-relative paths.
 MODEL_CONTEXT_TOKENS=16384
 MODEL_MAX_OUTPUT_TOKENS=4096
+# Optional; independently installed embedding model for current-session history:
+# HISTORY_EMBEDDING_MODEL=<installed-embedding-model>
 ```
 
 Defaults are defined in `src/composition/config.ts`.
@@ -237,18 +239,42 @@ one estimated token per three ASCII bytes, one per non-ASCII byte, plus framing 
 These are estimates, not exact model tokenizer counts. Safety is `max(128, ceil(total / 16))`
 tokens; unusual model templates/tokenizers may still exceed estimates.
 
-The entire current user turn stays exact across tool rounds. Previous turns are retained as a
-contiguous recent window, newest first, then sent chronologically. If the next older complete turn
-does not fit, selection stops; its calls/results drop together. Durable events and resumed transcripts
-remain complete. An oversized active request fails before model invocation instead of truncating
-user text or tool results or reducing the output reservation. No summaries or semantic retrieval
-are implemented. The former `MAX_CONTEXT_CHARACTERS` setting is removed; migrate to these two
-token settings rather than converting its character value.
+The entire current user turn stays exact across tool rounds. When semantic retrieval is unavailable,
+previous turns are retained as a contiguous recent window, newest first, then sent chronologically.
+If the next older complete turn does not fit, selection stops; its calls/results drop together.
+Durable events and resumed transcripts remain complete. An oversized active request fails before
+model invocation instead of truncating user text or tool results or reducing the output reservation.
+No summaries are implemented. The former `MAX_CONTEXT_CHARACTERS` setting is removed; migrate to
+these two token settings rather than converting its character value.
 
 The Ollama adapter requests no input truncation or context shifting. A reported `length` finish
 raises an incomplete-response error through existing presentation and does not store a clean final
 answer or execute partial tool calls. Missing/unknown provider finish metadata cannot prove why
 a response stopped; prompt/output usage, when reported, is diagnostic only.
+
+Semantic history retrieval is optional. Set `HISTORY_EMBEDDING_MODEL` to an already installed Ollama
+embedding model; it is independent of `OLLAMA_MODEL`, `TEST_MODEL` and the chat model preference. No
+embedding model is selected or downloaded automatically. With retrieval available, each request
+keeps the active turn exact, the immediately previous complete turn exact when it fits, and at most
+three relevant older complete turns. Old candidates must meet cosine similarity 0.65; unused input
+budget stays unused. All selected content uses the same 16384-token window, 4096-token output
+reservation and default 1024-token safety allowance. Token counts remain estimates.
+
+The disposable index lives under `.agent/history-index/<session-id>.bin`, contains vectors and
+source metadata rather than another transcript, and is rebuilt from reducer-owned durable JSONL
+history when deleted, corrupt or incompatible. Only the selected session is searched. Newly
+completed turns are embedded incrementally; verified prefixes survive provider failures or rebuild
+timeouts. Unset configuration, provider/cache errors or embedding timeout fall back to Phase 16's
+recent whole-turn context without affecting durable history or ordinary chat. Caller cancellation
+still stops the turn. No retrieval panel or assistant-output diagnostics are added.
+
+Search text is a bounded deterministic projection of conversation text and tool/path/query metadata;
+raw old tool results and large mutation bodies are excluded from embeddings. Retrieved payloads are
+the original complete turns, including original tool results. Historical file contents may be stale:
+use current workspace tools for current file truth. Oversized retrieved turns are skipped whole.
+Similarity quality depends on the chosen embedding model; replacing a mutable model tag at the same
+dimension requires deleting the derived index to force rebuilding. Summaries, structured session
+memory and cross-session personal memory remain outside Phase 17.
 
 `OLLAMA_MODEL` is optional; unset or blank means no explicit model configuration. An installed
 explicit model wins over remembered preference. If it is unavailable, the CLI starts with a clear

@@ -104,3 +104,46 @@ describe('readConfig', () => {
 		});
 	}
 });
+
+describe('history embedding configuration', () => {
+	test('is disabled by default without selecting an embedding model', () => {
+		expect(readConfig({}).HISTORY_EMBEDDING_MODEL).toBeUndefined();
+	});
+
+	for (const blank of ['', ' \t\n ']) {
+		test(`blank embedding configuration disables retrieval: ${JSON.stringify(blank)}`, () => {
+			expect(
+				readConfig({ HISTORY_EMBEDDING_MODEL: blank }).HISTORY_EMBEDDING_MODEL,
+			).toBeUndefined();
+		});
+	}
+
+	test('trims an explicitly configured embedding model independently of chat', () => {
+		const config = readConfig({
+			HISTORY_EMBEDDING_MODEL: ' test-embedding-model ',
+			OLLAMA_MODEL: ' test-chat-model ',
+			TEST_MODEL: ' live-test-only-model ',
+		});
+		expect(config.HISTORY_EMBEDDING_MODEL).toBe('test-embedding-model');
+		expect(config.OLLAMA_MODEL).toBe('test-chat-model');
+		expect(config).not.toHaveProperty('TEST_MODEL');
+	});
+
+	test('chat and live-test models never supply a hidden embedding fallback', () => {
+		for (const env of [
+			{ OLLAMA_MODEL: 'test-chat-model' },
+			{ TEST_MODEL: 'live-test-only-model' },
+			{ OLLAMA_MODEL: 'test-chat-model', TEST_MODEL: 'live-test-only-model' },
+		]) {
+			expect(readConfig(env).HISTORY_EMBEDDING_MODEL).toBeUndefined();
+		}
+	});
+
+	test('embedding configuration does not create a chat model or change context defaults', () => {
+		const config = readConfig({ HISTORY_EMBEDDING_MODEL: 'test-embedding-model' });
+		expect(config.OLLAMA_MODEL).toBeUndefined();
+		expect(config.MODEL_CONTEXT_TOKENS).toBe(16_384);
+		expect(config.MODEL_MAX_OUTPUT_TOKENS).toBe(4_096);
+		expect(config.OLLAMA_KEEP_ALIVE).toBe('0');
+	});
+});

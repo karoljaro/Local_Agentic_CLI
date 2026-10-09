@@ -1,5 +1,8 @@
 import type { ListedModel } from '@/application/ports/ModelCatalogPort';
 import type { UnloadModelInput } from '@/application/ports/ModelPort';
+import { HistoryRetriever } from '@/application/services/HistoryRetriever';
+import { OllamaEmbeddingAdapter } from '@/infrastructure/model/OllamaEmbeddingAdapter';
+import { BinaryHistoryIndexStore } from '@/infrastructure/persistence/BinaryHistoryIndexStore';
 import { ContextBuilder } from '@/application/services/ContextBuilder';
 import {
 	InMemoryAgentMetrics,
@@ -64,7 +67,15 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 		},
 	});
 
+	const historyRetriever =
+		config.HISTORY_EMBEDDING_MODEL === undefined
+			? undefined
+			: new HistoryRetriever(
+					new OllamaEmbeddingAdapter(config.OLLAMA_BASE_URL, config.HISTORY_EMBEDDING_MODEL),
+					new BinaryHistoryIndexStore(),
+				);
 	const runAgentTurn = new RunAgentTurn({
+		...(historyRetriever === undefined ? {} : { historyRetriever }),
 		sessionStore,
 		model: modelRuntime,
 		contextBuilder,

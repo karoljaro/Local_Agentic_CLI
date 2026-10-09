@@ -22,6 +22,10 @@ const ConfigSchema = z
 			(value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
 			z.string().trim().min(1).optional(),
 		),
+		HISTORY_EMBEDDING_MODEL: z.preprocess(
+			(value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+			z.string().trim().min(1).optional(),
+		),
 		OLLAMA_KEEP_ALIVE: envString('0'),
 		SYSTEM_PROMPT: envString('Use workspace-relative paths.'),
 		MODEL_CONTEXT_TOKENS: positiveInteger(16_384),

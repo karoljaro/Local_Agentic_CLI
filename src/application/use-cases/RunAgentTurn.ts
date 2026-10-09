@@ -1,4 +1,5 @@
 import { isAbortError, throwIfAborted } from '../services/cancellation';
+import type { HistoryRetriever } from '../services/HistoryRetriever';
 import type {
 	AgentErrorOccurred,
 	AssistantMessageCompleted,
@@ -46,6 +47,7 @@ export type RunAgentTurnDependencies = {
 	sessionStore: SessionServicePort;
 	model: ModelPort;
 	contextBuilder: ContextBuilder;
+	historyRetriever?: HistoryRetriever;
 	clock: ClockPort;
 	idGenerator: IdGeneratorPort;
 	toolExecutor?: ToolExecutorPort;
@@ -180,7 +182,20 @@ export class AgentLoop {
 		try {
 			const state = await this.dependencies.sessionStore.readSessionState(sessionId);
 			throwIfAborted(signal);
-			const { messages, contextProfile } = this.dependencies.contextBuilder.build(state, tools);
+			// Mandatory overflow wins before embedding work; canonical history stays untouched.
+			if (this.dependencies.historyRetriever !== undefined)
+				this.dependencies.contextBuilder.build(state, tools, {
+					enabled: true,
+					candidates: [],
+					candidatesConsidered: 0,
+				});
+			const retrieval = await this.dependencies.historyRetriever?.retrieve(state, signal);
+			throwIfAborted(signal);
+			const { messages, contextProfile } = this.dependencies.contextBuilder.build(
+				state,
+				tools,
+				retrieval,
+			);
 			return { messages, contextProfile, ...(tools.length === 0 ? {} : { tools }) };
 		} catch (caughtError) {
 			if (caughtError instanceof ContextBudgetExceededError) {
