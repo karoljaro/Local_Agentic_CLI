@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { ModelPreferencePort } from '../ports/ModelPreferencePort';
-import { SYNTHETIC_MODEL } from '@/test-support/modelFixtures';
+import { SYNTHETIC_MODEL, TEST_CONTEXT_PROFILE } from '@/test-support/modelFixtures';
 import { createDeferred } from '@/test-support/createDeferred';
 import { collectAsyncIterable } from '@/test-support/collectAsyncIterable';
 import { throwIfAborted } from './cancellation';
@@ -212,9 +212,11 @@ describe('manual selection lifecycle', () => {
 			expect(selection.getModelName()).toBe(OTHER);
 			expect(f.signals).toEqual([signal, signal]);
 			expect(f.writes).toEqual([OTHER]);
-			expect(await collectAsyncIterable(selection.streamChat({ messages: [] }))).toEqual([
-				{ contentDelta: `answer:${OTHER}` },
-			]);
+			expect(
+				await collectAsyncIterable(
+					selection.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [] }),
+				),
+			).toEqual([{ contentDelta: `answer:${OTHER}` }]);
 		} finally {
 			release.resolve();
 		}
@@ -423,9 +425,11 @@ describe('runtime availability and inference', () => {
 		const { selection, f } = setup({ configured: SYNTHETIC_MODEL });
 		await selection.initialize();
 		f.faults.chat = new ModelUseError('unavailable', 'provider reports missing model');
-		await expect(collectAsyncIterable(selection.streamChat({ messages: [] }))).rejects.toThrow(
-			'provider reports missing model Use /model',
-		);
+		await expect(
+			collectAsyncIterable(
+				selection.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [] }),
+			),
+		).rejects.toThrow('provider reports missing model Use /model');
 		expect(selection.getModelName()).toBeUndefined();
 		delete f.faults.chat;
 		await selection.switchModel(OTHER);
@@ -437,7 +441,11 @@ describe('runtime availability and inference', () => {
 		await selection.initialize();
 		const cause = new Error('network outage');
 		f.faults.chat = cause;
-		await expect(collectAsyncIterable(selection.streamChat({ messages: [] }))).rejects.toBe(cause);
+		await expect(
+			collectAsyncIterable(
+				selection.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [] }),
+			),
+		).rejects.toBe(cause);
 		expect(selection.getModelName()).toBe(SYNTHETIC_MODEL);
 		expect(cause.message).not.toContain('/model');
 	});

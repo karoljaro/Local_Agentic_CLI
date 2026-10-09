@@ -1,4 +1,4 @@
-import { SYNTHETIC_MODEL } from '@/test-support/modelFixtures';
+import { SYNTHETIC_MODEL, TEST_CONTEXT_PROFILE } from '@/test-support/modelFixtures';
 import { describe, expect, test } from 'bun:test';
 
 import { asMessageId, asToolCallId } from '@/domain/Ids';
@@ -30,7 +30,9 @@ describe('OllamaModelAdapter', () => {
 						'fixture-model',
 						keepAlive,
 					);
-					await collectAsyncIterable(adapter.streamChat({ messages: [] }));
+					await collectAsyncIterable(
+						adapter.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [] }),
+					);
 				},
 			);
 		});
@@ -50,6 +52,7 @@ describe('OllamaModelAdapter', () => {
 
 				await collectAsyncIterable(
 					adapter.streamChat({
+						contextProfile: TEST_CONTEXT_PROFILE,
 						messages: [
 							{
 								role: 'assistant',
@@ -94,6 +97,9 @@ describe('OllamaModelAdapter', () => {
 						},
 					],
 					stream: true,
+					options: { num_ctx: 16_384, num_predict: 4_096 },
+					truncate: false,
+					shift: false,
 				});
 			},
 		);
@@ -118,6 +124,7 @@ describe('OllamaModelAdapter', () => {
 
 				const chunks = await collectAsyncIterable(
 					adapter.streamChat({
+						contextProfile: TEST_CONTEXT_PROFILE,
 						messages: [
 							{
 								role: 'system',
@@ -146,6 +153,9 @@ describe('OllamaModelAdapter', () => {
 						},
 					],
 					stream: true,
+					options: { num_ctx: 16_384, num_predict: 4_096 },
+					truncate: false,
+					shift: false,
 				});
 				expect(chunks).toEqual([{ contentDelta: 'Hello' }, { contentDelta: ' there' }]);
 			},
@@ -164,13 +174,18 @@ describe('OllamaModelAdapter', () => {
 			async () => {
 				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL, '0');
 
-				await collectAsyncIterable(adapter.streamChat({ messages: [] }));
+				await collectAsyncIterable(
+					adapter.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [] }),
+				);
 
 				expect(requestBody).toEqual({
 					model: SYNTHETIC_MODEL,
 					messages: [],
 					keep_alive: 0,
 					stream: true,
+					options: { num_ctx: 16_384, num_predict: 4_096 },
+					truncate: false,
+					shift: false,
 				});
 			},
 		);
@@ -222,6 +237,7 @@ describe('OllamaModelAdapter', () => {
 
 				await collectAsyncIterable(
 					adapter.streamChat({
+						contextProfile: TEST_CONTEXT_PROFILE,
 						messages: [],
 						signal: abortController.signal,
 					}),
@@ -244,7 +260,9 @@ describe('OllamaModelAdapter', () => {
 			async () => {
 				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
-				await collectAsyncIterable(adapter.streamChat({ messages: [] }));
+				await collectAsyncIterable(
+					adapter.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [] }),
+				);
 
 				expect(requestSignal).toBeUndefined();
 			},
@@ -281,10 +299,7 @@ describe('OllamaModelAdapter', () => {
 				};
 
 				const chunks = await collectAsyncIterable(
-					adapter.streamChat({
-						messages: [],
-						tools: [tool],
-					}),
+					adapter.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [], tools: [tool] }),
 				);
 
 				expect(requestBody).toEqual({
@@ -301,6 +316,9 @@ describe('OllamaModelAdapter', () => {
 						},
 					],
 					stream: true,
+					options: { num_ctx: 16_384, num_predict: 4_096 },
+					truncate: false,
+					shift: false,
 				});
 				expect(chunks).toEqual([
 					{
@@ -327,7 +345,9 @@ describe('OllamaModelAdapter', () => {
 			async () => {
 				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
-				const chunks = await collectAsyncIterable(adapter.streamChat({ messages: [] }));
+				const chunks = await collectAsyncIterable(
+					adapter.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [] }),
+				);
 
 				expect(chunks).toEqual([]);
 			},
@@ -349,7 +369,9 @@ describe('OllamaModelAdapter', () => {
 			async () => {
 				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
-				const chunks = await collectAsyncIterable(adapter.streamChat({ messages: [] }));
+				const chunks = await collectAsyncIterable(
+					adapter.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [] }),
+				);
 
 				expect(chunks).toEqual([
 					{
@@ -381,9 +403,11 @@ describe('OllamaModelAdapter', () => {
 			async () => {
 				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
-				await expect(collectAsyncIterable(adapter.streamChat({ messages: [] }))).rejects.toThrow(
-					'Ollama request failed with status 404',
-				);
+				await expect(
+					collectAsyncIterable(
+						adapter.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [] }),
+					),
+				).rejects.toThrow('Ollama request failed with status 404');
 			},
 		);
 	});
@@ -408,9 +432,11 @@ describe('OllamaModelAdapter', () => {
 			async () => {
 				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
-				await expect(collectAsyncIterable(adapter.streamChat({ messages: [] }))).rejects.toThrow(
-					'Invalid Ollama stream JSON',
-				);
+				await expect(
+					collectAsyncIterable(
+						adapter.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [] }),
+					),
+				).rejects.toThrow('Invalid Ollama stream JSON');
 				expect(wasCancelled).toBe(true);
 			},
 		);
@@ -437,7 +463,9 @@ describe('OllamaModelAdapter', () => {
 			},
 			async () => {
 				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
-				const iterator = adapter.streamChat({ messages: [] })[Symbol.asyncIterator]();
+				const iterator = adapter
+					.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [] })
+					[Symbol.asyncIterator]();
 
 				await expect(iterator.next()).resolves.toEqual({
 					done: false,
@@ -480,7 +508,11 @@ describe('OllamaModelAdapter', () => {
 			async () => {
 				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 				const iterator = adapter
-					.streamChat({ messages: [], signal: abortController.signal })
+					.streamChat({
+						contextProfile: TEST_CONTEXT_PROFILE,
+						messages: [],
+						signal: abortController.signal,
+					})
 					[Symbol.asyncIterator]();
 				const nextChunk = iterator.next();
 
@@ -499,9 +531,11 @@ describe('OllamaModelAdapter', () => {
 			async () => {
 				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
-				await expect(collectAsyncIterable(adapter.streamChat({ messages: [] }))).rejects.toThrow(
-					'Ollama stream failed: model failed',
-				);
+				await expect(
+					collectAsyncIterable(
+						adapter.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [] }),
+					),
+				).rejects.toThrow('Ollama stream failed: model failed');
 			},
 		);
 	});
@@ -517,9 +551,11 @@ describe('OllamaModelAdapter', () => {
 			async () => {
 				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
-				await expect(collectAsyncIterable(adapter.streamChat({ messages: [] }))).rejects.toThrow(
-					'Ollama stream failed: model failed',
-				);
+				await expect(
+					collectAsyncIterable(
+						adapter.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [] }),
+					),
+				).rejects.toThrow('Ollama stream failed: model failed');
 			},
 		);
 	});
@@ -535,9 +571,11 @@ describe('OllamaModelAdapter', () => {
 			async () => {
 				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
-				await expect(collectAsyncIterable(adapter.streamChat({ messages: [] }))).rejects.toThrow(
-					'Ollama stream ended before completion.',
-				);
+				await expect(
+					collectAsyncIterable(
+						adapter.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [] }),
+					),
+				).rejects.toThrow('Ollama stream ended before completion.');
 			},
 		);
 	});
@@ -553,9 +591,11 @@ describe('OllamaModelAdapter', () => {
 			async () => {
 				const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
 
-				await expect(collectAsyncIterable(adapter.streamChat({ messages: [] }))).rejects.toThrow(
-					'Invalid Ollama tool arguments for read_file',
-				);
+				await expect(
+					collectAsyncIterable(
+						adapter.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [] }),
+					),
+				).rejects.toThrow('Invalid Ollama tool arguments for read_file');
 			},
 		);
 	});
@@ -661,7 +701,10 @@ describe('Ollama model management boundaries', () => {
 						let caught: unknown;
 						try {
 							if (operation === 'activate') await adapter.activate();
-							else await collectAsyncIterable(adapter.streamChat({ messages: [] }));
+							else
+								await collectAsyncIterable(
+									adapter.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [] }),
+								);
 						} catch (error) {
 							caught = error;
 						}
@@ -686,6 +729,7 @@ describe('Ollama model management boundaries', () => {
 					try {
 						await collectAsyncIterable(
 							new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL).streamChat({
+								contextProfile: TEST_CONTEXT_PROFILE,
 								messages: [],
 							}),
 						);
@@ -697,5 +741,119 @@ describe('Ollama model management boundaries', () => {
 				},
 			);
 		}
+	});
+});
+
+describe('Ollama context profile and completion metadata', () => {
+	for (const [contextWindowTokens, maxOutputTokens] of [
+		[16_384, 4_096],
+		[8_192, 2_048],
+	]) {
+		test(`maps the request profile ${contextWindowTokens}/${maxOutputTokens} on every request`, async () => {
+			let requests = 0;
+			await withMockedFetch(
+				async (_url, init) => {
+					const body = JSON.parse(String(init?.body));
+					expect(body.options).toEqual({
+						num_ctx: contextWindowTokens,
+						num_predict: maxOutputTokens,
+					});
+					expect(body.truncate).toBe(false);
+					expect(body.shift).toBe(false);
+					requests += 1;
+					return new Response('{"done":true,"done_reason":"stop"}\n');
+				},
+				async () => {
+					const adapter = new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL);
+					for (let i = 0; i < 3; i++)
+						await collectAsyncIterable(
+							adapter.streamChat({
+								messages: [],
+								contextProfile: {
+									contextWindowTokens: contextWindowTokens!,
+									maxOutputTokens: maxOutputTokens!,
+								},
+							}),
+						);
+				},
+			);
+			expect(requests).toBe(3);
+		});
+	}
+
+	for (const [reason, expected] of [
+		['stop', 'stop'],
+		['length', 'length'],
+		['tool_calls', 'tool'],
+		['future_reason', 'unknown'],
+	] as const) {
+		test(`preserves final ${reason} and provider-reported prompt/output counts`, async () => {
+			await withMockedFetch(
+				async () =>
+					new Response(
+						'{"message":{"content":"Partial"},"done":false}\n' +
+							JSON.stringify({
+								done: true,
+								done_reason: reason,
+								prompt_eval_count: 4_066,
+								eval_count: 30,
+							}) +
+							'\n',
+					),
+				async () => {
+					const chunks = await collectAsyncIterable(
+						new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL).streamChat({
+							messages: [],
+							contextProfile: TEST_CONTEXT_PROFILE,
+						}),
+					);
+					expect(chunks).toEqual([
+						{ contentDelta: 'Partial' },
+						{
+							contentDelta: '',
+							finishReason: expected,
+							usage: { promptTokens: 4_066, outputTokens: 30 },
+						},
+					]);
+				},
+			);
+		});
+	}
+
+	test('drops invalid usage counters and does not invent a stop reason when absent', async () => {
+		await withMockedFetch(
+			async () => new Response('{"done":true,"prompt_eval_count":-1,"eval_count":2.5}\n'),
+			async () => {
+				expect(
+					await collectAsyncIterable(
+						new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL).streamChat({
+							messages: [],
+							contextProfile: TEST_CONTEXT_PROFILE,
+						}),
+					),
+				).toEqual([]);
+			},
+		);
+	});
+
+	test('rejects invalid request profiles before HTTP invocation', async () => {
+		let invoked = false;
+		await withMockedFetch(
+			async () => {
+				invoked = true;
+				return new Response('');
+			},
+			async () => {
+				await expect(
+					collectAsyncIterable(
+						new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL).streamChat({
+							messages: [],
+							contextProfile: { contextWindowTokens: 4_096, maxOutputTokens: 4_096 },
+						}),
+					),
+				).rejects.toThrow('maximum output tokens must be smaller');
+			},
+		);
+		expect(invoked).toBe(false);
 	});
 });

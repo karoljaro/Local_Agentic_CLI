@@ -6,6 +6,7 @@ import type {
 	UnloadModelInput,
 } from '@/application/ports/ModelPort';
 import type { ModelActivationPort } from '@/application/ports/ModelActivationPort';
+import { validateModelContextProfile } from '@/domain/ModelContextProfile';
 import { OllamaHttpClient } from './ollama/OllamaHttpClient';
 import {
 	normalizeOllamaKeepAlive,
@@ -28,6 +29,7 @@ export class OllamaModelAdapter implements ModelPort, ModelMemoryPort, ModelActi
 	}
 
 	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
+		validateModelContextProfile(input.contextProfile);
 		try {
 			const response = await this.client.postJson({
 				path: '/api/chat',
@@ -41,6 +43,13 @@ export class OllamaModelAdapter implements ModelPort, ModelMemoryPort, ModelActi
 						? {}
 						: { tools: input.tools.map(toOllamaTool) }),
 					stream: true,
+					options: {
+						num_ctx: input.contextProfile.contextWindowTokens,
+						num_predict: input.contextProfile.maxOutputTokens,
+					},
+					// Compiler owns history selection; request errors instead of silent provider trimming.
+					truncate: false,
+					shift: false,
 				},
 			});
 

@@ -215,15 +215,40 @@ Configuration is read from environment variables. A `.env` file can be used.
 OLLAMA_BASE_URL=http://localhost:11434
 # Optional explicit override; use a name from the installed-model picker:
 # OLLAMA_MODEL=<installed-model-name>
-SYSTEM_PROMPT=You are a local coding agent.
-MAX_CONTEXT_CHARACTERS=120000
+SYSTEM_PROMPT=Use workspace-relative paths.
+MODEL_CONTEXT_TOKENS=16384
+MODEL_MAX_OUTPUT_TOKENS=4096
 ```
 
 Defaults are defined in `src/composition/config.ts`.
 
 Leave `SYSTEM_PROMPT` unset or blank to use the built-in guidance. A nonblank value replaces that guidance, including the workspace-relative path rule.
 
-`MAX_CONTEXT_CHARACTERS` limits serialized model messages. The current turn is always kept intact; older complete turns are removed from oldest to newest when the limit is reached.
+`MODEL_CONTEXT_TOKENS` sets the total model window; `MODEL_MAX_OUTPUT_TOKENS` reserves the
+maximum generation space. Both must be positive integers, with output smaller than the window.
+The defaults reserve 4,096 of 16,384 tokens for output. The 12,288-token theoretical input ceiling
+also leaves a 1,024-token safety allowance, so estimated input must fit within 11,264 tokens.
+Every Ollama inference request explicitly sends these context/output limits; daemon defaults
+and Modelfiles do not define the application budget.
+
+The bounded Context Compiler includes the system instruction, all nine tools, messages and
+structured calls/results. Its conservative estimate uses model-visible serialized UTF-8 structures:
+one estimated token per three ASCII bytes, one per non-ASCII byte, plus framing allowances.
+These are estimates, not exact model tokenizer counts. Safety is `max(128, ceil(total / 16))`
+tokens; unusual model templates/tokenizers may still exceed estimates.
+
+The entire current user turn stays exact across tool rounds. Previous turns are retained as a
+contiguous recent window, newest first, then sent chronologically. If the next older complete turn
+does not fit, selection stops; its calls/results drop together. Durable events and resumed transcripts
+remain complete. An oversized active request fails before model invocation instead of truncating
+user text or tool results or reducing the output reservation. No summaries or semantic retrieval
+are implemented. The former `MAX_CONTEXT_CHARACTERS` setting is removed; migrate to these two
+token settings rather than converting its character value.
+
+The Ollama adapter requests no input truncation or context shifting. A reported `length` finish
+raises an incomplete-response error through existing presentation and does not store a clean final
+answer or execute partial tool calls. Missing/unknown provider finish metadata cannot prove why
+a response stopped; prompt/output usage, when reported, is diagnostic only.
 
 `OLLAMA_MODEL` is optional; unset or blank means no explicit model configuration. An installed
 explicit model wins over remembered preference. If it is unavailable, the CLI starts with a clear
@@ -285,6 +310,17 @@ and remembered selection after restart in a disposable workspace, and times out 
 Unset `TEST_MODEL` skips with `No live test model configured. Set TEST_MODEL=<installed-model>.`
 It never downloads models or uses a hidden model-name/ordering fallback. Provider failure or an
 unavailable configured test model is reported as a failed smoke without retries.
+
+The optional context smoke uses one isolated read-only tool workflow and a 45-second aggregate
+deadline, with the default 16,384/4,096 profile and all nine definitions:
+
+```bash
+TEST_MODEL=qwen3.5:9b bun run scripts/smoke-context.ts
+```
+
+It reports estimated request budgets and provider-reported usage separately. An unset or
+uninstalled `TEST_MODEL` skips; timeout/provider failure stops the sequence without retry or
+downloads. Deterministic tests remain the release authority.
 
 Type check:
 

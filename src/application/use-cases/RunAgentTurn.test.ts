@@ -1,4 +1,5 @@
-import { SYNTHETIC_MODEL } from '@/test-support/modelFixtures';
+import type { ModelContextProfile } from '@/domain/ModelContextProfile';
+import { SYNTHETIC_MODEL, TEST_CONTEXT_PROFILE } from '@/test-support/modelFixtures';
 import { SessionService } from '@/application/services/SessionService';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -319,7 +320,10 @@ const checkRequestBoundaries = (
 				freshSessions?.() ?? new SessionService(new InMemorySessionStore({ events: prefix }));
 			const state = await replay.readSessionState(sessionId);
 			expect(state).toEqual(reduceAgentState(sessionId, prefix));
-			expect(input.messages).toEqual(new ContextBuilder(contextOptions).build(state).messages);
+			const compiled = new ContextBuilder(contextOptions).build(state, input.tools);
+			expect(input.messages).toEqual(compiled.messages);
+			expect(input.contextProfile).toEqual(contextOptions.contextProfile);
+			expect(compiled.diagnostics.estimatedRemainingMarginTokens).toBeGreaterThanOrEqual(0);
 			prefixes.push(prefix);
 			yield* model.streamChat(input);
 		},
@@ -331,7 +335,7 @@ type RunAgentTurnHarnessOptions = {
 	model: ScriptedModel;
 	toolExecutor?: RecordingToolExecutor;
 	approveToolCall?: RunAgentTurnDependencies['approveToolCall'];
-	maxContextCharacters?: number;
+	contextProfile?: ModelContextProfile;
 	agentMetrics?: RunAgentTurnDependencies['agentMetrics'];
 	monotonicClock?: RunAgentTurnDependencies['monotonicClock'];
 	events?: AgentEvent[];
@@ -341,7 +345,7 @@ const createRunAgentTurnHarness = ({
 	model,
 	toolExecutor,
 	approveToolCall,
-	maxContextCharacters,
+	contextProfile,
 	agentMetrics,
 	monotonicClock,
 	events = [],
@@ -351,7 +355,7 @@ const createRunAgentTurnHarness = ({
 	const sessions = new SessionService(sessionStore);
 	const contextOptions = {
 		systemPrompt: 'You are a local coding agent.',
-		maxContextCharacters: maxContextCharacters ?? 120_000,
+		contextProfile: contextProfile ?? TEST_CONTEXT_PROFILE,
 	};
 	const contextBuilder = new ContextBuilder(contextOptions);
 	const boundaryChecks = checkRequestBoundaries(
@@ -401,6 +405,7 @@ describe('RunAgentTurn', () => {
 
 		expect(chunks).toEqual([{ contentDelta: 'Hello' }, { contentDelta: ' there' }]);
 		expect(model.receivedInputs[0]).toEqual({
+			contextProfile: TEST_CONTEXT_PROFILE,
 			messages: [
 				{
 					role: 'system',
@@ -579,12 +584,12 @@ describe('RunAgentTurn', () => {
 		const model = new ScriptedModel([textResponse('unused')]);
 		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model,
-			maxContextCharacters: 160,
+			contextProfile: { contextWindowTokens: 384, maxOutputTokens: 64 },
 		});
 
 		await expect(
 			collectAsyncIterable(useCase.run({ sessionId, prompt: 'x'.repeat(300) })),
-		).rejects.toThrow('Current turn exceeds the model context budget');
+		).rejects.toThrow('active request itself exceeds the configured model context budget');
 		expect(sessionStore.events).toEqual([]);
 		expect(sessionStore.readCount).toBe(0);
 		expect(model.receivedInputs).toEqual([]);
@@ -679,6 +684,7 @@ describe('RunAgentTurn', () => {
 		]);
 		expect(model.receivedInputs).toEqual([
 			{
+				contextProfile: TEST_CONTEXT_PROFILE,
 				messages: [
 					{
 						role: 'system',
@@ -707,6 +713,7 @@ describe('RunAgentTurn', () => {
 				],
 			},
 			{
+				contextProfile: TEST_CONTEXT_PROFILE,
 				messages: [
 					{
 						role: 'system',
@@ -1601,12 +1608,12 @@ describe('RunAgentTurn', () => {
 		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({
 			model,
 			toolExecutor,
-			maxContextCharacters: 400,
+			contextProfile: { contextWindowTokens: 640, maxOutputTokens: 128 },
 		});
 
 		await expect(
 			collectAsyncIterable(useCase.run({ sessionId, prompt: 'Read large file' })),
-		).rejects.toThrow('Current turn exceeds the model context budget');
+		).rejects.toThrow('active request itself exceeds the configured model context budget');
 		expect(toolExecutor.receivedRequests).toHaveLength(1);
 		expect(model.receivedInputs).toHaveLength(1);
 		expect(sessionStore.events.filter((event) => event.type === 'prompt.submitted')).toHaveLength(
@@ -1693,7 +1700,7 @@ describe('RunAgentTurn lifecycle regressions', () => {
 					idGenerator: new SequenceIdGenerator(),
 					contextBuilder: new ContextBuilder({
 						systemPrompt: 'test',
-						maxContextCharacters: 120_000,
+						contextProfile: TEST_CONTEXT_PROFILE,
 					}),
 					approveToolCall: async (_request, options) => {
 						expect(options.signal).toBe(controller.signal);
@@ -1874,7 +1881,10 @@ test('failure-event storage failure stops subsequent tools and model rounds with
 		toolExecutor: executor,
 		clock: new FixedClock(),
 		idGenerator: new SequenceIdGenerator(),
-		contextBuilder: new ContextBuilder({ systemPrompt: 'test', maxContextCharacters: 120_000 }),
+		contextBuilder: new ContextBuilder({
+			systemPrompt: 'test',
+			contextProfile: TEST_CONTEXT_PROFILE,
+		}),
 	});
 	expect(
 		await collectAsyncIterable(
@@ -1917,7 +1927,10 @@ test('cancellation during activation prevents prompt persistence and model work'
 		model,
 		clock: new FixedClock(),
 		idGenerator: new SequenceIdGenerator(),
-		contextBuilder: new ContextBuilder({ systemPrompt: 'test', maxContextCharacters: 120_000 }),
+		contextBuilder: new ContextBuilder({
+			systemPrompt: 'test',
+			contextProfile: TEST_CONTEXT_PROFILE,
+		}),
 	});
 	const outcome = collectAsyncIterable(
 		loop.run({
@@ -1976,7 +1989,7 @@ test('normalized prepared input is approved, persisted, deduplicated and execute
 		const sessions = new SessionService(durable);
 		const contextBuilder = new ContextBuilder({
 			systemPrompt: 'test',
-			maxContextCharacters: 120_000,
+			contextProfile: TEST_CONTEXT_PROFILE,
 		});
 		const model = new ScriptedModel([
 			toolCallResponse([
@@ -1990,7 +2003,7 @@ test('normalized prepared input is approved, persisted, deduplicated and execute
 			model,
 			sessionId,
 			() => new JsonlSessionStore(directory).readSessionEvents(sessionId),
-			{ systemPrompt: 'test', maxContextCharacters: 120_000 },
+			{ systemPrompt: 'test', contextProfile: TEST_CONTEXT_PROFILE },
 			() => new SessionService(new JsonlSessionStore(directory)),
 		);
 		const approvals: ToolApprovalRequest[] = [];
@@ -2210,14 +2223,17 @@ describe('Phase 7 canonical request boundaries', () => {
 				model,
 				sessionId,
 				() => new JsonlSessionStore(directory).readSessionEvents(sessionId),
-				{ systemPrompt: 'test', maxContextCharacters: 120_000 },
+				{ systemPrompt: 'test', contextProfile: TEST_CONTEXT_PROFILE },
 				() => new SessionService(new JsonlSessionStore(directory)),
 			);
 			const executor = createReadToolExecutor();
 			const loop = new RunAgentTurn({
 				sessionStore: sessions,
 				model: checked.model,
-				contextBuilder: new ContextBuilder({ systemPrompt: 'test', maxContextCharacters: 120_000 }),
+				contextBuilder: new ContextBuilder({
+					systemPrompt: 'test',
+					contextProfile: TEST_CONTEXT_PROFILE,
+				}),
 				toolExecutor: executor,
 				clock: new FixedClock(),
 				idGenerator: new SequenceIdGenerator(),
@@ -2280,14 +2296,22 @@ describe('Phase 7 canonical request boundaries', () => {
 			model,
 			events,
 			toolExecutor: createReadToolExecutor(),
-			maxContextCharacters: 500,
+			contextProfile: { contextWindowTokens: 560, maxOutputTokens: 128 },
 		});
 		await collectAsyncIterable(useCase.run({ sessionId, prompt: 'Current question' }));
 		expect(requestPrefixes).toHaveLength(2);
 		for (const input of model.receivedInputs) {
 			expect(input.messages.some((message) => message.content === old)).toBe(false);
 			expect(input.messages.some((message) => message.content === 'Current question')).toBe(true);
-			expect(JSON.stringify(input.messages).length).toBeLessThanOrEqual(500);
+			expect(
+				new ContextBuilder({
+					systemPrompt: 'You are a local coding agent.',
+					contextProfile: input.contextProfile,
+				}).build(
+					reduceAgentState(sessionId, requestPrefixes[model.receivedInputs.indexOf(input)]!),
+					input.tools,
+				).diagnostics.estimatedRemainingMarginTokens,
+			).toBeGreaterThanOrEqual(0);
 		}
 		expect(model.receivedInputs[0]!.messages.slice(1).map((message) => message.content)).toEqual([
 			'Recent question',
@@ -2445,7 +2469,9 @@ describe('Phase 7 canonical request boundaries', () => {
 		const { useCase, sessionId, sessionStore, contextBuilder } = createRunAgentTurnHarness({
 			model,
 		});
-		const cause = new ContextBudgetExceededError(120);
+		const cause = new ContextBudgetExceededError(
+			contextBuilder.build({ sessionId, messages: [] }).diagnostics,
+		);
 		const build = spyOn(contextBuilder, 'build').mockImplementation(() => {
 			throw cause;
 		});
@@ -2566,4 +2592,118 @@ test('explicit denial closes all calls and ends the turn; a follow-up sees ident
 		content: terminal,
 	});
 	expect(executor.receivedRequests).toHaveLength(0);
+});
+
+describe('Phase 16 preflight and detectable truncation', () => {
+	test('fixed tool definitions can overflow an otherwise fitting current prompt before provider invocation', async () => {
+		const model = new ScriptedModel([textResponse('unused')]);
+		const toolExecutor = new RecordingToolExecutor(
+			[{ ...readToolDefinition, description: 'x'.repeat(10_000) }],
+			() => ({ toolName: 'read_file', output: 'unused' }),
+		);
+		const { useCase, sessionId, sessionStore } = createRunAgentTurnHarness({
+			model,
+			toolExecutor,
+			contextProfile: { contextWindowTokens: 4_096, maxOutputTokens: 1_024 },
+		});
+		await expect(
+			collectAsyncIterable(useCase.run({ sessionId, prompt: 'Read file' })),
+		).rejects.toBeInstanceOf(ContextBudgetExceededError);
+		expect(model.receivedInputs).toHaveLength(0);
+		expect(toolExecutor.receivedRequests).toHaveLength(0);
+		expect(sessionStore.events).toEqual([]);
+	});
+
+	test('the 4066/4096 boundary failure is an incomplete response, with no clean completion or partial tool execution', async () => {
+		const toolExecutor = createReadToolExecutor();
+		const model = new ScriptedModel([
+			[
+				{ contentDelta: 'Incomplete text', toolCalls: [readFileToolCall('README.md')] },
+				{
+					contentDelta: '',
+					finishReason: 'length',
+					usage: { promptTokens: 4_066, outputTokens: 30 },
+				},
+			],
+		]);
+		const { useCase, sessionId, sessionStore } = createRunAgentTurnHarness({ model, toolExecutor });
+		const deltas: string[] = [];
+		await expect(
+			(async () => {
+				for await (const chunk of useCase.run({ sessionId, prompt: 'Current exact prompt' }))
+					deltas.push(chunk.contentDelta);
+			})(),
+		).rejects.toThrow('generation or context limit');
+		expect(deltas).toEqual(['Incomplete text']);
+		expect(model.receivedInputs[0]!.contextProfile).toEqual(TEST_CONTEXT_PROFILE);
+		expect(toolExecutor.preparationRequests).toHaveLength(0);
+		expect(toolExecutor.receivedRequests).toHaveLength(0);
+		expect(sessionStore.events.map((event) => event.type)).toEqual([
+			'prompt.submitted',
+			'agent.error',
+		]);
+		expect(sessionStore.events.at(-1)).toMatchObject({ error: { code: 'MODEL_OUTPUT_TRUNCATED' } });
+	});
+
+	test('large resumed JSONL history remains durable while only recent complete turns are requested', async () => {
+		const { directory, cleanup } = await createTempDirectory('phase16-resume-');
+		try {
+			const sessionId = asSessionId('session-1');
+			const original = new JsonlSessionStore(directory);
+			const history: AgentEvent[] = [];
+			for (let i = 0; i < 40; i++) {
+				history.push(
+					promptSubmittedEvent({
+						id: asEventId(`prompt-${i}`),
+						messageId: asMessageId(`user-${i}`),
+						prompt: `Old question ${i}`,
+						modelName: 'historical-model',
+					}),
+				);
+				history.push(
+					assistantMessageCompletedEvent({
+						id: asEventId(`answer-${i}`),
+						messageId: asMessageId(`assistant-${i}`),
+						content: `Old answer ${i} ${'x'.repeat(2_000)}`,
+					}),
+				);
+			}
+			for (const event of history) await original.appendSessionEvent(event);
+			const durableBefore = await readFile(join(directory, sessionId, 'events.jsonl'), 'utf8');
+			const resumed = new SessionService(new JsonlSessionStore(directory));
+			expect((await resumed.readSessionState(sessionId)).messages).toHaveLength(80);
+			const model = new ScriptedModel([textResponse('Normal answer')]);
+			const builder = new ContextBuilder({
+				systemPrompt: 'test',
+				contextProfile: TEST_CONTEXT_PROFILE,
+			});
+			const loop = new RunAgentTurn({
+				sessionStore: resumed,
+				model,
+				contextBuilder: builder,
+				clock: new FixedClock(),
+				idGenerator: new SequenceIdGenerator(),
+			});
+			const prompt = 'Exact current resumed request\n😀';
+			await collectAsyncIterable(loop.run({ sessionId, prompt, modelName: SYNTHETIC_MODEL }));
+			const request = model.receivedInputs[0]!;
+			expect(request.messages.length).toBeLessThan(81);
+			expect(request.messages.at(-1)).toMatchObject({ role: 'user', content: prompt });
+			expect(request.messages.some((message) => message.content === 'Old question 0')).toBe(false);
+			expect(request.messages.some((message) => message.content === 'Old question 39')).toBe(true);
+			const afterEvents = await new JsonlSessionStore(directory).readSessionEvents(sessionId);
+			expect(afterEvents.slice(0, history.length)).toEqual(history);
+			expect(
+				(await readFile(join(directory, sessionId, 'events.jsonl'), 'utf8')).startsWith(
+					durableBefore,
+				),
+			).toBe(true);
+			const fresh = new SessionService(new JsonlSessionStore(directory));
+			const canonical = await fresh.readSessionState(sessionId);
+			expect(canonical.messages).toHaveLength(82);
+			expect(canonical.messages).toEqual(reduceAgentState(sessionId, afterEvents).messages);
+		} finally {
+			await cleanup();
+		}
+	});
 });

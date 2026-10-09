@@ -9,6 +9,9 @@ export type OllamaChatStreamResponse = {
 	};
 	error?: string;
 	done?: boolean;
+	done_reason?: string;
+	prompt_eval_count?: number;
+	eval_count?: number;
 };
 
 export const toOllamaMessage = (message: ModelMessage): Record<string, unknown> => {
@@ -51,12 +54,41 @@ export const toOllamaTool = (tool: ToolDefinition): Record<string, unknown> => {
 
 export const toModelStreamChunk = (response: OllamaChatStreamResponse): ModelStreamChunk => {
 	const toolCalls = parseOllamaToolCalls(response.message?.tool_calls ?? []);
+	const promptTokens = validTokenCount(response.prompt_eval_count);
+	const outputTokens = validTokenCount(response.eval_count);
 
 	return {
 		contentDelta: response.message?.content ?? '',
 		...(toolCalls.length === 0 ? {} : { toolCalls }),
+		...(response.done === true && response.done_reason !== undefined
+			? { finishReason: toFinishReason(response.done_reason) }
+			: {}),
+		...(response.done === true && (promptTokens !== undefined || outputTokens !== undefined)
+			? {
+					usage: {
+						...(promptTokens === undefined ? {} : { promptTokens }),
+						...(outputTokens === undefined ? {} : { outputTokens }),
+					},
+				}
+			: {}),
 	};
 };
+
+const toFinishReason = (reason: string): NonNullable<ModelStreamChunk['finishReason']> => {
+	switch (reason) {
+		case 'stop':
+			return 'stop';
+		case 'length':
+			return 'length';
+		case 'tool_calls':
+			return 'tool';
+		default:
+			return 'unknown';
+	}
+};
+
+const validTokenCount = (value: number | undefined): number | undefined =>
+	Number.isSafeInteger(value) && value! >= 0 ? value : undefined;
 
 const toOllamaToolCall = (toolCall: ModelToolCall): Record<string, unknown> => {
 	return {

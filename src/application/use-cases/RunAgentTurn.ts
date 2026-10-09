@@ -6,8 +6,7 @@ import type {
 	PromptSubmitted,
 } from '@/domain/AgentEvent';
 import type { SessionId } from '@/domain/Ids';
-import type { ModelMessage } from '@/domain/ModelMessage';
-import type { ModelToolCall } from '@/domain/Tool';
+import type { ModelToolCall, ToolDefinition } from '@/domain/Tool';
 import type { ClockPort } from '../ports/ClockPort';
 import type { AgentMetricsPort, AgentTurnMetricsPort } from '../ports/AgentMetricsPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
@@ -88,13 +87,6 @@ export class AgentLoop {
 			type: 'prompt.submitted',
 			timestamp: this.dependencies.clock.now(),
 		};
-		this.dependencies.contextBuilder.assertPromptFits(prompt, promptEvent.messageId);
-
-		await this.dependencies.sessionStore.activateSession(sessionId);
-		throwIfAborted(signal);
-		await this.dependencies.sessionStore.appendSessionEvent(promptEvent);
-		throwIfAborted(signal);
-
 		const toolRunner =
 			this.dependencies.toolExecutor === undefined
 				? undefined
@@ -113,13 +105,20 @@ export class AgentLoop {
 					});
 		const tools = toolRunner?.listTools() ?? [];
 
+		this.dependencies.contextBuilder.assertPromptFits(prompt, promptEvent.messageId, tools);
+
+		await this.dependencies.sessionStore.activateSession(sessionId);
+		throwIfAborted(signal);
+		await this.dependencies.sessionStore.appendSessionEvent(promptEvent);
+		throwIfAborted(signal);
+
 		for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
 			throwIfAborted(signal);
-			const messages = await this.buildModelMessages(sessionId, signal);
+			const request = await this.buildModelInput(sessionId, tools, signal);
 			throwIfAborted(signal);
 			const result = yield* this.readModelResponse(
 				sessionId,
-				withSignal({ messages, ...(tools.length === 0 ? {} : { tools }) }, signal),
+				withSignal(request, signal),
 				turnMetrics,
 			);
 
@@ -173,14 +172,16 @@ export class AgentLoop {
 		throw error;
 	}
 
-	private async buildModelMessages(
+	private async buildModelInput(
 		sessionId: SessionId,
+		tools: ToolDefinition[],
 		signal: AbortSignal | undefined,
-	): Promise<ModelMessage[]> {
+	): Promise<ModelChatInput> {
 		try {
 			const state = await this.dependencies.sessionStore.readSessionState(sessionId);
 			throwIfAborted(signal);
-			return this.dependencies.contextBuilder.build(state).messages;
+			const { messages, contextProfile } = this.dependencies.contextBuilder.build(state, tools);
+			return { messages, contextProfile, ...(tools.length === 0 ? {} : { tools }) };
 		} catch (caughtError) {
 			if (caughtError instanceof ContextBudgetExceededError) {
 				await this.tryAppendAgentError(sessionId, caughtError, 'CONTEXT_BUDGET_EXCEEDED');
@@ -204,6 +205,9 @@ export class AgentLoop {
 		try {
 			for await (const chunk of this.dependencies.model.streamChat(input)) {
 				throwIfAborted(input.signal);
+				if (chunk.finishReason === 'length') {
+					throw new ModelOutputTruncatedError();
+				}
 				toolCalls.push(...(chunk.toolCalls ?? []));
 
 				if (chunk.contentDelta.length > 0) {
@@ -216,7 +220,13 @@ export class AgentLoop {
 			const error = toError(caughtError);
 
 			if (!isAbortError(caughtError))
-				await this.tryAppendAgentError(sessionId, error, 'MODEL_STREAM_FAILED');
+				await this.tryAppendAgentError(
+					sessionId,
+					error,
+					error instanceof ModelOutputTruncatedError
+						? 'MODEL_OUTPUT_TRUNCATED'
+						: 'MODEL_STREAM_FAILED',
+				);
 			throw error;
 		}
 
@@ -286,6 +296,13 @@ export class AgentLoop {
 }
 
 export { AgentLoop as RunAgentTurn };
+
+export class ModelOutputTruncatedError extends Error {
+	constructor() {
+		super('The model response reached its generation or context limit and may be incomplete.');
+		this.name = 'ModelOutputTruncatedError';
+	}
+}
 
 const toContent = (response: StreamedModelResponse): string => response.contentDeltas.join('');
 

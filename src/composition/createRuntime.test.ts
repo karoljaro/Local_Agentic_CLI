@@ -1,3 +1,9 @@
+import { ContextBuilder, type CompiledContext } from '@/application/services/ContextBuilder';
+import { reduceAgentState } from '@/application/services/SessionReducer';
+import { assistantMessageCompletedEvent } from '@/test-support/AgentEventFixtures';
+import { asEventId, asMessageId } from '@/domain/Ids';
+import { toOllamaMessage, toOllamaTool } from '@/infrastructure/model/mappers/OllamaChatMapper';
+import { createLocalToolExecutor } from '@/composition/factories/createLocalToolExecutor';
 import { SYNTHETIC_MODEL } from '@/test-support/modelFixtures';
 import { JsonModelPreferenceStore } from '@/infrastructure/persistence/JsonModelPreferenceStore';
 import { OllamaModelCatalog } from '@/infrastructure/model/OllamaModelCatalog';
@@ -22,7 +28,8 @@ const config = {
 	OLLAMA_MODEL: SYNTHETIC_MODEL,
 	OLLAMA_KEEP_ALIVE: '0',
 	SYSTEM_PROMPT: 'test',
-	MAX_CONTEXT_CHARACTERS: 120_000,
+	MODEL_CONTEXT_TOKENS: 16_384,
+	MODEL_MAX_OUTPUT_TOKENS: 4_096,
 };
 const id = asSessionId('selected');
 const withMemoryRuntime = async (
@@ -90,8 +97,9 @@ describe('createRuntime direct API', () => {
 			{
 				baseUrl: 'http://localhost:11434',
 				model: SYNTHETIC_MODEL,
-				systemPrompt: 'You are a local coding agent.',
-				budget: 120_000,
+				systemPrompt: 'Use workspace-relative paths.',
+				contextWindowTokens: 16_384,
+				maxOutputTokens: 4_096,
 				keepAlive: 0,
 			},
 		],
@@ -101,14 +109,16 @@ describe('createRuntime direct API', () => {
 				OLLAMA_BASE_URL: ' ',
 				OLLAMA_MODEL: '\t',
 				SYSTEM_PROMPT: '\n',
-				MAX_CONTEXT_CHARACTERS: ' ',
+				MODEL_CONTEXT_TOKENS: ' ',
+				MODEL_MAX_OUTPUT_TOKENS: ' ',
 				OLLAMA_KEEP_ALIVE: ' ',
 			},
 			{
 				baseUrl: 'http://localhost:11434',
 				model: SYNTHETIC_MODEL,
-				systemPrompt: 'You are a local coding agent.',
-				budget: 120_000,
+				systemPrompt: 'Use workspace-relative paths.',
+				contextWindowTokens: 16_384,
+				maxOutputTokens: 4_096,
 				keepAlive: 0,
 			},
 		],
@@ -118,14 +128,16 @@ describe('createRuntime direct API', () => {
 				OLLAMA_BASE_URL: ' http://127.0.0.1:22123/ ',
 				OLLAMA_MODEL: ` ${SYNTHETIC_MODEL} `,
 				SYSTEM_PROMPT: ' fixture prompt ',
-				MAX_CONTEXT_CHARACTERS: ' 240 ',
+				MODEL_CONTEXT_TOKENS: ' 8192 ',
+				MODEL_MAX_OUTPUT_TOKENS: ' 2048 ',
 				OLLAMA_KEEP_ALIVE: ' 2m ',
 			},
 			{
 				baseUrl: 'http://127.0.0.1:22123',
 				model: SYNTHETIC_MODEL,
 				systemPrompt: 'fixture prompt',
-				budget: 240,
+				contextWindowTokens: 8_192,
+				maxOutputTokens: 2_048,
 				keepAlive: '2m',
 			},
 		],
@@ -141,6 +153,12 @@ describe('createRuntime direct API', () => {
 					expect(JSON.parse(String(init?.body))).toMatchObject({
 						model: expected.model,
 						keep_alive: expected.keepAlive,
+						options: {
+							num_ctx: expected.contextWindowTokens,
+							num_predict: expected.maxOutputTokens,
+						},
+						truncate: false,
+						shift: false,
 						messages: [
 							{ role: 'system', content: expected.systemPrompt },
 							{ role: 'user', content: 'hello' },
@@ -158,7 +176,7 @@ describe('createRuntime direct API', () => {
 							(async () => {
 								for await (const _delta of runtime.runTurn({
 									sessionId: id,
-									prompt: 'x'.repeat(expected.budget),
+									prompt: 'x'.repeat(expected.contextWindowTokens * 4),
 									...(runtime.getModelName() === undefined
 										? {}
 										: { modelName: runtime.getModelName()! }),
@@ -433,4 +451,146 @@ describe('createRuntime direct API', () => {
 			prepared.mockRestore();
 		}
 	});
+});
+
+describe('Phase 16 captured production context path', () => {
+	for (const [name, profileEnv, contextWindowTokens, maxOutputTokens] of [
+		['default', {}, 16_384, 4_096],
+		['override', { MODEL_CONTEXT_TOKENS: '8192', MODEL_MAX_OUTPUT_TOKENS: '2048' }, 8_192, 2_048],
+	] as const) {
+		test(`${name}: config → runtime → canonical reducer → compiler → agent → ModelPort → Ollama HTTP in every tool round`, async () => {
+			const resolved = readConfig({ ...profileEnv, OLLAMA_MODEL: SYNTHETIC_MODEL });
+			const contexts: CompiledContext[] = [];
+			const originalBuild = ContextBuilder.prototype.build;
+			const compile = spyOn(ContextBuilder.prototype, 'build').mockImplementation(function (
+				this: ContextBuilder,
+				state,
+				tools,
+			) {
+				const result = originalBuild.call(this, state, tools);
+				contexts.push(result);
+				return result;
+			});
+			const originalPrepare = LocalToolRegistry.prototype.prepare;
+			const prepared = spyOn(LocalToolRegistry.prototype, 'prepare').mockImplementation(function (
+				this: LocalToolRegistry,
+				request,
+			) {
+				const execution = originalPrepare.call(this, request);
+				return {
+					...execution,
+					execute: async () => ({
+						toolName: execution.toolName,
+						output: {
+							path: (execution.toolInput as { path: string }).path,
+							content: `Exact ${(execution.toolInput as { path: string }).path}\n"\\😀`,
+						},
+					}),
+				};
+			});
+			let round = 0;
+			let durable: AgentEvent[] = [];
+			const prompt = 'Inspect first.conf then second.conf; preserve this exact request.\n😀';
+			const definitions = createLocalToolExecutor().listTools();
+			try {
+				await withMockedFetch(
+					async (_url, init) => {
+						const body = JSON.parse(String(init?.body));
+						const compiled = contexts.at(-1)!;
+						expect(body.model).toBe(SYNTHETIC_MODEL);
+						expect(body.options).toEqual({
+							num_ctx: contextWindowTokens,
+							num_predict: maxOutputTokens,
+						});
+						expect(body.truncate).toBe(false);
+						expect(body.shift).toBe(false);
+						expect(
+							body.messages.filter((message: { role: string }) => message.role === 'system'),
+						).toEqual([{ role: 'system', content: resolved.SYSTEM_PROMPT }]);
+						expect(body.tools).toEqual(definitions.map(toOllamaTool));
+						expect(body.tools).toHaveLength(9);
+						expect(body.messages).toEqual(compiled.messages.map(toOllamaMessage));
+						expect(compiled.contextProfile).toEqual({ contextWindowTokens, maxOutputTokens });
+						expect(compiled.contextProfile).toBe(contexts[0]!.contextProfile);
+						expect(compiled.diagnostics.estimatedRemainingMarginTokens).toBeGreaterThanOrEqual(0);
+						expect(compiled.diagnostics.selectedCompletedTurns).toBeGreaterThan(0);
+						expect(compiled.diagnostics.droppedCompletedTurns).toBeGreaterThan(0);
+						const canonical = reduceAgentState(id, durable).messages;
+						const activeStart = canonical.findLastIndex((message) => message.role === 'user');
+						const active = canonical.slice(activeStart);
+						expect(active[0]).toMatchObject({ role: 'user', content: prompt });
+						expect(compiled.messages.slice(-active.length)).toEqual(active);
+						const selected = compiled.diagnostics.selectedCompletedTurns;
+						expect(compiled.messages.slice(1)).toEqual([
+							...canonical.slice(activeStart - selected * 2, activeStart),
+							...active,
+						]);
+						expect(contexts).toHaveLength(round + 1);
+						const results = body.messages.filter(
+							(message: { role: string }) => message.role === 'tool',
+						);
+						expect(
+							results.map((message: { content: string }) => JSON.parse(message.content)),
+						).toEqual(
+							['first.conf', 'second.conf']
+								.slice(0, round)
+								.map((path) => ({ path, content: `Exact ${path}\n"\\😀` })),
+						);
+						if (round++ < 2) {
+							const path = round === 1 ? 'first.conf' : 'second.conf';
+							return response({
+								content: `Read ${path}`,
+								tool_calls: [{ function: { name: 'read_file', arguments: { path } } }],
+							});
+						}
+						return new Response(
+							'{"message":{"content":"Read both."},"done":true,"done_reason":"stop","prompt_eval_count":2048,"eval_count":8}\n',
+						);
+					},
+					async () =>
+						withMemoryRuntime(async (runtime, events) => {
+							durable = events;
+							for (let i = 0; i < 30; i++)
+								events.push(
+									promptSubmittedEvent({
+										sessionId: id,
+										id: asEventId(`old-prompt-${i}`),
+										messageId: asMessageId(`old-user-${i}`),
+										prompt: `Historical question ${i}`,
+										modelName: 'historical-unavailable-model',
+									}),
+									assistantMessageCompletedEvent({
+										sessionId: id,
+										id: asEventId(`old-answer-${i}`),
+										messageId: asMessageId(`old-assistant-${i}`),
+										content: `Historical answer ${i} ${'x'.repeat(2_000)}`,
+									}),
+								);
+							const original = structuredClone(events);
+							expect(await runtime.listSessionEvents(id)).toEqual(original);
+							const deltas = [];
+							for await (const delta of runtime.runTurn({ sessionId: id, prompt }))
+								deltas.push(delta.contentDelta);
+							expect(deltas).toEqual(['Read first.conf', 'Read second.conf', 'Read both.']);
+							expect(events.slice(0, original.length)).toEqual(original);
+							expect(reduceAgentState(id, events).messages).toHaveLength(66);
+							expect(runtime.getModelName()).toBe(SYNTHETIC_MODEL);
+							expect(events.findLast((event) => event.type === 'prompt.submitted')).toMatchObject({
+								modelName: SYNTHETIC_MODEL,
+								prompt,
+							});
+							expect(events.at(-1)).toMatchObject({
+								type: 'assistant.message.completed',
+								content: 'Read both.',
+							});
+							expect(events.filter((event) => event.type === 'tool.call.failed')).toHaveLength(0);
+						}, resolved),
+				);
+				expect(round).toBe(3);
+			} finally {
+				compile.mockRestore();
+				prepared.mockRestore();
+			}
+		});
+	}
 });

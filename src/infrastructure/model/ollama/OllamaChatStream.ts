@@ -102,7 +102,11 @@ const parseOllamaStreamFrame = (
 	}
 
 	const chunk = toModelStreamChunk(response);
-	const hasChunk = chunk.contentDelta.length > 0 || chunk.toolCalls !== undefined;
+	const hasChunk =
+		chunk.contentDelta.length > 0 ||
+		chunk.toolCalls !== undefined ||
+		chunk.finishReason !== undefined ||
+		chunk.usage !== undefined;
 
 	return {
 		done: response.done === true,

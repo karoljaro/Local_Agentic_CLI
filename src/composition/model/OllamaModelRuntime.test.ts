@@ -1,4 +1,4 @@
-import { SYNTHETIC_MODEL } from '@/test-support/modelFixtures';
+import { SYNTHETIC_MODEL, TEST_CONTEXT_PROFILE } from '@/test-support/modelFixtures';
 import { readConfig } from '@/composition/config';
 import { collectAsyncIterable } from '@/test-support/collectAsyncIterable';
 import { describe, expect, test } from 'bun:test';
@@ -127,9 +127,11 @@ describe('Ollama runtime selection composition', () => {
 				{ model: OTHER, messages: [], stream: false },
 			]);
 			expect(f.writes).toEqual([OTHER]);
-			expect(await collectAsyncIterable(runtime.streamChat({ messages: [] }))).toEqual([
-				{ contentDelta: 'answer' },
-			]);
+			expect(
+				await collectAsyncIterable(
+					runtime.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [] }),
+				),
+			).toEqual([{ contentDelta: 'answer' }]);
 		});
 	});
 
@@ -192,9 +194,11 @@ describe('Ollama runtime selection composition', () => {
 				{ error: `model '${SYNTHETIC_MODEL}' not found` },
 				{ status: 404 },
 			);
-			await expect(collectAsyncIterable(runtime.streamChat({ messages: [] }))).rejects.toThrow(
-				'Use /model',
-			);
+			await expect(
+				collectAsyncIterable(
+					runtime.streamChat({ contextProfile: TEST_CONTEXT_PROFILE, messages: [] }),
+				),
+			).rejects.toThrow('Use /model');
 			expect(runtime.getModelName()).toBeUndefined();
 			expect(f.writes).toEqual([]);
 		});

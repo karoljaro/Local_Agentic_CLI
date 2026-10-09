@@ -1,8 +1,10 @@
 import type { ModelMessage } from '@/domain/ModelMessage';
+import type { ModelContextProfile } from '@/domain/ModelContextProfile';
 import type { ModelToolCall, ToolDefinition } from '@/domain/Tool';
 
 export type ModelChatInput = {
 	messages: ModelMessage[];
+	contextProfile: ModelContextProfile;
 	tools?: ToolDefinition[];
 	signal?: AbortSignal;
 };
@@ -14,6 +16,8 @@ export type UnloadModelInput = {
 export type ModelStreamChunk = {
 	contentDelta: string;
 	toolCalls?: ModelToolCall[];
+	finishReason?: 'stop' | 'length' | 'tool' | 'unknown';
+	usage?: { promptTokens?: number; outputTokens?: number };
 };
 
 export interface ModelPort {

@@ -58,7 +58,10 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 
 	const contextBuilder = new ContextBuilder({
 		systemPrompt: config.SYSTEM_PROMPT,
-		maxContextCharacters: config.MAX_CONTEXT_CHARACTERS,
+		contextProfile: {
+			contextWindowTokens: config.MODEL_CONTEXT_TOKENS,
+			maxOutputTokens: config.MODEL_MAX_OUTPUT_TOKENS,
+		},
 	});
 
 	const runAgentTurn = new RunAgentTurn({

@@ -1,4 +1,4 @@
-import { SYNTHETIC_MODEL } from '@/test-support/modelFixtures';
+import { SYNTHETIC_MODEL, TEST_CONTEXT_PROFILE } from '@/test-support/modelFixtures';
 import { expect, test } from 'bun:test';
 import { ContextBuilder } from '@/application/services/ContextBuilder';
 import { SessionService } from '@/application/services/SessionService';
@@ -739,7 +739,10 @@ const realRuntime = (
 	const loop = new RunAgentTurn({
 		sessionStore: service,
 		model,
-		contextBuilder: new ContextBuilder({ systemPrompt: 'test', maxContextCharacters: 120_000 }),
+		contextBuilder: new ContextBuilder({
+			systemPrompt: 'test',
+			contextProfile: TEST_CONTEXT_PROFILE,
+		}),
 		clock: { now: () => asISODateTime('2026-10-07T12:00:00Z') },
 		idGenerator: {
 			nextEventId: () => asEventId(`event-${id++}`),

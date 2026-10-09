@@ -1,561 +1,412 @@
 import { describe, expect, test } from 'bun:test';
-
-import { createInitialAgentState } from '@/domain/AgentState';
+import { createLocalToolExecutor } from '@/composition/factories/createLocalToolExecutor';
+import type { ModelContextProfile } from '@/domain/ModelContextProfile';
 import { asMessageId, asSessionId, asToolCallId } from '@/domain/Ids';
 import type { ModelMessage } from '@/domain/ModelMessage';
-
+import type { ToolDefinition } from '@/domain/Tool';
+import { TEST_CONTEXT_PROFILE } from '@/test-support/modelFixtures';
 import { ContextBudgetExceededError, ContextBuilder } from './ContextBuilder';
+import { estimateMessageTokens, estimateToolTokens } from './ModelRequestEstimator';
 
-// Deliberately serialize complete candidate arrays, as fit did before Phase 8.
-// Do not use production grouping or sizing helpers in this correctness oracle.
-const referenceFit = (messages: ModelMessage[], budget: number): ModelMessage[] => {
-	const systems: ModelMessage[] = [];
-	const turns: ModelMessage[][] = [];
-	for (const message of messages) {
-		if (message.role === 'system') {
-			systems.push(message);
-		} else if (message.role === 'user' || turns.length === 0) {
-			turns.push([message]);
-		} else {
-			turns[turns.length - 1]!.push(message);
-		}
-	}
-
-	let selected = [...systems, ...(turns.at(-1) ?? [])];
-	if (JSON.stringify(selected).length > budget) {
-		throw new ContextBudgetExceededError(budget);
-	}
-	for (let index = turns.length - 2; index >= 0; index -= 1) {
-		const candidate = [...systems, ...turns.slice(index).flat()];
-		if (JSON.stringify(candidate).length > budget) break;
-		selected = candidate;
-	}
-	return selected;
-};
-
-const fitOutcome = (fit: () => ModelMessage[]) => {
-	try {
-		return { messages: fit() };
-	} catch (error) {
-		if (!(error instanceof ContextBudgetExceededError)) throw error;
-		return { errorClass: error.constructor, name: error.name, message: error.message };
-	}
-};
-
-const user = (id: string, content: string): ModelMessage => ({
+const tools = createLocalToolExecutor().listTools();
+const systemPrompt = 'Use workspace-relative paths.';
+const user = (content: string): ModelMessage => ({
 	role: 'user',
-	id: asMessageId(id),
+	id: asMessageId(content),
 	content,
 });
-
-const systems: ModelMessage[] = [
-	{ role: 'system', content: 'system one', id: asMessageId('system-1') },
-	{ role: 'system', content: 'system two' },
-];
-const current = user('current', 'Current prompt');
-const shortTurn: ModelMessage[] = [
-	user('older-user', 'Older question'),
-	{ role: 'assistant', id: asMessageId('older-answer'), content: 'Older answer' },
-];
-const escapedTurn: ModelMessage[] = [
-	user('escaped-"\\-id', '"quoted" \\ newline\n tab\t {"looks":"like JSON"}'),
-	{ role: 'assistant', content: 'path\\file\n"answer"\t' },
-];
-const unicodeTurn: ModelMessage[] = [
-	user('unicode-😀', 'Zażółć gęślą jaźń — 日本語 😀 𝄞 e\u0301'),
-	{ role: 'assistant', content: '🚀\ud800' },
-];
-const toolTurn: ModelMessage[] = [
-	user('tool-user', 'Inspect files'),
+const assistant = (content: string): ModelMessage => ({ role: 'assistant', content });
+const compile = (
+	messages: ModelMessage[],
+	contextProfile = TEST_CONTEXT_PROFILE,
+	definitions: ToolDefinition[] = tools,
+	system = systemPrompt,
+) =>
+	new ContextBuilder({ systemPrompt: system, contextProfile }).build(
+		{ sessionId: asSessionId('test'), messages },
+		definitions,
+	);
+const readChain = (content: string): ModelMessage[] => [
+	user('Read exact current file'),
 	{
 		role: 'assistant',
-		id: asMessageId('tool-assistant'),
-		content: 'Checking "files"\n',
-		toolCalls: [
-			{
-				id: asToolCallId('call-"read"-😀'),
-				name: 'read_file',
-				arguments: { path: 'src/quoted"file.ts', startOffset: 0, endLine: 20 },
-			},
-			{
-				id: asToolCallId('call-search'),
-				name: 'search_file',
-				arguments: { query: 'a\\b\n\t', options: { caseSensitive: false, limit: 10 } },
-			},
-			{
-				id: asToolCallId('call-reference'),
-				name: 'list_files',
-				arguments: { path: '.', recursive: true },
-			},
-		],
+		content: 'Reading',
+		toolCalls: [{ id: asToolCallId('read'), name: 'read_file', arguments: { path: 'large.txt' } }],
 	},
-	{
-		role: 'tool',
-		id: asMessageId('read-result'),
-		toolCallId: asToolCallId('call-"read"-😀'),
-		toolName: 'read_file',
-		content: JSON.stringify({
-			path: 'src/quoted"file.ts',
-			content: '"result"\\\n\t😀',
-			startLine: 1,
-			endLine: 10,
-			truncated: true,
-			nextRead: { path: 'src/quoted"file.ts', startOffset: 200, endLine: 20 },
-		}),
-	},
-	{
-		role: 'tool',
-		toolCallId: asToolCallId('call-search'),
-		toolName: 'search_file',
-		content: JSON.stringify({ error: { code: 'TOOL_FAILED', message: 'Cannot read "path"\n' } }),
-	},
-	{
-		role: 'tool',
-		toolCallId: asToolCallId('call-reference'),
-		toolName: 'list_files',
-		content: JSON.stringify({
-			cached: true,
-			sourceToolCallId: 'original-list-id',
-			message: 'Reusing the original successful result.',
-		}),
-	},
-	{ role: 'assistant', content: 'Finished inspecting.' },
+	{ role: 'tool', toolCallId: asToolCallId('read'), toolName: 'read_file', content },
 ];
+const smallProfile = { contextWindowTokens: 4_096, maxOutputTokens: 1_024 };
 
-describe('ContextBuilder', () => {
-	test('builds context with a system prompt for an empty state', () => {
-		const state = createInitialAgentState(asSessionId('session-1'));
-		const builder = new ContextBuilder({
-			systemPrompt: 'You are a local coding agent.',
-			maxContextCharacters: 120_000,
+// Brute-force suffix enumeration is deliberately independent of reverse accumulation.
+const referenceSuffix = (turns: ModelMessage[][], profile: ModelContextProfile): ModelMessage[] => {
+	const mandatory = compile(turns.at(-1) ?? [], profile);
+	let selected = turns.at(-1) ?? [];
+	for (let start = turns.length - 2; start >= 0; start--) {
+		const candidate = turns.slice(start).flat();
+		const estimated =
+			mandatory.diagnostics.estimatedFixedTokens +
+			candidate.reduce((n, message) => n + estimateMessageTokens(message), 0);
+		if (estimated > mandatory.diagnostics.estimatedInputLimitTokens) break;
+		selected = candidate;
+	}
+	return [{ role: 'system', content: systemPrompt }, ...selected];
+};
+
+describe('bounded Context Compiler', () => {
+	test('estimated equality fits with safety intact; one less token fails without stealing output', () => {
+		const active = [user('Exact current request')];
+		const measured = compile(active, smallProfile).diagnostics.estimatedInputTokens;
+		const profile = { contextWindowTokens: 4_096, maxOutputTokens: 4_096 - 256 - measured };
+		const exact = compile(active, profile);
+		expect(exact.messages.slice(1)).toEqual(active);
+		expect(exact.diagnostics.estimatedRemainingMarginTokens).toBe(0);
+		expect(exact.diagnostics.safetyAllowanceTokens).toBe(256);
+		expect(exact.contextProfile.maxOutputTokens).toBe(profile.maxOutputTokens);
+		expect(() =>
+			compile(active, { ...profile, maxOutputTokens: profile.maxOutputTokens + 1 }),
+		).toThrow(ContextBudgetExceededError);
+	});
+
+	test('a retained completed tool turn keeps its assistant continuation, calls and results together', () => {
+		const previous = [...readChain('Exact historical read result'), assistant('Read done')];
+		const active = user('Next question');
+		const result = compile([...previous, active]);
+		expect(result.messages.slice(1)).toEqual([...previous, active]);
+		expect(result.diagnostics.selectedCompletedTurns).toBe(1);
+	});
+	test('short canonical history, tool definitions and active turn remain exact', () => {
+		const history = [user('Hello'), assistant('Hi'), user('Now inspect src/α.ts\n"exact"')];
+		const before = structuredClone(history);
+		const result = compile(history);
+		expect(result.messages).toEqual([{ role: 'system', content: systemPrompt }, ...history]);
+		expect(result.messages.slice(1)).toEqual(before);
+		expect(result.messages[1]).toBe(history[0]!);
+		expect(result.tools).toBe(tools);
+		expect(result.tools).toHaveLength(9);
+		expect(result.contextProfile).toEqual(TEST_CONTEXT_PROFILE);
+		expect(result.diagnostics).toMatchObject({
+			selectedCompletedTurns: 1,
+			droppedCompletedTurns: 0,
+			maxOutputTokens: 4_096,
+			safetyAllowanceTokens: 1_024,
+			estimatedInputLimitTokens: 11_264,
 		});
-
-		const context = builder.build(state);
-
-		expect(context.messages).toEqual([
-			{
-				role: 'system',
-				content: 'You are a local coding agent.',
-			},
-		]);
+		expect(result.diagnostics.estimatedRemainingMarginTokens).toBeGreaterThan(0);
+		expect(history).toEqual(before);
 	});
 
-	test('preserves session messages after the system prompt', () => {
-		const state = createInitialAgentState(asSessionId('session-1'));
-		const toolCallId = asToolCallId('tool-call-1');
+	test('long history keeps a chronological contiguous window of newest full turns', () => {
+		const turns = Array.from({ length: 20 }, (_, i) => [
+			user(`Question ${i} ${'q'.repeat(900)}`),
+			assistant(`Answer ${i} ${'a'.repeat(900)}`),
+		]);
+		const active = [user('Current exact request')];
+		const result = compile([...turns.flat(), ...active], smallProfile);
+		expect(result.messages).toEqual(referenceSuffix([...turns, active], smallProfile));
+		expect(result.diagnostics.selectedCompletedTurns).toBeGreaterThan(0);
+		expect(result.diagnostics.droppedCompletedTurns).toBeGreaterThan(0);
+		const selected = result.diagnostics.selectedCompletedTurns;
+		expect(result.messages.slice(1)).toEqual([...turns.slice(-selected).flat(), ...active]);
+		expect(result.contextProfile.maxOutputTokens).toBe(1_024);
+		expect(result.diagnostics.estimatedRemainingMarginTokens).toBeGreaterThanOrEqual(0);
+	});
 
-		state.messages.push(
-			{
-				id: asMessageId('message-1'),
-				role: 'user',
-				content: 'Read README',
-			},
-			{
-				id: asMessageId('message-2'),
-				role: 'assistant',
-				content: 'I will read it.',
-			},
-			{
-				role: 'tool',
-				toolCallId,
-				toolName: 'read_file',
-				content: 'README content',
-			},
-		);
-
-		const builder = new ContextBuilder({
-			systemPrompt: 'You are a local coding agent.',
-			maxContextCharacters: 120_000,
+	test('stops at the first oversized older turn instead of skipping to an earlier small turn', () => {
+		const small = [user('Small older question'), assistant('Small answer')];
+		const huge = [user('Large recent question'), assistant('x'.repeat(20_000))];
+		const active = user('Current');
+		const result = compile([...small, ...huge, active], smallProfile);
+		expect(result.messages.slice(1)).toEqual([active]);
+		expect(result.diagnostics).toMatchObject({
+			selectedCompletedTurns: 0,
+			droppedCompletedTurns: 2,
 		});
-
-		const context = builder.build(state);
-
-		expect(context.messages).toEqual([
-			{
-				role: 'system',
-				content: 'You are a local coding agent.',
-			},
-			{
-				id: asMessageId('message-1'),
-				role: 'user',
-				content: 'Read README',
-			},
-			{
-				id: asMessageId('message-2'),
-				role: 'assistant',
-				content: 'I will read it.',
-			},
-			{
-				role: 'tool',
-				toolCallId,
-				toolName: 'read_file',
-				content: 'README content',
-			},
-		]);
 	});
 
-	test('keeps the current turn and newest complete turns within the budget', () => {
-		const state = createInitialAgentState(asSessionId('session-1'));
-		const oldContent = 'o'.repeat(160);
-		const recentContent = 'r'.repeat(40);
-
-		state.messages.push(
-			{ id: asMessageId('message-1'), role: 'user', content: oldContent },
-			{ id: asMessageId('message-2'), role: 'assistant', content: oldContent },
-			{ id: asMessageId('message-3'), role: 'user', content: recentContent },
-			{ id: asMessageId('message-4'), role: 'assistant', content: recentContent },
-			{ id: asMessageId('message-5'), role: 'user', content: 'current prompt' },
-		);
-
-		const context = new ContextBuilder({
-			systemPrompt: 'system',
-			maxContextCharacters: 500,
-		}).build(state);
-
-		expect(context.messages).toEqual([
-			{ role: 'system', content: 'system' },
-			{ id: asMessageId('message-3'), role: 'user', content: recentContent },
-			{ id: asMessageId('message-4'), role: 'assistant', content: recentContent },
-			{ id: asMessageId('message-5'), role: 'user', content: 'current prompt' },
-		]);
-		expect(JSON.stringify(context.messages).length).toBeLessThanOrEqual(500);
+	test('all nine tools consume fixed budget and can displace history', () => {
+		const history = [user('x'.repeat(5_000)), assistant('Old answer'), user('Current')];
+		const withoutTools = compile(history, smallProfile, []);
+		const withTools = compile(history, smallProfile);
+		expect(withoutTools.diagnostics.selectedCompletedTurns).toBe(1);
+		expect(withTools.diagnostics.selectedCompletedTurns).toBe(0);
+		expect(withTools.tools).toHaveLength(9);
+		expect(
+			withTools.diagnostics.estimatedFixedTokens - withoutTools.diagnostics.estimatedFixedTokens,
+		).toBe(tools.reduce((n, tool) => n + estimateToolTokens(tool), 0));
 	});
 
-	test('drops a whole older turn instead of separating tool calls from results', () => {
-		const state = createInitialAgentState(asSessionId('session-1'));
-		const toolCallId = asToolCallId('tool-call-1');
-
-		state.messages.push(
-			{ id: asMessageId('message-1'), role: 'user', content: 'old prompt' },
-			{
-				id: asMessageId('message-2'),
-				role: 'assistant',
-				content: '',
-				toolCalls: [{ id: toolCallId, name: 'read_file', arguments: { path: 'large.txt' } }],
-			},
-			{
-				role: 'tool',
-				toolCallId,
-				toolName: 'read_file',
-				content: 'x'.repeat(500),
-			},
-			{ id: asMessageId('message-3'), role: 'assistant', content: 'old answer' },
-			{ id: asMessageId('message-4'), role: 'user', content: 'current prompt' },
-		);
-
-		const context = new ContextBuilder({
-			systemPrompt: 'system',
-			maxContextCharacters: 300,
-		}).build(state);
-
-		expect(context.messages).toEqual([
-			{ role: 'system', content: 'system' },
-			{ id: asMessageId('message-4'), role: 'user', content: 'current prompt' },
-		]);
-	});
-
-	test('rejects a current turn that exceeds the budget', () => {
-		const builder = new ContextBuilder({
-			systemPrompt: 'system',
-			maxContextCharacters: 120,
+	test('a huge old read_file result drops its entire turn with calls/results intact', () => {
+		const huge = [
+			...readChain(JSON.stringify({ path: 'large.txt', content: 'x'.repeat(40_000) })),
+			assistant('Read completed'),
+		];
+		const recent = [user('Recent'), assistant('Recent answer')];
+		const active = user('Current');
+		const result = compile([...huge, ...recent, active]);
+		expect(result.messages.slice(1)).toEqual([...recent, active]);
+		expect(result.diagnostics).toMatchObject({
+			selectedCompletedTurns: 1,
+			droppedCompletedTurns: 1,
 		});
+		expect(result.messages.some((message) => message.role === 'tool')).toBe(false);
+	});
 
-		expect(() => builder.assertPromptFits('x'.repeat(200), asMessageId('message-1'))).toThrow(
+	test('a large current read_file result remains exact when mandatory context fits', () => {
+		const chain = readChain(
+			JSON.stringify({ path: 'large.txt', content: 'x'.repeat(12_000) + '\n😀\\"' }),
+		);
+		const result = compile(chain);
+		expect(result.messages.slice(1)).toEqual(chain);
+		expect(result.messages.at(-1)).toBe(chain.at(-1)!);
+		expect(result.diagnostics.estimatedActiveTurnTokens).toBeGreaterThan(4_000);
+		expect(result.diagnostics.estimatedRemainingMarginTokens).toBeGreaterThan(0);
+	});
+
+	test('mandatory overflow includes fixed overhead and preserves the full output reserve', () => {
+		const chain = readChain('x'.repeat(40_000));
+		const original = structuredClone(chain);
+		try {
+			compile(chain);
+			throw new Error('Expected overflow');
+		} catch (error) {
+			expect(error).toBeInstanceOf(ContextBudgetExceededError);
+			const overflow = error as ContextBudgetExceededError;
+			expect(overflow.message).toContain(
+				'active request itself exceeds the configured model context budget',
+			);
+			expect(overflow.diagnostics.maxOutputTokens).toBe(4_096);
+			expect(overflow.diagnostics.estimatedRemainingMarginTokens).toBeLessThan(0);
+		}
+		expect(chain).toEqual(original);
+	});
+
+	test('system override and tools participate even before prompt persistence', () => {
+		const prompt = 'x'.repeat(7_000);
+		const builder = new ContextBuilder({
+			systemPrompt: 'custom '.repeat(4_000),
+			contextProfile: TEST_CONTEXT_PROFILE,
+		});
+		expect(() => builder.assertPromptFits(prompt, asMessageId('prompt'), tools)).toThrow(
 			ContextBudgetExceededError,
 		);
-	});
-});
-
-describe('ContextBuilder exact sizing', () => {
-	test('fits empty history and system-only builds without assuming one system', () => {
-		const builder = new ContextBuilder({ systemPrompt: '', maxContextCharacters: 120_000 });
-		expect(builder.fit([])).toEqual([]);
-		expect(JSON.stringify(builder.fit([])).length).toBe(2);
-		expect(builder.fit(systems)).toEqual(systems);
-		expect(builder.build(createInitialAgentState(asSessionId('empty'))).messages).toEqual([
-			{ role: 'system', content: '' },
-		]);
+		expect(() =>
+			new ContextBuilder({ systemPrompt, contextProfile: TEST_CONTEXT_PROFILE }).assertPromptFits(
+				prompt,
+				asMessageId('prompt'),
+				tools,
+			),
+		).not.toThrow();
+		const custom = compile([user('Current')], TEST_CONTEXT_PROFILE, tools, 'Exact custom system\n');
+		expect(custom.messages[0]).toEqual({ role: 'system', content: 'Exact custom system\n' });
+		expect(custom.messages.filter((message) => message.role === 'system')).toHaveLength(1);
 	});
 
-	for (const [name, older] of [
-		['short conversation', shortTurn],
-		['escaping', escapedTurn],
-		['Unicode', unicodeTurn],
-		['tool calls, results, errors and references', toolTurn],
-	] as const) {
-		test(`retains the whole ${name} turn at exact fit and drops it one character over`, () => {
-			const expected = [...systems, ...older, current];
-			const exactSize = JSON.stringify(expected).length;
-			const fit = (budget: number) =>
-				new ContextBuilder({ systemPrompt: '', maxContextCharacters: budget }).fit(expected);
-
-			expect(fit(exactSize)).toEqual(expected);
-			expect(JSON.stringify(fit(exactSize)).length).toBe(exactSize);
-			expect(fit(exactSize)).toEqual(referenceFit(expected, exactSize));
-			expect(fit(exactSize - 1)).toEqual([...systems, current]);
-			expect(fit(exactSize - 1)).toEqual(referenceFit(expected, exactSize - 1));
-		});
-	}
-
-	test('counts all commas between multiple systems, older turns and the current turn', () => {
-		const older = [...shortTurn, ...escapedTurn];
-		const currentTurn = [current, { role: 'assistant', content: 'Current answer' } as const];
-		const expected = [...systems, ...older, ...currentTurn];
-		const budget = JSON.stringify(expected).length;
-		const builder = new ContextBuilder({ systemPrompt: '', maxContextCharacters: budget });
-		expect(builder.fit(expected)).toEqual(expected);
-		expect(builder.fit(expected)).toEqual(referenceFit(expected, budget));
-		expect(
-			new ContextBuilder({ systemPrompt: '', maxContextCharacters: budget - 1 }).fit(expected),
-		).toEqual([...systems, ...escapedTurn, ...currentTurn]);
-	});
-
-	test('uses serialized UTF-16 length for astral characters and escaped lone surrogates', () => {
-		const expected = [...systems, ...unicodeTurn, current];
-		const serialized = JSON.stringify(expected);
-		expect('😀'.length).toBe(2);
-		expect(serialized).toContain('😀');
-		expect(serialized).toContain('\\ud800');
-		const builder = new ContextBuilder({
-			systemPrompt: '',
-			maxContextCharacters: serialized.length,
-		});
-		expect(builder.fit(expected)).toEqual(referenceFit(expected, serialized.length));
-		expect(builder.fit(expected)).toEqual(expected);
-	});
-
-	test('does not skip an oversized newest older turn to retain a smaller oldest turn', () => {
-		const largeTurn = [
-			user('large', 'x'.repeat(800)),
-			{ role: 'assistant', content: 'large' } as const,
+	test('active multi-call batches, failures and stale-edit recovery retain every exact message', () => {
+		const first = readChain('{"content":"mode=dev\\n"}');
+		const recovery: ModelMessage[] = [
+			...first,
+			{
+				role: 'assistant',
+				content: 'Editing',
+				toolCalls: [
+					{
+						id: asToolCallId('edit'),
+						name: 'edit_file',
+						arguments: {
+							path: 'settings.conf',
+							edits: [{ oldText: 'mode=dev', newText: 'mode=prod' }],
+						},
+					},
+					{ id: asToolCallId('second'), name: 'read_file', arguments: { path: 'second.conf' } },
+				],
+			},
+			{
+				role: 'tool',
+				toolCallId: asToolCallId('edit'),
+				toolName: 'edit_file',
+				content: '{"error":{"message":"oldText missing; read again"}}',
+			},
+			{
+				role: 'tool',
+				toolCallId: asToolCallId('second'),
+				toolName: 'read_file',
+				content: 'second exact result',
+			},
+			{
+				role: 'assistant',
+				content: 'Rereading',
+				toolCalls: [
+					{ id: asToolCallId('reread'), name: 'read_file', arguments: { path: 'settings.conf' } },
+				],
+			},
+			{
+				role: 'tool',
+				toolCallId: asToolCallId('reread'),
+				toolName: 'read_file',
+				content: '{"content":"mode=staging\\n"}',
+			},
+			{
+				role: 'assistant',
+				content: 'Retry',
+				toolCalls: [
+					{
+						id: asToolCallId('retry'),
+						name: 'edit_file',
+						arguments: {
+							path: 'settings.conf',
+							edits: [{ oldText: 'mode=staging', newText: 'mode=prod' }],
+						},
+					},
+				],
+			},
+			{
+				role: 'tool',
+				toolCallId: asToolCallId('retry'),
+				toolName: 'edit_file',
+				content: '{"changed":true}',
+			},
 		];
-		const messages = [...systems, ...shortTurn, ...largeTurn, current];
-		const budget = JSON.stringify([...systems, ...shortTurn, current]).length;
-		const builder = new ContextBuilder({ systemPrompt: '', maxContextCharacters: budget });
-		expect(builder.fit(messages)).toEqual([...systems, current]);
-		expect(builder.fit(messages)).toEqual(referenceFit(messages, budget));
-	});
-
-	for (const [name, mandatory] of [
-		['system-only context', systems],
-		['system and current turn', [...systems, current]],
-		['current turn without systems', [user('no-system', 'x'.repeat(80))]],
-		['current tool turn', [...systems, ...toolTurn]],
-	] as const) {
-		test(`preserves the exact-fit and overflow error for mandatory ${name}`, () => {
-			const exactSize = JSON.stringify(mandatory).length;
-			const exact = new ContextBuilder({ systemPrompt: '', maxContextCharacters: exactSize });
-			expect(exact.fit([...mandatory])).toEqual([...mandatory]);
-			const budget = exactSize - 1;
-			const builder = new ContextBuilder({ systemPrompt: '', maxContextCharacters: budget });
-			expect(() => builder.fit([...mandatory])).toThrow(ContextBudgetExceededError);
-			expect(fitOutcome(() => builder.fit([...mandatory]))).toEqual({
-				errorClass: ContextBudgetExceededError,
-				name: 'ContextBudgetExceededError',
-				message: `Current turn exceeds the model context budget of ${budget} characters.`,
-			});
-			expect(fitOutcome(() => builder.fit([...mandatory]))).toEqual(
-				fitOutcome(() => referenceFit([...mandatory], budget)),
+		for (const end of [3, 6, 8, 10]) {
+			const prefix = recovery.slice(0, end);
+			const result = compile([user('old'), assistant('x'.repeat(40_000)), ...prefix]);
+			expect(result.messages.slice(1)).toEqual(prefix);
+			expect(result.tools).toHaveLength(9);
+			const calls = prefix.flatMap((message) =>
+				message.role === 'assistant' ? (message.toolCalls ?? []) : [],
 			);
-		});
-	}
-
-	test('preserves constructor and prompt-preflight budget boundaries', () => {
-		const systemPrompt = 'Required system "prompt"\n😀';
-		const system = { role: 'system', content: systemPrompt } as const;
-		const systemSize = JSON.stringify([system]).length;
-		expect(
-			new ContextBuilder({ systemPrompt, maxContextCharacters: systemSize }).fit([system]),
-		).toEqual([system]);
-		expect(
-			() => new ContextBuilder({ systemPrompt, maxContextCharacters: systemSize - 1 }),
-		).toThrow(new ContextBudgetExceededError(systemSize - 1));
-		const prompt = 'Required user "prompt"\t\\😀';
-		const messageId = asMessageId('preflight-id');
-		const expected = [system, user(messageId, prompt)];
-		const budget = JSON.stringify(expected).length;
-		const builder = new ContextBuilder({ systemPrompt, maxContextCharacters: budget });
-		expect(() => builder.assertPromptFits(prompt, messageId)).not.toThrow();
-		const state = createInitialAgentState(asSessionId('preflight'));
-		state.messages.push(user(messageId, prompt));
-		expect(builder.build(state).messages).toEqual(expected);
-		const tooSmall = new ContextBuilder({ systemPrompt, maxContextCharacters: budget - 1 });
-		expect(() => tooSmall.assertPromptFits(prompt, messageId)).toThrow(
-			new ContextBudgetExceededError(budget - 1),
-		);
-		expect(() => tooSmall.build(state)).toThrow(new ContextBudgetExceededError(budget - 1));
-	});
-
-	test('preserves separate invalid-budget errors', () => {
-		for (const budget of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
-			expect(() => new ContextBuilder({ systemPrompt: '', maxContextCharacters: budget })).toThrow(
-				'Model context character budget must be a positive integer.',
-			);
+			const results = prefix.filter((message) => message.role === 'tool');
+			expect(
+				results.map((message) => (message.role === 'tool' ? message.toolCallId : undefined)),
+			).toEqual(calls.map((call) => call.id));
 		}
 	});
-});
 
-describe('ContextBuilder reference equivalence', () => {
-	const histories: { name: string; messages: ModelMessage[] }[] = [
-		{ name: 'empty', messages: [] },
-		{ name: 'multiple systems only', messages: systems },
-		{ name: 'systems and current only', messages: [...systems, current] },
-		{ name: 'short conversation', messages: [...systems, ...shortTurn, current] },
-		{
-			name: 'many older turns',
-			messages: [
-				...systems,
-				...Array.from({ length: 12 }, (_, index) => [
-					user(`old-${index}`, 'question'.repeat(index + 1)),
-					{ role: 'assistant', content: `answer ${index}` } as const,
-				]).flat(),
-				current,
-			],
-		},
-		{
-			name: 'large newest older turn',
-			messages: [...systems, ...shortTurn, user('large-newest', 'x'.repeat(900)), current],
-		},
-		{
-			name: 'large oldest turn',
-			messages: [...systems, user('large-oldest', 'x'.repeat(900)), ...shortTurn, current],
-		},
-		{ name: 'tool-heavy', messages: [...systems, ...shortTurn, ...toolTurn, current] },
-		{ name: 'escaping', messages: [...systems, ...escapedTurn, current] },
-		{ name: 'Unicode', messages: [...systems, ...unicodeTurn, current] },
-		{
-			name: 'leading tool and assistant, interleaved systems, consecutive users',
-			messages: [
-				toolTurn[2]!,
-				{ role: 'assistant', content: 'Leading answer' },
-				systems[0]!,
-				user('first', 'first'),
-				systems[1]!,
-				user('second', 'second'),
-				{
-					role: 'tool',
-					toolCallId: asToolCallId('incomplete'),
-					toolName: 'read_file',
-					content: 'orphan',
-				},
-			],
-		},
-		{ name: 'no systems', messages: [...shortTurn, ...escapedTurn, current] },
-	];
-
-	for (const { name, messages } of histories) {
-		test(`matches the direct JSON reference across budgets for ${name}`, () => {
-			const injectedSystem = { role: 'system', content: '' } as const;
-			const minimumBudget = JSON.stringify([injectedSystem]).length;
-			const budgets = new Set([minimumBudget, 120_000]);
-			const systemMessages = messages.filter((message) => message.role === 'system');
-			const conversation = messages.filter((message) => message.role !== 'system');
-			// Include both sides of every suffix-size boundary, including mandatory-only.
-			for (let start = 0; start <= conversation.length; start += 1) {
-				for (const prefix of [systemMessages, [injectedSystem, ...systemMessages]]) {
-					const exactSize = JSON.stringify([...prefix, ...conversation.slice(start)]).length;
-					for (const budget of [exactSize - 1, exactSize, exactSize + 1]) {
-						if (budget >= minimumBudget) budgets.add(budget);
-					}
-				}
-			}
-			const state = createInitialAgentState(asSessionId('reference'));
-			state.messages.push(...messages);
-			for (const budget of budgets) {
-				const builder = new ContextBuilder({ systemPrompt: '', maxContextCharacters: budget });
-				expect(fitOutcome(() => builder.fit(messages))).toEqual(
-					fitOutcome(() => referenceFit(messages, budget)),
-				);
-				expect(fitOutcome(() => builder.build(state).messages)).toEqual(
-					fitOutcome(() => referenceFit([injectedSystem, ...messages], budget)),
-				);
-			}
+	test('8192/2048 override changes the input ceiling and selected suffix together', () => {
+		const history = Array.from({ length: 12 }, (_, i) => [
+			user(String(i)),
+			assistant('x'.repeat(2_000)),
+		]).flat();
+		const active = user('Current');
+		const normal = compile([...history, active]);
+		const override = compile([...history, active], {
+			contextWindowTokens: 8_192,
+			maxOutputTokens: 2_048,
 		});
-	}
-});
+		expect(override.diagnostics).toMatchObject({
+			contextWindowTokens: 8_192,
+			maxOutputTokens: 2_048,
+			safetyAllowanceTokens: 512,
+			estimatedInputLimitTokens: 5_632,
+		});
+		expect(override.diagnostics.selectedCompletedTurns).toBeLessThan(
+			normal.diagnostics.selectedCompletedTurns,
+		);
+		expect(override.messages.at(-1)).toBe(active);
+	});
 
-describe('ContextBuilder serialization count', () => {
-	// Reading an enumerable content getter observes JSON serialization without
-	// replacing global JSON.stringify or adding production instrumentation.
-	const observeSerialization = (messages: ModelMessage[]) => {
-		const counts = messages.map(() => 0);
-		const observed = messages.map((message, index) => ({
-			...message,
+	test('empty state still compiles one system and all tools; hidden system injection is rejected', () => {
+		const result = compile([]);
+		expect(result.messages).toEqual([{ role: 'system', content: systemPrompt }]);
+		expect(result.tools).toHaveLength(9);
+		expect(result.diagnostics).toMatchObject({
+			selectedCompletedTurns: 0,
+			droppedCompletedTurns: 0,
+			estimatedActiveTurnTokens: 0,
+		});
+		expect(() => compile([{ role: 'system', content: 'Hidden system' }])).toThrow(
+			'Canonical model history must not contain system instructions',
+		);
+	});
+
+	test('preserves canonical legacy leading groups and consecutive user boundaries', () => {
+		const history = [assistant('Legacy leading text'), user('One'), user('Two')];
+		expect(compile(history).messages.slice(1)).toEqual(history);
+	});
+
+	test('serializes considered messages once and does not inspect history beyond cutoff', () => {
+		const visits = [0, 0, 0, 0];
+		const observed = (index: number, value: string): ModelMessage => ({
+			role: 'user',
+			id: asMessageId(String(index)),
 			get content() {
-				counts[index] = counts[index]! + 1;
-				return message.content;
+				visits[index]! += 1;
+				return value;
+			},
+		});
+		compile([
+			observed(0, 'Unvisited'),
+			observed(1, 'x'.repeat(40_000)),
+			observed(2, 'Recent'),
+			observed(3, 'Current'),
+		]);
+		expect(visits).toEqual([0, 1, 1, 1]);
+	});
+
+	test('all-fitting selection is linear in messages, and fresh compiles see changed results', () => {
+		let visits = 0;
+		let text = 'Short';
+		const history: ModelMessage[] = Array.from({ length: 40 }, (_, i) => ({
+			role: 'user',
+			id: asMessageId(String(i)),
+			get content() {
+				visits += 1;
+				return text;
 			},
 		}));
-		return { observed, counts };
-	};
-
-	test('serializes every candidate message once while growing through several whole turns', () => {
-		const messages = [...systems, ...shortTurn, ...escapedTurn, ...toolTurn, current];
-		const { observed, counts } = observeSerialization(messages);
-		const builder = new ContextBuilder({ systemPrompt: '', maxContextCharacters: 120_000 });
-		const selected = builder.fit(observed);
-		expect([...counts]).toEqual(messages.map(() => 1));
-		expect(selected).toEqual(messages);
+		const builder = new ContextBuilder({ systemPrompt, contextProfile: TEST_CONTEXT_PROFILE });
+		const state = { sessionId: asSessionId('test'), messages: history };
+		expect(builder.build(state, tools).diagnostics.selectedCompletedTurns).toBe(39);
+		expect(visits).toBe(40);
+		text = 'x'.repeat(5_000);
+		const next = builder.build(state, tools);
+		expect(next.diagnostics.selectedCompletedTurns).toBeLessThan(39);
+		expect(visits).toBeLessThanOrEqual(80);
 	});
 
-	test('serializes a rejected turn once and stops before unconsidered older turns', () => {
-		const messages = [
-			...systems,
-			...shortTurn,
-			user('oversized', 'x'.repeat(900)),
-			...escapedTurn,
-			current,
-		];
-		const budget = JSON.stringify([...systems, ...escapedTurn, current]).length;
-		const { observed, counts } = observeSerialization(messages);
-		const selected = new ContextBuilder({ systemPrompt: '', maxContextCharacters: budget }).fit(
-			observed,
+	for (const profile of [
+		{ contextWindowTokens: 0, maxOutputTokens: 1 },
+		{ contextWindowTokens: -1, maxOutputTokens: 1 },
+		{ contextWindowTokens: 8_192.5, maxOutputTokens: 1 },
+		{ contextWindowTokens: 8_192, maxOutputTokens: 0 },
+		{ contextWindowTokens: 8_192, maxOutputTokens: -1 },
+		{ contextWindowTokens: 8_192, maxOutputTokens: 2.5 },
+		{ contextWindowTokens: 8_192, maxOutputTokens: 8_192 },
+		{ contextWindowTokens: 8_192, maxOutputTokens: 16_384 },
+	])
+		test(`invalid profile rejected: ${JSON.stringify(profile)}`, () =>
+			expect(() => compile([], profile)).toThrow());
+});
+
+describe('conservative model-facing estimator', () => {
+	test('measures ASCII JSON at /3 plus framing; UTF-8 non-ASCII bytes individually', () => {
+		const ascii = { role: 'assistant', content: 'a'.repeat(300) } as const;
+		expect(estimateMessageTokens(ascii)).toBe(Math.ceil(JSON.stringify(ascii).length / 3) + 16);
+		const unicode = { role: 'assistant', content: '界😀' } as const;
+		const serialized = JSON.stringify(unicode);
+		const asciiBytes = serialized.replace(/[^\x00-\x7F]/gu, '').length;
+		expect(estimateMessageTokens(unicode)).toBe(Math.ceil(asciiBytes / 3) + 7 + 16);
+	});
+
+	test('IDs/lifecycle metadata are excluded while calls, arguments, results and escaping contribute', () => {
+		const base = user('Exact "quote"\\\n\t\ud800');
+		expect(estimateMessageTokens(base)).toBe(
+			estimateMessageTokens({ ...base, id: asMessageId('id'.repeat(10_000)) }),
 		);
-		expect([...counts]).toEqual([1, 1, 0, 0, 1, 1, 1, 1]);
-		expect(selected).toEqual([...systems, ...escapedTurn, current]);
-	});
-
-	test('does not size optional turns after mandatory overflow', () => {
-		const messages = [...systems, ...shortTurn, current];
-		const budget = JSON.stringify([...systems, current]).length - 1;
-		const { observed, counts } = observeSerialization(messages);
-		expect(() =>
-			new ContextBuilder({ systemPrompt: '', maxContextCharacters: budget }).fit(observed),
-		).toThrow(ContextBudgetExceededError);
-		expect([...counts]).toEqual([1, 1, 0, 0, 1]);
-	});
-
-	test('recomputes sizes on each fit after messages change', () => {
-		const messages = [
-			...systems.map((message) => ({ ...message })),
-			...shortTurn.map((message) => ({ ...message })),
-			{ ...current },
-		];
-		const budget = JSON.stringify(messages).length;
-		const { observed, counts } = observeSerialization(messages);
-		const builder = new ContextBuilder({ systemPrompt: '', maxContextCharacters: budget });
-		const first = builder.fit(observed);
-		expect([...counts]).toEqual([1, 1, 1, 1, 1]);
-		expect(first).toHaveLength(messages.length);
-		// Change the same system/current objects between fits: persistent cached
-		// lengths would incorrectly retain the older turn on the second call.
-		messages[0]!.content += 'system grew';
-		messages.at(-1)!.content += 'current grew';
-		const second = builder.fit(observed);
-		expect([...counts]).toEqual([2, 2, 2, 2, 2]);
-		expect(second.map((message) => message.role)).toEqual(['system', 'system', 'user']);
-		expect(second).toEqual(referenceFit(messages, budget));
-	});
-
-	test('serializes a repeated message object once but counts each array occurrence', () => {
-		const message = user('shared', 'Shared message');
-		const { observed, counts } = observeSerialization([message]);
-		const repeated = [observed[0]!, observed[0]!];
-		const budget = JSON.stringify([message, message]).length;
-		const selected = new ContextBuilder({ systemPrompt: '', maxContextCharacters: budget }).fit(
-			repeated,
+		const tool = tools[0]!;
+		expect(estimateToolTokens(tool)).toBe(
+			estimateToolTokens({
+				...tool,
+				requiresApproval: true,
+				deduplicate: true,
+				invalidatesWorkspaceCache: true,
+			}),
 		);
-		expect([...counts]).toEqual([1]);
-		expect(selected).toEqual([message, message]);
+		const plain = assistant('Checking');
+		const withCall: ModelMessage = {
+			...plain,
+			role: 'assistant',
+			toolCalls: [{ name: 'read_file', arguments: { path: 'x'.repeat(300) } }],
+		};
+		expect(estimateMessageTokens(withCall)).toBeGreaterThan(estimateMessageTokens(plain));
 	});
 });

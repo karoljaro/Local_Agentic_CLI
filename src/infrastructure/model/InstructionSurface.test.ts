@@ -1,3 +1,5 @@
+import { SYNTHETIC_MODEL } from '@/test-support/modelFixtures';
+import { reduceAgentState } from '@/application/services/SessionReducer';
 import { describe, expect, test } from 'bun:test';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -53,12 +55,19 @@ describe('production instruction surface at model request boundaries', () => {
 				const store = new InMemorySessionStore();
 				const adapter = new OllamaModelAdapter(
 					config.OLLAMA_BASE_URL,
-					config.OLLAMA_MODEL,
+					SYNTHETIC_MODEL,
 					config.OLLAMA_KEEP_ALIVE,
 				);
 				const model: ModelPort = {
 					async *streamChat(input) {
 						requests.push(structuredClone(input));
+						expect(input.messages.slice(1)).toEqual(
+							reduceAgentState(asSessionId('fixture'), store.events).messages,
+						);
+						expect(input.contextProfile).toEqual({
+							contextWindowTokens: 16_384,
+							maxOutputTokens: 4_096,
+						});
 						yield* adapter.streamChat(input);
 					},
 				};
@@ -68,7 +77,10 @@ describe('production instruction surface at model request boundaries', () => {
 					toolExecutor: registry,
 					contextBuilder: new ContextBuilder({
 						systemPrompt: config.SYSTEM_PROMPT,
-						maxContextCharacters: config.MAX_CONTEXT_CHARACTERS,
+						contextProfile: {
+							contextWindowTokens: config.MODEL_CONTEXT_TOKENS,
+							maxOutputTokens: config.MODEL_MAX_OUTPUT_TOKENS,
+						},
 					}),
 					idGenerator: new BunUuidV7IdGenerator(),
 					clock: { now: () => asISODateTime('2026-10-08T12:00:00.000Z') },
@@ -83,6 +95,9 @@ describe('production instruction surface at model request boundaries', () => {
 						);
 						expect(systemMessages).toEqual([{ role: 'system', content: config.SYSTEM_PROMPT }]);
 						expect(body.messages[0]).toEqual(systemMessages[0]);
+						expect(body.options).toEqual({ num_ctx: 16_384, num_predict: 4_096 });
+						expect(body.truncate).toBe(false);
+						expect(body.shift).toBe(false);
 						expect(body.tools).toEqual(definitions.map(toOllamaTool));
 						expect(
 							body.tools.map((tool: { function: { name: string } }) => tool.function.name),
