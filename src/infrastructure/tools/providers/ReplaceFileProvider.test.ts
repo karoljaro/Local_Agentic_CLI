@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { ToolInputValidationError } from '@/application/ports/ToolExecutorPort';
 import type {
 	ReadWorkspaceFileInput,
 	WorkspaceExecutionOptions,
@@ -11,6 +12,63 @@ import { createTempDirectory } from '@/test-support/createTempDirectory';
 import { LocalToolRegistry } from '../LocalToolExecutor';
 import { contentVersion } from '../contentVersion';
 import { replaceFileTool } from './ReplaceFileProvider';
+
+test('malformed or missing versions fail typed validation before any provider read or write', async () => {
+	const { directory, cleanup } = await createTempDirectory('phase18.1-invalid-version-');
+	let reads = 0;
+	let writes = 0;
+	class ObservedFiles extends NodeWorkspaceFileSystem {
+		override async readFile(
+			input: ReadWorkspaceFileInput,
+			options: WorkspaceExecutionOptions = {},
+		) {
+			reads++;
+			return super.readFile(input, options);
+		}
+		override async writeFile(
+			input: WriteWorkspaceFileInput,
+			options: WorkspaceExecutionOptions = {},
+		) {
+			writes++;
+			return super.writeFile(input, options);
+		}
+	}
+	try {
+		await writeFile(join(directory, 'file.ts'), 'original');
+		const registry = new LocalToolRegistry([
+			replaceFileTool(new ObservedFiles(directory), { maxFileBytes: 1024 }),
+		]);
+		for (const expectedVersion of [
+			undefined,
+			null,
+			123,
+			'',
+			'invalid',
+			'a'.repeat(63),
+			'a'.repeat(65),
+			'A'.repeat(64),
+			'g'.repeat(64),
+			'a'.repeat(64) + '\n',
+			' ' + 'a'.repeat(64),
+		]) {
+			const request = {
+				toolName: 'replace_file',
+				toolInput: {
+					path: 'file.ts',
+					content: 'replacement',
+					...(expectedVersion === undefined ? {} : { expectedVersion }),
+				},
+			};
+			expect(() => registry.prepare(request)).toThrow(ToolInputValidationError);
+			await expect(registry.execute(request)).rejects.toBeInstanceOf(ToolInputValidationError);
+		}
+		expect(reads).toBe(0);
+		expect(writes).toBe(0);
+		expect(await readFile(join(directory, 'file.ts'), 'utf8')).toBe('original');
+	} finally {
+		await cleanup();
+	}
+});
 
 test('prepared whole-file replacement preserves an external change after version validation', async () => {
 	const { directory, cleanup } = await createTempDirectory('phase14-replace-race-');

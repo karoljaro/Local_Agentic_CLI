@@ -17,6 +17,7 @@ import type {
 	ToolExecutionResult,
 	ToolExecutorPort,
 } from '../ports/ToolExecutorPort';
+import { ToolInputValidationError } from '../ports/ToolExecutorPort';
 
 import { abortError, isAbortError, throwIfAborted } from './cancellation';
 
@@ -38,6 +39,13 @@ export type PreparedModelToolCall = {
 	readonly call: PersistedModelToolCall;
 	readonly execution: PreparedToolExecution;
 };
+
+export class ToolBatchValidationError extends Error {
+	constructor(readonly errors: ReadonlyMap<number, ToolInputValidationError>) {
+		super([...errors.values()][0]!.message);
+		this.name = 'ToolBatchValidationError';
+	}
+}
 
 export type ToolExecutionBatchResult = {
 	terminalMessage?: string;
@@ -70,21 +78,55 @@ export class ToolRunner {
 	}
 
 	prepareToolCalls(toolCalls: readonly ModelToolCall[]): PreparedModelToolCall[] {
-		const executions = toolCalls.map((toolCall) =>
-			this.dependencies.toolExecutor.prepare({
-				toolName: toolCall.name,
-				toolInput: toolCall.arguments,
-			}),
-		);
+		const errors = new Map<number, ToolInputValidationError>();
+		const executions = toolCalls.map((toolCall, index) => {
+			try {
+				return this.dependencies.toolExecutor.prepare({
+					toolName: toolCall.name,
+					toolInput: toolCall.arguments,
+				});
+			} catch (error) {
+				if (!(error instanceof ToolInputValidationError)) throw error;
+				errors.set(index, error);
+				return undefined;
+			}
+		});
+		// No IDs, events, approvals or execution until every call has been checked.
+		if (errors.size > 0) throw new ToolBatchValidationError(errors);
 
 		return executions.map((execution) => ({
 			call: {
 				id: this.dependencies.idGenerator.nextToolCallId(),
-				name: execution.toolName,
-				arguments: execution.toolInput,
+				name: execution!.toolName,
+				arguments: execution!.toolInput,
 			},
-			execution,
+			execution: execution!,
 		}));
+	}
+
+	async rejectToolCalls(
+		sessionId: SessionId,
+		toolCalls: readonly PersistedModelToolCall[],
+		error: ToolBatchValidationError,
+		options: ToolExecutionOptions = {},
+	): Promise<void> {
+		for (const [index, call] of toolCalls.entries()) {
+			throwIfAborted(options.signal);
+			// Rejected calls have no executable authority and cannot request approval.
+			await this.appendToolCallRequested(sessionId, call, false);
+			throwIfAborted(options.signal);
+			const validationError = error.errors.get(index);
+			await this.appendToolCallFailed({
+				sessionId,
+				toolCallId: call.id,
+				toolName: call.name,
+				message:
+					validationError?.message ??
+					'Tool call was not executed because another call in this batch has invalid arguments. Correct the invalid call and retry any still-needed calls.',
+				code: validationError === undefined ? 'TOOL_BATCH_CANCELLED' : 'TOOL_ARGUMENTS_INVALID',
+			});
+			throwIfAborted(options.signal);
+		}
 	}
 
 	async executeToolCalls(
@@ -96,7 +138,11 @@ export class ToolRunner {
 			throwIfAborted(options.signal);
 			const { call: toolCall, execution } = record;
 			const { id: toolCallId, name: toolName } = toolCall;
-			const requestedEvent = await this.appendToolCallRequested(sessionId, record);
+			const requestedEvent = await this.appendToolCallRequested(
+				sessionId,
+				toolCall,
+				execution.requiresApproval,
+			);
 
 			throwIfAborted(options.signal);
 
@@ -125,7 +171,11 @@ export class ToolRunner {
 
 					for (const cancelledToolCall of toolCalls.slice(toolCallIndex + 1)) {
 						throwIfAborted(options.signal);
-						await this.appendToolCallRequested(sessionId, cancelledToolCall);
+						await this.appendToolCallRequested(
+							sessionId,
+							cancelledToolCall.call,
+							cancelledToolCall.execution.requiresApproval,
+						);
 						await this.appendToolCallFailed({
 							sessionId,
 							toolCallId: cancelledToolCall.call.id,
@@ -242,7 +292,8 @@ export class ToolRunner {
 
 	private async appendToolCallRequested(
 		sessionId: SessionId,
-		{ call: toolCall, execution }: PreparedModelToolCall,
+		toolCall: PersistedModelToolCall,
+		approvalRequired: boolean,
 	): Promise<ToolCallRequested> {
 		const event: ToolCallRequested = {
 			id: this.dependencies.idGenerator.nextEventId(),
@@ -252,7 +303,7 @@ export class ToolRunner {
 			toolCallId: toolCall.id,
 			toolName: toolCall.name,
 			toolInput: toolCall.arguments,
-			approvalRequired: execution.requiresApproval,
+			approvalRequired,
 		};
 
 		await this.dependencies.sessionStore.appendSessionEvent(event);

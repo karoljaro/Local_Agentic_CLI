@@ -38,6 +38,162 @@ const toolResponse = (name: string, args: unknown) =>
 	);
 
 describe('production instruction surface at model request boundaries', () => {
+	test('captures the revised contract and exact malformed/stale replacement recovery at the real HTTP boundary', async () => {
+		const { directory, cleanup } = await createTempDirectory('phase18.1-request-');
+		try {
+			const path = join(directory, 'legacy.json');
+			const original = '{"version":1,"legacy":true}\n';
+			const external = '{"version":1,"external":true}\n';
+			const content = '{"version":2,"enabled":true}\n';
+			await writeFile(path, original);
+			const config = readConfig({});
+			const definitions = createLocalToolExecutor({ workspaceRoot: directory }).listTools();
+			const store = new InMemorySessionStore();
+			const approvals: unknown[] = [];
+			const loop = new RunAgentTurn({
+				sessionStore: new SessionService(store),
+				model: new OllamaModelAdapter(
+					config.OLLAMA_BASE_URL,
+					SYNTHETIC_MODEL,
+					config.OLLAMA_KEEP_ALIVE,
+				),
+				toolExecutor: createLocalToolExecutor({ workspaceRoot: directory }),
+				contextBuilder: new ContextBuilder({
+					systemPrompt: config.SYSTEM_PROMPT,
+					contextProfile: {
+						contextWindowTokens: config.MODEL_CONTEXT_TOKENS,
+						maxOutputTokens: config.MODEL_MAX_OUTPUT_TOKENS,
+					},
+				}),
+				idGenerator: new BunUuidV7IdGenerator(),
+				clock: { now: () => asISODateTime('2026-10-10T12:00:00Z') },
+				approveToolCall: async (request) => {
+					approvals.push(request.toolInput);
+					return true;
+				},
+			});
+			let round = 0;
+			let versionA: string;
+			let versionB: string;
+			await withMockedFetch(
+				async (_url, init) => {
+					const body = JSON.parse(String(init?.body));
+					expect(
+						body.messages.filter((message: { role: string }) => message.role === 'system'),
+					).toEqual([{ role: 'system', content: config.SYSTEM_PROMPT }]);
+					expect(body.tools).toEqual(definitions.map(toOllamaTool));
+					expect(
+						body.tools.map((tool: { function: { name: string } }) => tool.function.name),
+					).toEqual(toolNames);
+					const replace = body.tools.find(
+						(tool: { function: { name: string } }) => tool.function.name === 'replace_file',
+					).function;
+					const edit = body.tools.find(
+						(tool: { function: { name: string } }) => tool.function.name === 'edit_file',
+					).function;
+					expect(replace.description).toMatch(/entire.*existing.*bounded exact edits/);
+					expect(edit.description).toMatch(/reliably known current content/);
+					expect(replace.parameters.required).toEqual(['path', 'content', 'expectedVersion']);
+					expect(replace.parameters.properties.expectedVersion).toEqual({
+						type: 'string',
+						pattern: '^[a-f0-9]{64}$',
+						description:
+							'Use exactly the current version from read_file for this file. Never invent or reconstruct it. If unavailable or stale, read_file again.',
+					});
+					expect(JSON.stringify({ system: config.SYSTEM_PROMPT, tools: body.tools })).not.toMatch(
+						/qwen|gemma|ministral|ollama|llama\.cpp/i,
+					);
+					expect(body.options).toEqual({ num_ctx: 16_384, num_predict: 4_096 });
+					expect(body.truncate).toBe(false);
+					expect(body.shift).toBe(false);
+					const last = body.messages.findLast(
+						(message: { role: string }) => message.role === 'tool',
+					);
+					switch (round++) {
+						case 0:
+							return toolResponse('replace_file', {
+								path: 'legacy.json',
+								content,
+								expectedVersion: 'not-a-version',
+							});
+						case 1:
+							expect(JSON.parse(last.content).error.message).toContain('expectedVersion');
+							expect(JSON.parse(last.content).error.message).toContain('/^[a-f0-9]{64}$/');
+							expect(
+								body.messages.find((message: { tool_calls?: unknown }) => message.tool_calls)
+									?.tool_calls,
+							).toEqual([
+								{
+									function: {
+										name: 'replace_file',
+										arguments: { path: 'legacy.json', content, expectedVersion: 'not-a-version' },
+									},
+								},
+							]);
+							expect(approvals).toEqual([]);
+							expect(await readFile(path, 'utf8')).toBe(original);
+							return toolResponse('read_file', { path: 'legacy.json' });
+						case 2:
+							versionA = JSON.parse(last.content).version;
+							expect(versionA).toMatch(/^[a-f0-9]{64}$/);
+							await writeFile(path, external);
+							return toolResponse('replace_file', {
+								path: 'legacy.json',
+								content,
+								expectedVersion: versionA,
+							});
+						case 3:
+							expect(JSON.parse(last.content)).toEqual({
+								error: {
+									message:
+										'File changed since it was read: legacy.json. Read it again before replacing.',
+								},
+							});
+							expect(await readFile(path, 'utf8')).toBe(external);
+							return toolResponse('read_file', { path: 'legacy.json' });
+						case 4:
+							versionB = JSON.parse(last.content).version;
+							expect(versionB).toMatch(/^[a-f0-9]{64}$/);
+							expect(versionB).not.toBe(versionA!);
+							expect(JSON.parse(last.content).content).toBe(external);
+							return toolResponse('replace_file', {
+								path: 'legacy.json',
+								content,
+								expectedVersion: versionB,
+							});
+						case 5:
+							expect(JSON.parse(last.content)).toEqual({ path: 'legacy.json', changed: true });
+							return new Response('{"message":{"content":"Replaced legacy.json."},"done":true}\n');
+						default:
+							throw new Error('Unexpected recovery round.');
+					}
+				},
+				async () => {
+					for await (const _chunk of loop.run({
+						sessionId: asSessionId('fixture'),
+						prompt: 'Replace the complete legacy.json with the new minimal configuration.',
+					})) {
+						/* Real loop with scripted HTTP responses. */
+					}
+				},
+			);
+			expect(round).toBe(6);
+			expect(approvals).toEqual([
+				{ path: 'legacy.json', content, expectedVersion: versionA! },
+				{ path: 'legacy.json', content, expectedVersion: versionB! },
+			]);
+			expect(
+				store.events
+					.filter((event) => event.type === 'tool.call.requested')
+					.map((event) => event.toolName),
+			).toEqual(['replace_file', 'read_file', 'replace_file', 'read_file', 'replace_file']);
+			expect(store.events.filter((event) => event.type === 'tool.call.failed')).toHaveLength(2);
+			expect(store.events.some((event) => event.type === 'agent.error')).toBe(false);
+			expect(await readFile(path, 'utf8')).toBe(content);
+		} finally {
+			await cleanup();
+		}
+	});
 	for (const [name, env] of [
 		['default', {}],
 		['blank override', { SYSTEM_PROMPT: ' \t\n ' }],

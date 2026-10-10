@@ -215,7 +215,8 @@ Configuration is read from environment variables. A `.env` file can be used.
 OLLAMA_BASE_URL=http://localhost:11434
 # Optional explicit override; use a name from the installed-model picker:
 # OLLAMA_MODEL=<installed-model-name>
-SYSTEM_PROMPT=Use workspace-relative paths.
+# Optional override; leave unset to keep the built-in tool autonomy and recovery guidance:
+# SYSTEM_PROMPT=Use workspace-relative paths.
 MODEL_CONTEXT_TOKENS=16384
 MODEL_MAX_OUTPUT_TOKENS=4096
 # Optional; independently installed embedding model for current-session history:
@@ -224,7 +225,7 @@ MODEL_MAX_OUTPUT_TOKENS=4096
 
 Defaults are defined in `src/composition/config.ts`.
 
-Leave `SYSTEM_PROMPT` unset or blank to use the built-in guidance. A nonblank value replaces that guidance, including the workspace-relative path rule.
+Leave `SYSTEM_PROMPT` unset or blank to use the built-in guidance for workspace-relative paths, autonomous tool choices, safe recovery and user-visible clarification. A nonblank value replaces that guidance.
 
 `MODEL_CONTEXT_TOKENS` sets the total model window; `MODEL_MAX_OUTPUT_TOKENS` reserves the
 maximum generation space. Both must be positive integers, with output smaller than the window.

@@ -109,7 +109,7 @@ describe('createRuntime direct API', () => {
 			{
 				baseUrl: 'http://localhost:11434',
 				model: SYNTHETIC_MODEL,
-				systemPrompt: 'Use workspace-relative paths.',
+				systemPrompt: readConfig({}).SYSTEM_PROMPT,
 				contextWindowTokens: 16_384,
 				maxOutputTokens: 4_096,
 				keepAlive: 0,
@@ -128,7 +128,7 @@ describe('createRuntime direct API', () => {
 			{
 				baseUrl: 'http://localhost:11434',
 				model: SYNTHETIC_MODEL,
-				systemPrompt: 'Use workspace-relative paths.',
+				systemPrompt: readConfig({}).SYSTEM_PROMPT,
 				contextWindowTokens: 16_384,
 				maxOutputTokens: 4_096,
 				keepAlive: 0,

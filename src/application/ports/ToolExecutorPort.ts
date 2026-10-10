@@ -14,6 +14,14 @@ export type ToolExecutionOptions = {
 	signal?: AbortSignal;
 };
 
+// Only schema failures are correctable model input; arbitrary preparation errors stay terminal.
+export class ToolInputValidationError extends Error {
+	constructor(toolName: string, reason: string) {
+		super(`Invalid arguments for tool ${toolName}: ${reason}`);
+		this.name = 'ToolInputValidationError';
+	}
+}
+
 // Runtime-only: persist the normalized call projection, never this bound execution.
 export type PreparedToolExecution = {
 	readonly toolName: string;

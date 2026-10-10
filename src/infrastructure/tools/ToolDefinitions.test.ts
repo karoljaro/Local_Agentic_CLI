@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 
 import { createLocalToolExecutor } from '@/composition/factories/createLocalToolExecutor';
 import type { ToolDefinition } from '@/domain/Tool';
@@ -133,6 +134,39 @@ describe('production model tool definitions', () => {
 				},
 			}).toolInput,
 		).toEqual({ path: 'file.ts', edits: [{ oldText: ' before\\n ', newText: '$&\\r\\n' }] });
+	});
+
+	test('states current read-derived replacement and known-content exact-edit contracts', () => {
+		const definitions = createLocalToolExecutor().listTools();
+		const replace = definitions.find((tool) => tool.name === 'replace_file')!;
+		const edit = definitions.find((tool) => tool.name === 'edit_file')!;
+		const version = properties(replace)['expectedVersion']!;
+		expect(replace.description).toMatch(/entire.*existing.*UTF-8/);
+		expect(replace.description).toMatch(/edit_file.*bounded exact edits/);
+		expect(version['description']).toMatch(/exactly.*current version.*read_file.*this file/);
+		expect(version['description']).toMatch(/Never invent or reconstruct/);
+		expect(version['description']).toMatch(/unavailable or stale.*read_file again/);
+		expect(edit.description).toMatch(/reliably known current content/);
+		expect(edit.description).toMatch(/read_file if unknown or stale/);
+		expect(edit.description).not.toContain('after reading');
+	});
+
+	test('preserves every Phase 14 name, schema constraint and lifecycle policy apart from wording', () => {
+		// Baseline 645a43f: exclude only descriptions, including nested property descriptions.
+		const stripDescriptions = (value: unknown): unknown => {
+			if (Array.isArray(value)) return value.map(stripDescriptions);
+			if (typeof value !== 'object' || value === null) return value;
+			return Object.fromEntries(
+				Object.entries(value)
+					.filter(([key]) => key !== 'description')
+					.map(([key, child]) => [key, stripDescriptions(child)]),
+			);
+		};
+		expect(
+			createHash('sha256')
+				.update(JSON.stringify(stripDescriptions(createLocalToolExecutor().listTools())))
+				.digest('hex'),
+		).toBe('59864a09db0ffff847b3df8aa3fe59eb68519574fd01f826810a60d346f03dcb');
 	});
 
 	test('rejects obsolete and excessive capabilities through the public preparation path', () => {

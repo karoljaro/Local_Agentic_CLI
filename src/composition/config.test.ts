@@ -12,15 +12,22 @@ describe('readConfig', () => {
 	test('keeps the default system guidance compact and provider-independent', () => {
 		const prompt = readConfig({}).SYSTEM_PROMPT;
 		expect(prompt).toContain('workspace-relative');
+		expect(prompt).toContain('choose tools');
+		expect(prompt).toContain('correctable tool errors autonomously');
+		expect(prompt).toContain('known paths directly');
+		expect(prompt).toContain('user-visible ambiguity');
+		expect(prompt).toContain('Respect denials');
+		expect(prompt).toContain('actual arguments and error');
 		expect(prompt.length).toBeLessThanOrEqual(400);
-		expect(prompt).not.toMatch(/ollama|gemma|llama/i);
+		expect(prompt).not.toMatch(/ollama|qwen|gemma|llama|ministral/i);
 	});
 
 	test('uses defaults when env values are missing', () => {
 		expect(readConfig({})).toEqual({
 			OLLAMA_BASE_URL: 'http://localhost:11434',
 			OLLAMA_KEEP_ALIVE: '0',
-			SYSTEM_PROMPT: 'Use workspace-relative paths.',
+			SYSTEM_PROMPT:
+				'Use workspace-relative paths. For clear requests, choose tools and recover from correctable tool errors autonomously. Use known paths directly. Ask only about user-visible ambiguity or required information tools cannot safely obtain. Respect denials; stop if safe recovery is unavailable. If asked about a failed call, explain its actual arguments and error, then continue safe unfinished work.',
 			MODEL_CONTEXT_TOKENS: 16_384,
 			MODEL_MAX_OUTPUT_TOKENS: 4_096,
 		});

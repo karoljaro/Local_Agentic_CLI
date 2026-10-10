@@ -19,7 +19,7 @@ export const editFileTool = (
 	return defineLocalTool({
 		name: EDIT_FILE_TOOL_NAME,
 		description:
-			'Apply local exact edits after reading the file. Each oldText must match once in the original; no overlaps. All edits commit together.',
+			'Apply bounded exact edits to reliably known current content; read_file if unknown or stale. Each oldText must match once in the original; no overlaps. All edits commit together.',
 		requiresApproval: true,
 		invalidatesWorkspaceCache: true,
 		inputSchema: z.strictObject({

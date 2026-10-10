@@ -1,4 +1,5 @@
 import { throwIfAborted } from '@/application/services/cancellation';
+import { ToolInputValidationError } from '@/application/ports/ToolExecutorPort';
 import type {
 	PreparedToolExecution,
 	ToolExecutionOptions,
@@ -41,7 +42,7 @@ export class LocalToolRegistry implements ToolExecutorPort {
 			return tool.prepare(request.toolInput);
 		} catch (caughtError) {
 			if (caughtError instanceof z.ZodError) {
-				throw new Error(`Invalid arguments for tool ${tool.name}: ${z.prettifyError(caughtError)}`);
+				throw new ToolInputValidationError(tool.name, z.prettifyError(caughtError));
 			}
 
 			throw caughtError;

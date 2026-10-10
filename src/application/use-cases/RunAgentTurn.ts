@@ -19,6 +19,7 @@ import type { ToolExecutorPort } from '../ports/ToolExecutorPort';
 import { ContextBudgetExceededError, type ContextBuilder } from '../services/ContextBuilder';
 import {
 	ToolRunner,
+	ToolBatchValidationError,
 	type PersistedModelToolCall,
 	type PreparedModelToolCall,
 	type ToolApprovalHandler,
@@ -153,6 +154,27 @@ export class AgentLoop {
 				try {
 					preparedToolCalls = toolRunner.prepareToolCalls(result.toolCalls);
 				} catch (caughtError) {
+					if (caughtError instanceof ToolBatchValidationError) {
+						throwIfAborted(signal);
+						// Preserve the supplied arguments for truthful feedback, never repair or execute them.
+						const rejectedCalls = result.toolCalls.map((call) => ({
+							id: this.dependencies.idGenerator.nextToolCallId(),
+							name: call.name,
+							arguments: structuredClone(call.arguments),
+						}));
+						await this.appendAssistantToolCallsCompleted(
+							sessionId,
+							toContent(result),
+							rejectedCalls,
+						);
+						await toolRunner.rejectToolCalls(
+							sessionId,
+							rejectedCalls,
+							caughtError,
+							signal === undefined ? {} : { signal },
+						);
+						continue;
+					}
 					const error = toError(caughtError);
 
 					await this.tryAppendAgentError(sessionId, error, 'MODEL_TOOL_CALL_INVALID');

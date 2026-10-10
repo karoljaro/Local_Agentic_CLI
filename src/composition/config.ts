@@ -27,7 +27,9 @@ const ConfigSchema = z
 			z.string().trim().min(1).optional(),
 		),
 		OLLAMA_KEEP_ALIVE: envString('0'),
-		SYSTEM_PROMPT: envString('Use workspace-relative paths.'),
+		SYSTEM_PROMPT: envString(
+			'Use workspace-relative paths. For clear requests, choose tools and recover from correctable tool errors autonomously. Use known paths directly. Ask only about user-visible ambiguity or required information tools cannot safely obtain. Respect denials; stop if safe recovery is unavailable. If asked about a failed call, explain its actual arguments and error, then continue safe unfinished work.',
+		),
 		MODEL_CONTEXT_TOKENS: positiveInteger(16_384),
 		MODEL_MAX_OUTPUT_TOKENS: positiveInteger(4_096),
 	})
