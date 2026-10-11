@@ -27,7 +27,8 @@ Important pieces:
 - ports such as `ModelPort`, `SessionStorePort`, `ToolExecutorPort`, `WorkspaceFilePort`, and `WorkspaceSearchPort`;
 - `AgentLoop`, exported through the existing `RunAgentTurn` use-case name, for model rounds, context, streaming, and stop conditions;
 - `ToolRunner` for tool preparation, approval, execution, per-turn deduplication, and tool lifecycle events;
-- `ContextBuilder`, which keeps the current turn and the newest complete historical turns within a configured character budget;
+- `ContextBuilder`, which compiles exact current/history messages and optional derived notes within the configured context/output/safety budget;
+- `SessionMemoryService` and `ModelSessionMemoryUpdater`, which maintain optional derived session state through exact event projection and bounded semantic deltas;
 - `InMemoryAgentMetrics`, which retains bounded resource summaries for the latest completed turns;
 - `SessionReducer`, which rebuilds chat/model state from durable events;
 - `EditWorkspaceFile`, which owns exact-match batch validation and optimistic concurrency policy.
@@ -149,7 +150,7 @@ Streaming deltas are runtime-only and are not persisted as durable events. Tool-
 their text immediately; `assistant.tool_calls.completed` is the boundary between an intermediate
 assistant response and the next model round.
 
-`SessionStateCache` reads and validates a session JSONL file on first access in a runtime, then keeps
+`SessionService` reads and validates a session JSONL file on first access in a runtime, then keeps
 its events and incrementally reduced state in memory. The transcript loader and `AgentLoop`
 share that instance. Appends are serialized and written to JSONL before the cached
 events and state are updated. A new process always rebuilds the cache from JSONL.
@@ -160,6 +161,137 @@ rebuilding a finished session produces the same model context as the live agent 
 batches are excluded from rebuilt model messages until every call has a completed or failed event.
 Historical tool names and results remain opaque persisted data; replay does not resolve or execute
 them through the current registry, so renamed tools require no model-visible aliases.
+
+## Semantic Session Memory Contract
+
+Semantic session memory is an optional best-effort optimization: bounded derived working state for
+the current session. Supporting this feature means the application can attempt, validate and
+persist semantic deltas safely; it does not certify every selected model's semantic reliability.
+
+### Role and Authority
+
+Durable canonical JSONL and `SessionReducer` own conversation history. The filesystem owns current
+file contents. Derived notes in `.agent/session-memory/<session-id>.json` may improve continuity;
+current user instructions, workspace/tool evidence and conflicting exact history override them.
+Exact file activity and application failures are projected from committed events, separately from
+model interpretations of goals, decisions, constraints and task state.
+
+The compiler reserves mandatory system/tools/exact active history/output/safety before admitting
+bounded notes. It then includes the exact previous whole turn when it fits and Phase 17's exact
+retrieved older turns where available; unavailable retrieval uses Phase 16 recency fallback.
+This precedence and exactness are application contracts, not guarantees about a model's next answer.
+
+### Mechanical Provider Capability
+
+A mechanically compatible `ModelPort` honors the updater's structured response request, configured
+context/output profile, cancellation signal and terminal stream semantics. Inability to honor a
+request must surface as an optional-operation failure. `ModelChatInput.responseSchema?` permits
+ordinary chat to omit structured output; it is not a capability declaration or negotiated flag.
+There is no new capability API. The sole concrete production adapter maps the supplied schema to
+Ollama `format`, forwards cancellation, bounds structured transport and requires provider completion.
+
+Schema transport support says nothing about semantic suitability. The host cannot detect native
+grammar enforcement: if a future port ignores the schema, malformed/nonconforming output fails
+validation, while a conforming result still faces all independent host checks. A stream that lacks
+clean completion or does not settle is rejected/bounded by the optional deadline. An ignoring port
+cannot publish a cancelled result or accumulate optional requests, although host cancellation does
+not prove remote compute has stopped. A capability bit would not establish any of these guarantees.
+
+### Semantic Model Suitability
+
+"Semantic-memory capable" as a model judgment means a model/configuration follows the generic
+delta contract reliably enough for operational use, within the configured output/deadline envelope.
+It is an empirical behavioral judgment, independent of model name, family, parameter count or
+ability to emit schema-valid JSON. A suitable extractor should generally:
+
+- return `goal:null` for an unchanged goal and establish an initial goal only when none exists;
+  replace the high-level objective only with explicit current user evidence;
+- emit minimal changes without restating unchanged state; record settled choices as decisions,
+  persistent user restrictions as constraints, and exclude unaccepted proposals;
+- reuse existing semantic keys, with one coherent operation per category/key target and the same
+  task identity across pending, completed and semantic problems;
+- capture multiple independent durable changes in one turn, including a persistent restriction
+  and unresolved blocker; a blocker belonging to an existing task must reuse that task's key;
+- represent replacement by one same-key upsert and revocation by an existing-key removal;
+  remove+upsert of the same category/key conflicts, and unrelated problems require their own
+  resolution evidence;
+- represent explicit pending/problem transitions and meaningful completion; a completed upsert
+  clears matching pending/semantic problems, while pending/problem upserts reopen completed work;
+  a successful tool or response alone does not establish completion;
+- cite current evidence that actually supports each operation, respect source roles and host-owned
+  state, and finish bounded structured output within the existing request envelope.
+
+Compound changes and coherent reversal remain capability requirements even when a qualification
+fails them. They do not license prompt tuning, fuzzy host key merging or partial delta acceptance.
+
+### Individual Update Acceptance
+
+An accepted update is one particular delta that passes the entire runtime boundary:
+
+1. A durable normal final response and matching current user/final message evidence permit the
+   optional attempt. Oversized evidence or a request that cannot fit its budget fails safely.
+   Failed/denied/interrupted turns permit deterministic maintenance only.
+2. The updater finishes cleanly with `stop`, no tool calls or other finish reason, bounded response
+   text, valid JSON and the strict version-1 delta schema. Missing terminal completion, output-limit
+   results and partial fragments cannot be repaired, retried or partially applied.
+3. The host independently parses the delta and validates exact current quote/ID origin, unambiguous
+   sources, roles and goal rules. Goal/constraints require user evidence; initial cannot overwrite
+   an existing goal. Assistant decisions require confirmed turn mutation and no unresolved turn
+   failures; assistant completion requires no unresolved turn failures. Source role sets the stored
+   basis. Duplicate category/key operations, reserved `tool-`/`agent-` keys and edits to deterministic
+   problems reject the whole delta; file observations are outside the semantic delta schema.
+4. The compact candidate document passes strict schema and current-session/prefix provenance
+   validation. Updater version and originating model metadata are recorded; the selected model is
+   checked before/after extraction. Session identity, activation generation, exact prefix and operation
+   cancellation still fence publication, including selection changes and disposal. Atomic publication
+   must succeed before owned in-memory semantic replacement; one invalid operation rejects all.
+
+Existing bounds remain: production extraction **10000 ms**, output **min(1024, configured output)**,
+response **16000 characters**, user/final evidence **6000/2000 characters**, at most **12 changes**,
+and separate read/publication caller bounds of **1000 ms**. `OLLAMA_KEEP_ALIVE` remains **0** by
+default; this policy adds no configuration or changes to extraction instructions/schema/settings.
+Writes stay ordered after caller timeout. An OS rename already dispatched cannot be rolled back;
+it may finish only as an artifact labeled with its original valid prefix, never as a newer result.
+
+**Origin validation is not semantic entailment.** An exact source quote and valid role/provenance
+are necessary but do not prove that natural-language evidence supports the proposed meaning,
+that a choice was accepted, or that all durable changes were extracted. The extractor is expected
+to supply that support. Update acceptance does not qualify the model or certify semantic truth;
+there is no entailment checker or second-model verifier.
+
+### Failure and Fallback
+
+Timeout, output limit, malformed/schema-invalid output, evidence/host rejection, provider inability
+and publication failure are nonfatal to the completed conversation. No failed semantic delta is
+partially applied. Previous valid semantic notes plus current exact deterministic observations
+remain available; existing internal failure diagnostics may record the unsuccessful attempt.
+Cancelled, superseded and disposed operations discard late extraction rather than publish it.
+
+Missing, corrupt, incompatible, foreign or invalid-provenance memory yields no semantic notes;
+canonical events rebuild deterministic observations without inference or semantic backfill. Empty
+memory contributes no system section. The next turn uses exact canonical active/current history,
+budgeted previous/retrieved history and any still-valid prior notes without waiting for freshness.
+Canonical storage/model/context errors retain their ordinary behavior; semantic fallback does not
+hide them. Losing optional updates on exit cannot lose the committed answer.
+
+Phase 18.3 ownership remains: immediate turn release after canonical completion, interactive
+priority through cancellation, one unresolved updater invocation, zero semantic backlog and immediate
+disposal without flushing inference. An unresolved raw call suppresses later optional extraction
+until it settles; this is resource containment, not a failure-count circuit breaker.
+
+### Model Selection and Qualification
+
+Any otherwise selectable installed model remains usable for normal chat when semantic suitability
+is unknown or weak. The updater opportunistically uses that same selected `ModelPort`.
+Semantic-quality/validation failures do not reject or replace the model, change its preference or
+rewrite historical model IDs. Actual model disappearance/provider model-not-found retains the
+independent Phase 15.5 availability behavior: selection may clear, without automatic replacement.
+
+Offline qualification can inform operator/user model choice. It is bounded evidence about a
+model/configuration, not an official support grant or persistent quality score. Production chooses
+best effort with independent per-update validation: no hardcoded allowlist, qualification registry,
+dynamic circuit breaker, automatic default change, hidden replacement or dedicated memory model.
+No capability UI, telemetry framework, entailment subsystem or background worker is required.
 
 ## Current Boundaries
 

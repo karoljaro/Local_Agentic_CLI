@@ -289,6 +289,11 @@ semantic notes become available again after a subsequent successful update. Sema
 is not deterministic. No cross-session memory, whole-history summarizer, new workspace tool or memory
 UI is added.
 
+Semantic suitability is a behavioral property of the selected model/configuration, independent of
+structured-output transport support. Unknown or weak suitability does not prevent normal chat;
+each delta is validated independently, with no model allowlist or hidden replacement. See the
+[semantic session-memory capability and acceptance contract](docs/ARCHITECTURE.md#semantic-session-memory-contract).
+
 The compiler appends one compact notes section to its single configured system message. Its entire
 cost is charged to the existing context estimate, capped at 1200 estimated tokens (less for small
 profiles), after mandatory system/tools/current turn/output/safety and before previous/retrieved

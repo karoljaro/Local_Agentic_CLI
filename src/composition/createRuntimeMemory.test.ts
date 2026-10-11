@@ -329,20 +329,23 @@ describe('default production working memory request path', () => {
 				capture.mockRestore();
 			}
 		}));
-	test('malformed real adapter output is nonfatal and does not persist semantic claims', async () =>
+	test('malformed semantic output preserves selection and the next exact turn', async () =>
 		workspace(async (idle) => {
 			let ordinary = 0;
 			let semantic = 0;
+			const ordinaryBodies: Body[] = [];
 			await withMockedFetch(
 				async (url, init) => {
 					if (String(url).endsWith('/api/tags'))
 						return Response.json({ models: [{ name: SYNTHETIC_MODEL }] });
-					const body = JSON.parse(String(init?.body));
+					const body = JSON.parse(String(init?.body)) as Body;
+					expect(body.model).toBe(SYNTHETIC_MODEL);
 					if (body.format) {
 						semantic++;
 						return stream('{malformed');
 					}
 					ordinary++;
+					ordinaryBodies.push(body);
 					return stream('Completed answer.');
 				},
 				async () => {
@@ -356,12 +359,37 @@ describe('default production working memory request path', () => {
 					const persisted = await new JsonSessionMemoryStore().read(sessionId);
 					expect(persisted?.updater.status).toBe('failed');
 					expect(persisted?.memory.goal).toBeNull();
+					expect(runtime.getModelSelection()).toEqual({
+						status: 'selected',
+						modelName: SYNTHETIC_MODEL,
+					});
 					expect((await runtime.listSessionEvents(sessionId)).map((event) => event.type)).toEqual([
 						'prompt.submitted',
 						'assistant.message.completed',
 					]);
-					expect(ordinary).toBe(1);
-					expect(semantic).toBe(1);
+					expect(
+						await collectAsyncIterable(
+							runtime.runTurn({ sessionId, prompt: 'Continue with the selected model.' }),
+						),
+					).toEqual([{ contentDelta: 'Completed answer.' }]);
+					await idle();
+					expect(
+						ordinaryBodies[1]!.messages
+							.filter((message) => message.role !== 'system')
+							.map((message) => message.content),
+					).toEqual([
+						'Implement a file service.',
+						'Completed answer.',
+						'Continue with the selected model.',
+					]);
+					expect(
+						(await runtime.listSessionEvents(sessionId))
+							.filter((event) => event.type === 'prompt.submitted')
+							.map((event) => event.modelName),
+					).toEqual([SYNTHETIC_MODEL, SYNTHETIC_MODEL]);
+					expect(runtime.getModelName()).toBe(SYNTHETIC_MODEL);
+					expect(ordinary).toBe(2);
+					expect(semantic).toBe(2);
 				},
 			);
 		}));
