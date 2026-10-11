@@ -436,6 +436,62 @@ describe('bounded derived session memory lifecycle and semantics', () => {
 		expect(h.memory().decisions.map((item) => item.text)).toEqual(['Use PostgreSQL.']);
 		expect(h.memory().constraints).toEqual([]);
 	});
+	for (const category of ['decisions', 'completed'] as const)
+		test(`invalid unchanged initial goal atomically rejects useful ${category} changes`, async () => {
+			const h = await harness();
+			h.updater.handler = (input) => ({
+				...initial(input),
+				changes: [
+					change(input, 'pending', 'tests', 'Run integration tests.'),
+					change(input, 'problems', 'tests', 'Tests blocked by missing fixture.'),
+				],
+			});
+			await h.begin('Implement a file service. Tests are pending and blocked by missing fixture.');
+			await h.end();
+			const before = h.memory();
+			h.updater.handler = (input) => ({
+				...noMemoryDelta(),
+				goal: initial(input).goal,
+				changes: [
+					change(
+						input,
+						category,
+						category === 'completed' ? 'tests' : 'database',
+						category === 'completed' ? 'Tests completed and fixture resolved.' : 'Use SQLite.',
+					),
+				],
+			});
+			await h.begin(
+				category === 'completed'
+					? 'Tests completed and fixture resolved.'
+					: 'Use SQLite for metadata instead of PostgreSQL.',
+			);
+			await h.end();
+			expect(h.memory()).toEqual(before);
+			expect(h.store.writes.at(-1)?.updater.status).toBe('failed');
+		});
+	test('explicit goal replacement still rejects assistant evidence and preserves prior state', async () => {
+		const h = await harness();
+		h.updater.handler = initial;
+		await h.begin('Implement a file service.');
+		await h.end();
+		const before = h.memory();
+		h.updater.handler = (input) => ({
+			...noMemoryDelta(),
+			goal: {
+				mode: 'explicit-replacement',
+				text: 'Implement authentication.',
+				evidence: {
+					messageId: input.evidence[1]!.messageId,
+					quote: input.evidence[1]!.text,
+				},
+			},
+		});
+		await h.begin('Discuss the next step.');
+		await h.end('I propose replacing the goal with authentication.');
+		expect(h.memory()).toEqual(before);
+		expect(h.store.writes.at(-1)?.updater.status).toBe('failed');
+	});
 	test('completed resolves matching pending/problem and reopening removes completed', async () => {
 		const h = await harness();
 		h.updater.handler = (input) => ({
