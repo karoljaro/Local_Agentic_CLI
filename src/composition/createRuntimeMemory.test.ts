@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { createRuntime } from './createRuntime';
 import { readConfig } from './config';
 import { ContextBuilder, type CompiledContext } from '@/application/services/ContextBuilder';
+import { SessionMemoryService } from '@/application/services/SessionMemoryService';
 import { JsonSessionMemoryStore } from '@/infrastructure/persistence/JsonSessionMemoryStore';
 import { SessionMemoryDocumentSchema } from '@/domain/SessionMemory';
 import { asSessionId } from '@/domain/Ids';
@@ -12,19 +13,35 @@ import { collectAsyncIterable } from '@/test-support/collectAsyncIterable';
 import { withMockedFetch } from '@/test-support/withMockedFetch';
 import { SYNTHETIC_MODEL } from '@/test-support/modelFixtures';
 import { noMemoryDelta } from '@/test-support/SessionMemoryFixtures';
+import { createDeferred } from '@/test-support/createDeferred';
 import { createLocalToolExecutor } from './factories/createLocalToolExecutor';
 import { toOllamaTool } from '@/infrastructure/model/mappers/OllamaChatMapper';
 
 const sessionId = asSessionId('production-memory');
 const stream = (content: string, reason = 'stop') =>
 	new Response(JSON.stringify({ message: { content }, done: true, done_reason: reason }) + '\n');
-const workspace = async (run: () => Promise<void>) => {
+const workspace = async (run: (idle: () => Promise<void>) => Promise<void>) => {
 	const { directory, cleanup } = await createTempDirectory('phase18-runtime-');
 	const original = process.cwd();
+	const operations: Promise<void>[] = [];
+	const finish = SessionMemoryService.prototype.finish;
+	const capture = spyOn(SessionMemoryService.prototype, 'finish').mockImplementation(function (
+		this: SessionMemoryService,
+		...args
+	) {
+		const operation = finish.apply(this, args);
+		operations.push(operation);
+		return operation;
+	});
+	const idle = async () => {
+		await Promise.all(operations);
+	};
 	try {
 		process.chdir(directory);
-		await run();
+		await run(idle);
 	} finally {
+		await idle();
+		capture.mockRestore();
 		process.chdir(original);
 		await cleanup();
 	}
@@ -40,8 +57,118 @@ type Body = {
 };
 
 describe('default production working memory request path', () => {
+	for (const action of [
+		'next-turn',
+		'switch-model',
+		'switch-model-return',
+		'switch-session',
+		'unload',
+		'dispose',
+	] as const)
+		test(`pending provider stream is aborted before ${action}, with no stale publication`, async () =>
+			workspace(async (idle) => {
+				const started = createDeferred<AbortSignal>();
+				let aborts = 0;
+				let semantic = 0;
+				let ordinary = 0;
+				const models: string[] = [];
+				await withMockedFetch(
+					async (url, init) => {
+						if (String(url).endsWith('/api/tags')) {
+							if (semantic && (action === 'next-turn' || action.startsWith('switch-model')))
+								expect(aborts).toBe(1); // Cancel before catalog/model resolution too.
+							return Response.json({ models: [{ name: SYNTHETIC_MODEL }, { name: 'other-chat' }] });
+						}
+						const body = JSON.parse(String(init?.body));
+						if (body.messages.length === 0) {
+							expect(aborts).toBe(1);
+							return Response.json({
+								model: body.model,
+								done: true,
+								done_reason: body.keep_alive === 0 ? 'unload' : 'load',
+							});
+						}
+						if (body.format) {
+							if (++semantic > 1) return stream(JSON.stringify(noMemoryDelta()));
+							return new Response(
+								new ReadableStream({
+									start(controller) {
+										const signal = init!.signal!;
+										signal.addEventListener(
+											'abort',
+											() => {
+												aborts++;
+												controller.error(signal.reason);
+											},
+											{ once: true },
+										);
+										started.resolve(signal);
+									},
+								}),
+							);
+						}
+						if (++ordinary > 1) expect(aborts).toBe(1);
+						models.push(body.model);
+						return stream('Completed exact answer.');
+					},
+					async () => {
+						const runtime = createRuntime(readConfig({ OLLAMA_MODEL: SYNTHETIC_MODEL }));
+						try {
+							await collectAsyncIterable(
+								runtime.runTurn({ sessionId, prompt: 'First objective.' }),
+							);
+							const signal = await started.promise;
+							expect(signal.aborted).toBe(false);
+							const other = asSessionId('other-session');
+							if (action === 'next-turn')
+								await collectAsyncIterable(
+									runtime.runTurn({ sessionId, prompt: 'Next objective.' }),
+								);
+							if (action.startsWith('switch-model')) {
+								await runtime.switchModel('other-chat');
+								if (action === 'switch-model-return') await runtime.switchModel(SYNTHETIC_MODEL);
+								await collectAsyncIterable(
+									runtime.runTurn({ sessionId, prompt: 'New model objective.' }),
+								);
+							}
+							if (action === 'switch-session') {
+								await runtime.listSessionEvents(other);
+								await collectAsyncIterable(
+									runtime.runTurn({ sessionId: other, prompt: 'Other session objective.' }),
+								);
+							}
+							if (action === 'unload') await runtime.unloadCurrentModel();
+							if (action === 'dispose') runtime.dispose();
+							expect(signal.aborted).toBe(true);
+							expect(aborts).toBe(1);
+							await idle();
+							const old = await new JsonSessionMemoryStore().read(sessionId);
+							if (action === 'switch-session' || action === 'unload' || action === 'dispose')
+								expect(old).toBeUndefined();
+							else {
+								expect(old?.source.eventCount).toBe(4);
+								expect(old?.updater.model).toBe(
+									action === 'switch-model' ? 'other-chat' : SYNTHETIC_MODEL,
+								);
+							}
+							if (action === 'switch-session')
+								expect((await new JsonSessionMemoryStore().read(other))?.sessionId).toBe(other);
+							expect(models.at(-1)).toBe(
+								action === 'switch-model' ? 'other-chat' : SYNTHETIC_MODEL,
+							);
+							expect(
+								(await runtime.listSessionEvents(sessionId)).filter(
+									(event) => event.type === 'agent.error',
+								),
+							).toEqual([]);
+						} finally {
+							runtime.dispose();
+						}
+					},
+				);
+			}));
 	test('config → runtime → selected model → structured extraction → JSON → resume → compiler → actual Ollama body', async () =>
-		workspace(async () => {
+		workspace(async (idle) => {
 			const ordinary: Body[] = [];
 			const semantic: Body[] = [];
 			const compiled: CompiledContext[] = [];
@@ -140,6 +267,7 @@ describe('default production working memory request path', () => {
 									'Implement a file service. Use PostgreSQL. Do not redesign the TUI. Run integration tests later.',
 							}),
 						);
+						await idle(); // An explicit idle opportunity, not an interactive dependency.
 						const sourceEvents = await runtime.listSessionEvents(sessionId);
 						const firstUser = sourceEvents.find((event) => event.type === 'prompt.submitted')!;
 						const memory = await new JsonSessionMemoryStore().read(sessionId);
@@ -151,9 +279,12 @@ describe('default production working memory request path', () => {
 						await collectAsyncIterable(
 							runtime.runTurn({ sessionId, prompt: 'Inspect the palette.' }),
 						);
+						await idle();
+						runtime.dispose();
 						runtime = createRuntime(config);
 						const current = 'Now implement database migrations.\n"\\😀';
 						await collectAsyncIterable(runtime.runTurn({ sessionId, prompt: current }));
+						await idle();
 						const request = ordinary.at(-1)!;
 						const context = compiled.at(-1)!;
 						expect(request.messages.filter((message) => message.role === 'system')).toHaveLength(1);
@@ -199,7 +330,7 @@ describe('default production working memory request path', () => {
 			}
 		}));
 	test('malformed real adapter output is nonfatal and does not persist semantic claims', async () =>
-		workspace(async () => {
+		workspace(async (idle) => {
 			let ordinary = 0;
 			let semantic = 0;
 			await withMockedFetch(
@@ -221,6 +352,7 @@ describe('default production working memory request path', () => {
 							runtime.runTurn({ sessionId, prompt: 'Implement a file service.' }),
 						),
 					).toEqual([{ contentDelta: 'Completed answer.' }]);
+					await idle();
 					const persisted = await new JsonSessionMemoryStore().read(sessionId);
 					expect(persisted?.updater.status).toBe('failed');
 					expect(persisted?.memory.goal).toBeNull();

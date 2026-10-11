@@ -13,6 +13,7 @@ export type SessionOption = {
 export type PresentationRuntime = Pick<
 	Runtime,
 	| 'createSessionId'
+	| 'dispose'
 	| 'getModelName'
 	| 'getModelSelection'
 	| 'initializeModels'

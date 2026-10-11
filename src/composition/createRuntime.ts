@@ -32,6 +32,7 @@ export type { RuntimeListModelsOptions } from '@/composition/model/OllamaModelRu
 export type { AgentMetricsSnapshot } from '@/application/services/InMemoryAgentMetrics';
 
 export type Runtime = {
+	dispose: () => void;
 	createSessionId: () => SessionId;
 	runTurn: RunAgentTurn['run'];
 	listSessionEvents: (sessionId: SessionId) => Promise<AgentEvent[]>;
@@ -77,19 +78,20 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 					new OllamaEmbeddingAdapter(config.OLLAMA_BASE_URL, config.HISTORY_EMBEDDING_MODEL),
 					new BinaryHistoryIndexStore(),
 				);
-	const runAgentTurn = new RunAgentTurn({
-		sessionMemory: new SessionMemoryService(
-			sessionStore,
-			new JsonSessionMemoryStore(),
-			new ModelSessionMemoryUpdater(
-				modelRuntime,
-				{
-					contextWindowTokens: config.MODEL_CONTEXT_TOKENS,
-					maxOutputTokens: config.MODEL_MAX_OUTPUT_TOKENS,
-				},
-				() => modelRuntime.getModelName(),
-			),
+	const sessionMemory = new SessionMemoryService(
+		sessionStore,
+		new JsonSessionMemoryStore(),
+		new ModelSessionMemoryUpdater(
+			modelRuntime,
+			{
+				contextWindowTokens: config.MODEL_CONTEXT_TOKENS,
+				maxOutputTokens: config.MODEL_MAX_OUTPUT_TOKENS,
+			},
+			() => modelRuntime.getModelName(),
 		),
+	);
+	const runAgentTurn = new RunAgentTurn({
+		sessionMemory,
 		...(historyRetriever === undefined ? {} : { historyRetriever }),
 		sessionStore,
 		model: modelRuntime,
@@ -103,12 +105,17 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 	});
 
 	return {
+		dispose: () => sessionMemory.dispose(),
 		createSessionId: () => idGenerator.nextSessionId(),
 		runTurn: async function* (input) {
+			sessionMemory.cancelPending();
 			const modelName = await modelRuntime.requireModel(input.signal);
 			yield* runAgentTurn.run({ ...input, modelName });
 		},
-		listSessionEvents: (sessionId) => sessionStore.activateSession(sessionId),
+		listSessionEvents: async (sessionId) => {
+			sessionMemory.selectSession(sessionId);
+			return sessionStore.activateSession(sessionId);
+		},
 		readSessionPreviewEvents: (sessionId) => sessionStore.readPreviewEvents(sessionId),
 		listSessions: () => sessionStore.listSessions(),
 		workspacePath: process.cwd(),
@@ -118,8 +125,14 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 		getAgentMetrics: (sessionId) => agentMetrics.snapshot(sessionId),
 		listModels: async (signal, options) =>
 			(await modelRuntime.listModels({ ...options, signal })).models,
-		unloadCurrentModel: (input) => modelRuntime.unload(input),
-		switchModel: (modelName, signal) => modelRuntime.switchModel(modelName, signal),
+		unloadCurrentModel: (input) => {
+			sessionMemory.cancelPending();
+			return modelRuntime.unload(input);
+		},
+		switchModel: (modelName, signal) => {
+			sessionMemory.cancelPending();
+			return modelRuntime.switchModel(modelName, signal);
+		},
 		subscribeSessionEvents: (listener) => sessionStore.subscribe(listener),
 		setApprovalHandler: (handler) => {
 			currentToolApprovalHandler = handler;

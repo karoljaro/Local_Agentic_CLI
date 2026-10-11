@@ -173,10 +173,10 @@ for (const item of cases)
 				},
 			);
 		} finally {
+			await conversation?.dispose();
 			memoryRead.mockRestore();
 			memoryWrite.mockRestore();
 			memoryUpdate.mockRestore();
-			await conversation?.dispose();
 			reads.mockRestore();
 			appends.mockRestore();
 			preferenceRead.mockRestore();

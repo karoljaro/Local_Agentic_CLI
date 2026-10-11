@@ -276,12 +276,17 @@ provide exact file observations; one optional structured operation after a norma
 uses the currently selected chat model for semantic updates. It adds at most one model request,
 with a 10-second deadline and up to 1024 output tokens. Failure never invalidates the completed
 answer. Denied, failed, interrupted and cancelled turns do not produce semantic completion updates.
+The turn releases after its canonical answer is committed, without waiting for semantic maintenance.
+The next interactive turn, session/model change or shutdown cancels pending optional work. At most
+one semantic invocation can remain unresolved; if cancellation is ignored, later extraction is skipped
+until it settles. Valid idle updates publish atomically. Pending derived updates may be lost at exit;
+the next turn uses prior published notes and exact history without waiting for memory freshness.
 
 Memory lives in versioned atomic JSON at `.agent/session-memory/<session-id>.json`, with bounded
 collections and stable durable message/event provenance. It stores no file contents or transcript.
 Deleting/corrupting it leaves chat/history intact; exact activity can rebuild from events, while
 semantic notes become available again after a subsequent successful update. Semantic regeneration
-is not deterministic. No cross-session memory, background summarizer, new workspace tool or memory
+is not deterministic. No cross-session memory, whole-history summarizer, new workspace tool or memory
 UI is added.
 
 The compiler appends one compact notes section to its single configured system message. Its entire

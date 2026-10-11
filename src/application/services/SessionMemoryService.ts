@@ -95,7 +95,10 @@ export class SessionMemoryService {
 		model: null,
 		status: 'unavailable',
 	};
-	private tail: Promise<void> = Promise.resolve();
+	private pending: { controller: AbortController; completion: Promise<void> } | undefined;
+	private semanticInFlight: Promise<unknown> | undefined;
+	private disposed = false;
+	private readonly unsubscribe: () => void;
 	private publicationTail: Promise<void> = Promise.resolve();
 	readonly diagnostics: {
 		lastFailure?: string;
@@ -111,7 +114,7 @@ export class SessionMemoryService {
 		private readonly deadlineMs = 10000,
 		private readonly ioDeadlineMs = 1000,
 	) {
-		sessions.subscribe((event) => {
+		this.unsubscribe = sessions.subscribe((event) => {
 			try {
 				if (event.sessionId === this.selected) {
 					if (this.loading) this.buffered.push(event);
@@ -124,6 +127,7 @@ export class SessionMemoryService {
 	}
 
 	activate(sessionId: SessionId, events: readonly AgentEvent[]): Promise<void> {
+		if (this.disposed) return Promise.resolve();
 		if (this.selected === sessionId) {
 			if (this.activating) return this.activating;
 			// O(1) common path; a missed observer after a failed reduction triggers recovery.
@@ -147,6 +151,7 @@ export class SessionMemoryService {
 		sessionId: SessionId,
 		events: readonly AgentEvent[],
 	): Promise<void> {
+		this.cancelPending();
 		this.scope.abort();
 		this.scope = new AbortController();
 		const generation = ++this.generation;
@@ -179,7 +184,7 @@ export class SessionMemoryService {
 		} catch {
 			this.diagnostics.lastFailure = 'memory-read-failed';
 		}
-		if (generation !== this.generation) return;
+		if (this.disposed || generation !== this.generation) return;
 		let matched =
 			persisted?.source.eventCount === 0 && persisted.source.digest === this.source.digest;
 		for (const event of events) {
@@ -217,7 +222,8 @@ export class SessionMemoryService {
 	}
 
 	snapshot(sessionId: SessionId): SessionMemory | undefined {
-		return this.selected === sessionId &&
+		return !this.disposed &&
+			this.selected === sessionId &&
 			!this.loading &&
 			this.validProvenance({
 				version: 1,
@@ -230,7 +236,50 @@ export class SessionMemoryService {
 			: undefined;
 	}
 
-	/** Normal completion passes exact originating user and final assistant IDs, not "latest". */
+	/** Handoff after canonical completion; the owner observes every detached failure. */
+	schedule(
+		sessionId: SessionId,
+		userId: string,
+		finalId?: string,
+		modelName?: string,
+		signal?: AbortSignal,
+	): void {
+		if (this.disposed || signal?.aborted) return;
+		try {
+			// A completed turn no longer owns cancellation of optional idle work.
+			void this.finish(sessionId, userId, finalId, modelName).catch(() => {
+				this.diagnostics.lastFailure = 'memory-maintenance-failed';
+			});
+		} catch {
+			this.diagnostics.lastFailure = 'memory-maintenance-failed';
+		}
+	}
+
+	/** Interactive/session/model work takes priority without waiting for optional inference. */
+	cancelPending(): void {
+		this.pending?.controller.abort();
+	}
+
+	/** Fence a selection immediately, before the canonical session load can yield. */
+	selectSession(sessionId: SessionId): void {
+		if (this.selected !== sessionId) this.cancelPending();
+	}
+
+	dispose(): void {
+		if (this.disposed) return;
+		this.disposed = true;
+		this.cancelPending();
+		this.scope.abort();
+		this.generation++;
+		this.unsubscribe();
+	}
+
+	/** Explicit observation for tests/diagnostics; interactive callers never await this. */
+	whenIdle(): Promise<void> {
+		return this.pending?.completion ?? Promise.resolve();
+	}
+
+	/** Exact originating IDs and immutable completed-prefix snapshots, never "latest" evidence. */
 	finish(
 		sessionId: SessionId,
 		userId: string,
@@ -238,23 +287,39 @@ export class SessionMemoryService {
 		modelName?: string,
 		signal?: AbortSignal,
 	): Promise<void> {
+		if (this.disposed || signal?.aborted) return Promise.resolve();
+		this.cancelPending();
+		const controller = new AbortController();
+		const operationSignal = signal
+			? AbortSignal.any([controller.signal, signal])
+			: controller.signal;
 		const generation = this.generation;
 		const boundary = { ...this.source };
 		const evidence = structuredClone(this.evidence);
-		const work = this.tail.then(() =>
+		const memory = structuredClone(this.memory);
+		const work = Promise.resolve().then(() =>
 			this.finishSelected(
 				sessionId,
 				userId,
 				finalId,
 				modelName,
-				signal,
+				operationSignal,
 				generation,
 				boundary,
 				evidence,
+				memory,
 			),
 		);
-		this.tail = work.catch(() => undefined);
-		return work;
+		const completion = work.catch(() => {
+			if (!operationSignal.aborted && this.owns(sessionId, generation, boundary))
+				this.diagnostics.lastFailure = 'memory-maintenance-failed';
+		});
+		const pending = { controller, completion };
+		this.pending = pending;
+		void completion.then(() => {
+			if (this.pending === pending) this.pending = undefined;
+		});
+		return completion;
 	}
 
 	private async finishSelected(
@@ -266,13 +331,15 @@ export class SessionMemoryService {
 		generation: number,
 		boundary: MemoryBoundary,
 		evidence: MemoryEvidence[],
+		memory: SessionMemory,
 	) {
 		if (!this.owns(sessionId, generation, boundary) || signal?.aborted) return;
-		let candidate = structuredClone(this.memory);
+		let candidate = structuredClone(memory);
 		let updater = { ...this.updater };
 		const final = finalId === undefined ? undefined : this.messages.get(finalId);
 		if (
 			this.semantic &&
+			!this.semanticInFlight &&
 			this.attemptedBoundary !== boundary.digest &&
 			final?.final &&
 			this.currentUser === userId &&
@@ -287,22 +354,26 @@ export class SessionMemoryService {
 					? AbortSignal.any([signal, this.scope.signal, AbortSignal.timeout(this.deadlineMs)])
 					: AbortSignal.any([this.scope.signal, AbortSignal.timeout(this.deadlineMs)]);
 				this.diagnostics.semanticAttempts++;
-				const delta = MemoryDeltaSchema.parse(
-					await bounded(
-						this.semantic.update({
-							memory: structuredClone(candidate),
-							evidence,
-							signal: operationSignal,
-							...(modelName ? { modelName } : {}),
-						}),
-						operationSignal,
-					),
-				);
-				if (!this.owns(sessionId, generation, boundary)) return;
+				const extraction = this.semantic.update({
+					memory: structuredClone(candidate),
+					evidence: structuredClone(evidence),
+					signal: operationSignal,
+					...(modelName ? { modelName } : {}),
+				});
+				// Retain the raw invocation until it settles, even if it ignores our abort/deadline.
+				// Later optional opportunities skip inference rather than build a provider backlog.
+				this.semanticInFlight = extraction;
+				const release = () => {
+					if (this.semanticInFlight === extraction) this.semanticInFlight = undefined;
+				};
+				void extraction.then(release, release);
+				const delta = MemoryDeltaSchema.parse(await bounded(extraction, operationSignal));
+				if (operationSignal.aborted || !this.owns(sessionId, generation, boundary)) return;
 				candidate = this.applyDelta(candidate, delta, evidence);
 				updater = { version: MEMORY_UPDATER_VERSION, model: modelName ?? null, status: 'updated' };
 			} catch {
-				candidate = structuredClone(this.memory); // Reject the entire delta, including earlier valid changes.
+				if (signal?.aborted || !this.owns(sessionId, generation, boundary)) return;
+				candidate = structuredClone(memory); // Reject the entire delta, including earlier valid changes.
 				this.diagnostics.lastFailure = 'semantic-update-failed';
 				updater = { ...updater, status: 'failed' };
 			}
@@ -323,15 +394,15 @@ export class SessionMemoryService {
 				AbortSignal.timeout(this.ioDeadlineMs),
 				...(signal ? [signal] : []),
 			]);
-			// A timed-out OS rename may still settle. Keep publication order beyond caller timeout.
-			const publication = this.publicationTail.then(async () => {
-				throwIfAborted(writeSignal);
-				if (!this.owns(sessionId, generation, boundary)) return;
-				await this.store.write(document, writeSignal);
-			});
+			// A timed-out OS rename may still settle. Keep actual writes ordered beyond caller timeout,
+			// without retaining a promise queue of cancelled would-be publications.
+			await bounded(this.publicationTail, writeSignal);
+			throwIfAborted(writeSignal);
+			if (!this.owns(sessionId, generation, boundary)) return;
+			const publication = this.store.write(document, writeSignal);
 			this.publicationTail = publication.catch(() => undefined);
 			await bounded(publication, writeSignal);
-			if (this.owns(sessionId, generation, boundary)) {
+			if (!writeSignal.aborted && this.owns(sessionId, generation, boundary)) {
 				this.memory = document.memory;
 				this.updater = updater;
 			}
@@ -342,6 +413,7 @@ export class SessionMemoryService {
 
 	private owns(sessionId: SessionId, generation: number, boundary: MemoryBoundary) {
 		return (
+			!this.disposed &&
 			this.selected === sessionId &&
 			this.generation === generation &&
 			this.source.digest === boundary.digest
@@ -349,6 +421,7 @@ export class SessionMemoryService {
 	}
 
 	private observe(event: AgentEvent): void {
+		this.cancelPending();
 		this.source = advance(this.source, event);
 		this.diagnostics.observedEvents++;
 		if (this.events.has(event.id)) this.ambiguousEvents.add(event.id);
@@ -687,6 +760,8 @@ const bounded = async <T>(
 	timeout?: number,
 ): Promise<T> => {
 	const combined = timeout ? AbortSignal.any([signal, AbortSignal.timeout(timeout)]) : signal;
+	// Observe even an operation whose signal was aborted synchronously during dispatch.
+	void operation.catch(() => undefined);
 	throwIfAborted(combined);
 	let abort: () => void = () => undefined;
 	try {

@@ -1,5 +1,6 @@
 import { ContextBuilder, type CompiledContext } from '@/application/services/ContextBuilder';
 import { ModelSessionMemoryUpdater } from '@/application/services/ModelSessionMemoryUpdater';
+import { SessionMemoryService } from '@/application/services/SessionMemoryService';
 import { JsonSessionMemoryStore } from '@/infrastructure/persistence/JsonSessionMemoryStore';
 import { reduceAgentState } from '@/application/services/SessionReducer';
 import { assistantMessageCompletedEvent } from '@/test-support/AgentEventFixtures';
@@ -39,6 +40,17 @@ const withMemoryRuntime = async (
 	runtimeConfig: AppConfig = config,
 ) => {
 	const events: AgentEvent[] = [];
+	let runtime: Runtime | undefined;
+	const operations: Promise<void>[] = [];
+	const finish = SessionMemoryService.prototype.finish;
+	const memoryFinish = spyOn(SessionMemoryService.prototype, 'finish').mockImplementation(function (
+		this: SessionMemoryService,
+		...args
+	) {
+		const operation = finish.apply(this, args);
+		operations.push(operation);
+		return operation;
+	});
 	const memoryRead = spyOn(JsonSessionMemoryStore.prototype, 'read').mockResolvedValue(undefined);
 	const memoryWrite = spyOn(JsonSessionMemoryStore.prototype, 'write').mockResolvedValue(undefined);
 	const semanticUpdate = spyOn(ModelSessionMemoryUpdater.prototype, 'update').mockResolvedValue({
@@ -72,10 +84,13 @@ const withMemoryRuntime = async (
 		{ sessionId: id },
 	]);
 	try {
-		const runtime = createRuntime(runtimeConfig);
+		runtime = createRuntime(runtimeConfig);
 		await runtime.initializeModels();
 		await run(runtime, events);
 	} finally {
+		runtime?.dispose();
+		await Promise.all(operations);
+		memoryFinish.mockRestore();
 		memoryRead.mockRestore();
 		memoryWrite.mockRestore();
 		semanticUpdate.mockRestore();

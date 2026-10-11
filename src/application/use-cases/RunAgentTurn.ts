@@ -82,6 +82,7 @@ export class AgentLoop {
 	): AsyncIterable<AgentTurnChunk> {
 		const { sessionId, prompt, modelName, signal } = input;
 		throwIfAborted(signal);
+		this.dependencies.sessionMemory?.cancelPending();
 
 		const promptEvent: PromptSubmitted = {
 			id: this.dependencies.idGenerator.nextEventId(),
@@ -138,7 +139,7 @@ export class AgentLoop {
 
 				if (toolRunner === undefined || tools.length === 0 || result.toolCalls.length === 0) {
 					const final = await this.appendAssistantCompleted(sessionId, toContent(result));
-					await this.maintainMemory(
+					this.dependencies.sessionMemory?.schedule(
 						sessionId,
 						promptEvent.messageId,
 						final.messageId,
@@ -203,7 +204,13 @@ export class AgentLoop {
 
 					throwIfAborted(signal);
 					await this.appendAssistantCompleted(sessionId, terminalMessage);
-					await this.maintainMemory(sessionId, promptEvent.messageId, undefined, modelName, signal);
+					this.dependencies.sessionMemory?.schedule(
+						sessionId,
+						promptEvent.messageId,
+						undefined,
+						modelName,
+						signal,
+					);
 					memoryFinalized = true;
 					return;
 				}
@@ -216,21 +223,13 @@ export class AgentLoop {
 		} finally {
 			// Also captures truthful exact effects after failure/interruption; no semantic completion.
 			if (!memoryFinalized)
-				await this.maintainMemory(sessionId, promptEvent.messageId, undefined, modelName, signal);
-		}
-	}
-
-	private async maintainMemory(
-		sessionId: SessionId,
-		userId: string,
-		finalId: string | undefined,
-		modelName: string | undefined,
-		signal: AbortSignal | undefined,
-	) {
-		try {
-			await this.dependencies.sessionMemory?.finish(sessionId, userId, finalId, modelName, signal);
-		} catch {
-			/* A completed answer or primary turn error remains valid. */
+				this.dependencies.sessionMemory?.schedule(
+					sessionId,
+					promptEvent.messageId,
+					undefined,
+					modelName,
+					signal,
+				);
 		}
 	}
 

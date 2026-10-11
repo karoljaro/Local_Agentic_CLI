@@ -17,6 +17,10 @@ import { InMemorySessionStore } from '@/test-support/InMemorySessionStore';
 import { ScriptedModel } from '@/test-support/ScriptedModel';
 import { FakeMemoryStore, FakeMemoryUpdater } from '@/test-support/SessionMemoryFixtures';
 import { collectAsyncIterable } from '@/test-support/collectAsyncIterable';
+import { createDeferred } from '@/test-support/createDeferred';
+import { noMemoryDelta } from '@/test-support/SessionMemoryFixtures';
+import { Conversation } from '@/presentation/Conversation';
+import type { PresentationRuntime } from '@/presentation/types';
 import { createTempDirectory } from '@/test-support/createTempDirectory';
 import { RecordingToolExecutor } from '@/test-support/RecordingToolExecutor';
 import { asSessionId } from '@/domain/Ids';
@@ -56,6 +60,30 @@ const setup = (
 	return { sessions, updater, memory, model, memoryStore, dependencies };
 };
 describe('agent memory completion boundaries', () => {
+	test('a deferred durable final append must commit before semantic scheduling', async () => {
+		const durable = new InMemorySessionStore();
+		const committing = createDeferred<void>();
+		const committed = createDeferred<void>();
+		durable.appendSessionEvent = async (event) => {
+			if (event.type === 'assistant.message.completed') {
+				committing.resolve();
+				await committed.promise;
+			}
+			durable.events.push(event);
+		};
+		const h = setup([response()], durable);
+		const turn = collectAsyncIterable(
+			new RunAgentTurn(h.dependencies).run({ sessionId, prompt: 'Work.' }),
+		);
+		await committing.promise;
+		expect(h.updater.inputs).toHaveLength(0);
+		expect(durable.events.map((event) => event.type)).toEqual(['prompt.submitted']);
+		committed.resolve();
+		await turn;
+		await h.memory.whenIdle();
+		expect(h.updater.inputs).toHaveLength(1);
+		expect(durable.events.at(-1)?.type).toBe('assistant.message.completed');
+	});
 	test('one semantic operation follows durable final completion and ordinary answer remains exact', async () => {
 		const durable = new InMemorySessionStore();
 		const h = setup([response()], durable);
@@ -75,6 +103,7 @@ describe('agent memory completion boundaries', () => {
 			new RunAgentTurn(h.dependencies).run({ sessionId, prompt: 'Implement the service.' }),
 		);
 		expect(result).toEqual([{ contentDelta: 'Done.' }]);
+		await h.memory.whenIdle();
 		expect(h.updater.inputs).toHaveLength(1);
 		expect(h.memoryStore.writes).toHaveLength(1);
 		expect(h.memory.snapshot(sessionId)?.goal?.text).toBe('Implement the service.');
@@ -91,6 +120,7 @@ describe('agent memory completion boundaries', () => {
 				new RunAgentTurn(h.dependencies).run({ sessionId, prompt: 'Work.' }),
 			),
 		).toEqual([{ contentDelta: 'Done.' }]);
+		await h.memory.whenIdle();
 		expect(durable.events.map((event) => event.type)).toEqual([
 			'prompt.submitted',
 			'assistant.message.completed',
@@ -156,6 +186,35 @@ describe('agent memory completion boundaries', () => {
 		expect(h.memory.snapshot(sessionId)?.completed).toEqual([]);
 		expect(h.memory.snapshot(sessionId)?.problems).toHaveLength(1);
 	});
+	test('denial completion releases without waiting for deterministic derived publication', async () => {
+		const h = setup([call('create_file', { path: 'a.ts', content: 'body' })]);
+		const writing = createDeferred<void>();
+		const publication = createDeferred<void>();
+		h.memoryStore.write = async () => {
+			writing.resolve();
+			await publication.promise;
+		};
+		const executor = new RecordingToolExecutor(
+			[{ name: 'create_file', description: 'create', parameters: {}, requiresApproval: true }],
+			() => {
+				throw new Error('must not execute');
+			},
+		);
+		await collectAsyncIterable(
+			new RunAgentTurn({ ...h.dependencies, toolExecutor: executor }).run({
+				sessionId,
+				prompt: 'Create a.ts.',
+			}),
+		);
+		await writing.promise;
+		expect(h.updater.inputs).toHaveLength(0);
+		expect((await h.sessions.readSessionEvents(sessionId)).at(-1)?.type).toBe(
+			'assistant.message.completed',
+		);
+		expect(h.memory.snapshot(sessionId)?.problems).toHaveLength(1);
+		publication.resolve();
+		await h.memory.whenIdle();
+	});
 	test('multi-round tool chain projects files but semantic completion waits until final answer', async () => {
 		const h = setup([
 			call('read_file', { path: 'a.ts' }),
@@ -199,6 +258,7 @@ describe('agent memory completion boundaries', () => {
 			}),
 		);
 		expect(h.model.receivedInputs).toHaveLength(3);
+		await h.memory.whenIdle();
 		expect(h.updater.inputs).toHaveLength(1);
 		expect(h.memory.snapshot(sessionId)?.files[0]?.activity).toBe('modified');
 		expect(h.memory.snapshot(sessionId)?.completed[0]?.text).toBe('Edit finished.');
@@ -246,12 +306,12 @@ describe('agent memory completion boundaries', () => {
 		expect(events.some((event) => event.type === 'tool.call.completed')).toBe(true);
 		expect(events.some((event) => event.type === 'assistant.message.completed')).toBe(false);
 	});
-	test('cancel during memory inference preserves already committed answer and discards semantic result', async () => {
+	test('completed turn controller no longer owns cancellation of idle semantic work', async () => {
 		const h = setup([response()]);
 		const controller = new AbortController();
 		h.updater.handler = (input) => {
 			controller.abort();
-			expect(input.signal.aborted).toBe(true);
+			expect(input.signal.aborted).toBe(false);
 			return {
 				version: 1,
 				goal: {
@@ -274,7 +334,8 @@ describe('agent memory completion boundaries', () => {
 		expect((await h.sessions.readSessionEvents(sessionId)).at(-1)?.type).toBe(
 			'assistant.message.completed',
 		);
-		expect(h.memory.snapshot(sessionId)?.goal).toBeNull();
+		await h.memory.whenIdle();
+		expect(h.memory.snapshot(sessionId)?.goal?.text).toBe('Work.');
 	});
 	test('abort racing final append keeps completion truthful and skips optional inference', async () => {
 		const durable = new InMemorySessionStore();
@@ -295,6 +356,73 @@ describe('agent memory completion boundaries', () => {
 		).toEqual([{ contentDelta: 'Done.' }]);
 		expect(h.updater.inputs).toHaveLength(0);
 		expect(durable.events.at(-1)?.type).toBe('assistant.message.completed');
+	});
+	test('unresolved semantic extraction releases Conversation and permits the next exact user turn', async () => {
+		const h = setup([response('First answer.'), response('Second answer.')]);
+		const extraction = createDeferred<unknown>();
+		const started = createDeferred<void>();
+		h.updater.handler = () => {
+			started.resolve();
+			return extraction.promise;
+		};
+		const loop = new RunAgentTurn(h.dependencies);
+		const runtime: PresentationRuntime = {
+			dispose: () => h.memory.dispose(),
+			createSessionId: () => sessionId,
+			getModelName: () => 'test-chat',
+			getModelSelection: () => ({ status: 'selected', modelName: 'test-chat' }),
+			initializeModels: async () => ({ status: 'selected', modelName: 'test-chat' }),
+			workspacePath: '/workspace',
+			listModels: async () => [],
+			listSessions: () => h.sessions.listSessions(),
+			listSessionEvents: (id) => h.sessions.activateSession(id),
+			readSessionPreviewEvents: (id) => h.sessions.readPreviewEvents(id),
+			switchModel: async (name) => name,
+			runTurn: (input) => loop.run(input),
+			subscribeSessionEvents: (listener) => h.sessions.subscribe(listener),
+			setApprovalHandler: () => () => undefined,
+		};
+		const releases = [createDeferred<void>(), createDeferred<void>()];
+		let released = 0;
+		let initialized = false;
+		const conversation = new Conversation(runtime, (change) => {
+			if (
+				initialized &&
+				change.type === 'status' &&
+				!conversation.running &&
+				released < releases.length
+			)
+				releases[released++]!.resolve();
+		});
+		await conversation.initialize();
+		initialized = true;
+		try {
+			expect(conversation.submit('First exact request.')).toBe(true);
+			await started.promise;
+			await releases[0]!.promise;
+			expect(conversation.running).toBe(false);
+			expect(h.memoryStore.writes).toHaveLength(0);
+			expect(conversation.submit('Second exact request.')).toBe(true);
+			await releases[1]!.promise;
+			expect(h.updater.inputs[0]!.signal.aborted).toBe(true);
+			expect(h.updater.inputs).toHaveLength(1); // Ignored cancellation cannot spawn a backlog.
+			const request = h.model.receivedInputs[1]!;
+			expect(
+				request.messages.filter((message) => message.role !== 'system').map((m) => m.content),
+			).toEqual(['First exact request.', 'First answer.', 'Second exact request.']);
+			expect((await h.sessions.readSessionEvents(sessionId)).map((event) => event.type)).toEqual([
+				'prompt.submitted',
+				'assistant.message.completed',
+				'prompt.submitted',
+				'assistant.message.completed',
+			]);
+			extraction.resolve(noMemoryDelta());
+			await h.memory.whenIdle();
+			expect(conversation.history.some((entry) => entry.kind === 'error')).toBe(false);
+		} finally {
+			extraction.resolve(noMemoryDelta());
+			await conversation.dispose();
+		}
 	});
 });
 
@@ -353,9 +481,11 @@ describe('real JSONL memory restore and independent retrieval', () => {
 					prompt: 'Implement a file service. Use PostgreSQL.',
 				}),
 			);
+			await memory.whenIdle();
 			await collectAsyncIterable(
 				new RunAgentTurn(dependencies).run({ sessionId, prompt: 'Run typecheck.' }),
 			);
+			await memory.whenIdle();
 			const path = join(directory, 'sessions', sessionId, 'events.jsonl');
 			const prefix = await readFile(path, 'utf8');
 			const original = await sessions.readSessionEvents(sessionId);
@@ -387,6 +517,7 @@ describe('real JSONL memory restore and independent retrieval', () => {
 					historyRetriever: retriever,
 				}).run({ sessionId, prompt: 'Which database should we use?' }),
 			);
+			await restored.whenIdle();
 			const request = model.receivedInputs.at(-1)!;
 			expect(request.messages[0]?.content).toContain('Use PostgreSQL.');
 			expect(request.messages.find((message) => message.id === oldId)?.content).toBe(

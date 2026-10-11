@@ -8,6 +8,7 @@ import { SYNTHETIC_MODEL } from './modelFixtures';
 import type { ModelSelectionState } from '@/application/services/ModelSelection';
 
 export class FakeTerminalRuntime implements PresentationRuntime {
+	dispose(): void {}
 	readonly workspacePath = '/test-workspace';
 	readonly listeners = new Set<(event: AgentEvent) => void>();
 	readonly events = new Map<SessionId, AgentEvent[]>();

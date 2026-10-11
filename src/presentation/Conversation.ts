@@ -197,6 +197,7 @@ export class Conversation {
 	dispose(): Promise<void> {
 		if (this.disposal) return this.disposal;
 		this.disposed = true;
+		this.runtime.dispose();
 		this.selection.controller.abort();
 		this.active?.controller.abort();
 		this.active = null;

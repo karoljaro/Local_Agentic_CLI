@@ -88,6 +88,7 @@ describe('structured extraction infrastructure failure isolation', () => {
 							}),
 						),
 					).toEqual([{ contentDelta: 'Completed answer.' }]);
+					await memory.whenIdle();
 					expect(durable.events.map((event) => event.type)).toEqual([
 						'prompt.submitted',
 						'assistant.message.completed',
