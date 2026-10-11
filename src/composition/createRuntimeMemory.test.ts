@@ -300,7 +300,7 @@ describe('default production working memory request path', () => {
 							true,
 						);
 						expect(request.tools).toEqual(createLocalToolExecutor().listTools().map(toOllamaTool));
-						expect(request.tools).toHaveLength(9);
+						expect(request.tools).toHaveLength(10);
 						expect(request.options).toEqual({ num_ctx: 16384, num_predict: 4096 });
 						expect(request.truncate).toBe(false);
 						expect(request.shift).toBe(false);

@@ -121,7 +121,7 @@ const smoke = async (): Promise<void> => {
 		)
 			throw new Error('Provider-reported usage reached the context boundary.');
 		console.log(
-			`PASS: ${rounds} rounds; explicit 16384/4096 profile, nine tools, exact current chain, normal answer.`,
+			`PASS: ${rounds} rounds; explicit 16384/4096 profile, ten tools, exact current chain, normal answer.`,
 		);
 	} finally {
 		await temp.cleanup();

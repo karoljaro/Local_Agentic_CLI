@@ -13,6 +13,8 @@ import { replaceFileTool } from '@/infrastructure/tools/providers/ReplaceFilePro
 import { moveFileTool } from '@/infrastructure/tools/providers/MoveFileProvider';
 import { deletePathTool } from '@/infrastructure/tools/providers/DeletePathProvider';
 import { RipgrepSearch } from '@/infrastructure/tools/ripgrep/RipgrepSearch';
+import { BunProcessRunner } from '@/infrastructure/process/BunProcessRunner';
+import { runProcessTool } from '@/infrastructure/tools/providers/RunProcessProvider';
 
 const DEFAULT_MAX_FILE_BYTES = 200_000;
 const DEFAULT_MAX_LIST_FILES = 500;
@@ -76,5 +78,6 @@ export const createLocalToolExecutor = (
 		replaceFileTool(workspaceFiles, { maxFileBytes }),
 		moveFileTool(workspaceFiles),
 		deletePathTool(workspaceFiles),
+		runProcessTool(new BunProcessRunner(workspaceRoot)),
 	]);
 };

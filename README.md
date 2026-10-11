@@ -36,7 +36,8 @@ Implemented:
 - workspace tools:
   - `list_directory`, `find_files`, `read_file`, `search_text`
   - `create_file`, `edit_file`, `replace_file`, `move_file`, `delete_path`
-- approval prompt before mutating tools
+  - `run_process` for one approved foreground process with direct argv and bounded output
+- approval prompt before mutating file tools and every process invocation
 - concise live tool status and persisted tool success/failure rows
 - path safety checks for file tools
 - tests for config, sessions, runtime, Ollama adapter, tools, and agent turn flow
@@ -54,18 +55,18 @@ The current MVP loop is:
 user prompt
 -> model may request bounded workspace tools
 -> CLI executes read/list/find/search tools automatically
--> CLI asks for approval before each mutation
--> approved changes are applied to workspace files
+-> CLI asks for approval before each mutation or process invocation
+-> approved file changes or foreground processes execute
 -> events are persisted to the current session
 -> model returns the final answer
 ```
 
-If a mutating tool is denied, the turn ends immediately. This prevents the model from repeatedly requesting the same change until the tool iteration limit is reached.
+If a tool requiring approval is denied, the turn ends immediately. This prevents the model from repeatedly requesting the same action until the tool iteration limit is reached.
 
 ## Tools
 
-Every path is relative to the workspace root. The model has bounded file tools and no shell,
-command, git, package-manager, or arbitrary network tool.
+File-tool paths and process cwd are relative to the workspace root. The ten tools include
+one generic process primitive; prefer the dedicated file tools for inspection and editing.
 
 | Tool | Input | Behavior |
 | --- | --- | --- |
@@ -78,6 +79,23 @@ command, git, package-manager, or arbitrary network tool.
 | `replace_file` | `path`, `content`, `expectedVersion` | Replaces an existing file only if its version matches a previous read. |
 | `move_file` | `source`, `destination` | Moves one regular file, creating safe destination parents and refusing overwrite. |
 | `delete_path` | `path` | Deletes one file or empty directory; never deletes recursively. |
+| `run_process` | `program`, `args?`, `cwd?`, `timeoutMs?` | Runs one approved foreground process directly with argv; returns bounded stdout/stderr and exit status. |
+
+`run_process` defaults to `args: []`, `cwd: "."`, and a 60,000 ms timeout (allowed range
+1,000–300,000 ms). It has no implicit shell, interactive stdin, TTY, environment overrides or
+background option. Bare executables use inherited PATH; explicit executable paths must be
+workspace-relative. Cwd and path-like executables are checked for lexical and symlink escapes
+immediately before spawn. A non-zero exit is a normal process result; an executable that cannot
+start produces a recoverable tool failure. Timeout terminates the owned child; turn cancellation
+stops it and preserves the existing abort behavior. Neither outcome automatically retries.
+Both output pipes continue draining after the fixed 8,192 UTF-8-byte retained text cap per stream;
+truncated results preserve head/tail text and report observed bytes and truncation flags.
+
+**Process execution is approved local code execution, not a sandbox.** An approved program can
+read or modify files outside the workspace, access the network, launch interpreters and spawn
+descendants. Cwd containment does not confine those effects. Only the directly spawned child is
+owned; no process-tree containment is promised. See the [process contract](docs/ARCHITECTURE.md#foreground-process-contract)
+for termination and path-race limits.
 
 Discovery and search results expose `truncated` when their configured limits are reached. Listing
 returns `entries` with a `type`; filename discovery returns `files`; content search returns
@@ -106,10 +124,12 @@ literal JSON-decoded text; sequences such as `\\n` are not interpreted again.
 Edits and whole-file replacements return `changed: false` and skip the write when the resulting
 contents equal the existing file. `editsApplied` counts validated exact replacements.
 
-All five mutation tools require interactive approval. Use the arrow keys and Enter, press `y` to
+All five file mutation tools and every `run_process` invocation require interactive approval. Use the arrow keys and Enter, press `y` to
 approve, or press `n`/`Esc` to deny. Deny is selected by default. Press `d` to toggle full input details.
+Process requests show the complete prepared program/args/cwd/timeout JSON by default; PageUp/PageDown
+scroll the details. That JSON is the execution authority; no displayed shell command is executed.
 
-Tools reject workspace escapes and protected paths, including `.git`, `.agent`, `node_modules`,
+File tools reject workspace escapes and protected paths, including `.git`, `.agent`, `node_modules`,
 and secret `.env*` files. The allowed env files are `.env.dev`, `.env.development`, and `.env.example`.
 Moves and deletions refuse symlinks. Text reads and writes respect the configured byte limit.
 
@@ -234,7 +254,7 @@ also leaves a 1,024-token safety allowance, so estimated input must fit within 1
 Every Ollama inference request explicitly sends these context/output limits; daemon defaults
 and Modelfiles do not define the application budget.
 
-The bounded Context Compiler includes the system instruction, all nine tools, messages and
+The bounded Context Compiler includes the system instruction, all ten tools, messages and
 structured calls/results. Its conservative estimate uses model-visible serialized UTF-8 structures:
 one estimated token per three ASCII bytes, one per non-ASCII byte, plus framing allowances.
 These are estimates, not exact model tokenizer counts. Safety is `max(128, ceil(total / 16))`

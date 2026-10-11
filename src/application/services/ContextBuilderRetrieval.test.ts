@@ -276,7 +276,7 @@ describe('semantic history Context Compiler', () => {
 		const active = [user('active')];
 		const compiled = compile([old, previous, active], semantic([candidate('old')]));
 		expect(compiled.tools).toBe(tools);
-		expect(compiled.tools).toHaveLength(9);
+		expect(compiled.tools).toHaveLength(10);
 		expect(compiled.contextProfile).toEqual({
 			contextWindowTokens: 16_384,
 			maxOutputTokens: 4_096,
@@ -300,7 +300,7 @@ describe('semantic history Context Compiler', () => {
 		);
 	});
 
-	test('all nine definitions still displace retrieved payload through the existing shared budget', () => {
+	test('all ten definitions still displace retrieved payload through the existing shared budget', () => {
 		const old = turn('old');
 		const previous = turn('previous');
 		const active = [user('active')];

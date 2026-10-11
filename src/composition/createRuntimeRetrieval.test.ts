@@ -113,7 +113,7 @@ const assertWireGuarantees = (body: ChatBody): void => {
 	expect(body.truncate).toBe(false);
 	expect(body.shift).toBe(false);
 	expect(body.tools).toEqual(createLocalToolExecutor().listTools().map(toOllamaTool));
-	expect(body.tools).toHaveLength(9);
+	expect(body.tools).toHaveLength(10);
 	expect(body.messages[0]).toEqual({ role: 'system', content: readConfig({}).SYSTEM_PROMPT });
 	expect(body.messages.at(-1)).toEqual({ role: 'user', content: CURRENT_PROMPT });
 };

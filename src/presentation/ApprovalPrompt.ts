@@ -112,7 +112,7 @@ export class ApprovalPrompt {
 			height: 8,
 			minHeight: 0,
 			flexShrink: 1,
-			visible: false,
+			visible: request.toolName === 'run_process',
 			scrollX: false,
 			scrollbarOptions: { visible: false },
 		});

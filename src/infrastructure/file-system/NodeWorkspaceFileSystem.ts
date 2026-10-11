@@ -30,9 +30,10 @@ import {
 	unlink,
 	writeFile as writeFileContent,
 } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, relative, resolve, sep, win32 } from 'node:path';
+import { basename, dirname, isAbsolute, relative, resolve, win32 } from 'node:path';
 import { isPathInside } from './isPathInside';
 import { isProtectedDirectoryPath, isProtectedFilePath } from './workspacePolicy';
+import { assertContained, normalizedPath, validateWorkspaceRelativePath } from './workspacePaths';
 
 type ResolvedPath = { realWorkspaceRoot: string; realTargetPath: string; relativePath: string };
 type WorkspaceTarget = { realWorkspaceRoot: string; targetPath: string; relativePath: string };
@@ -328,26 +329,7 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 		signal?: AbortSignal,
 	): Promise<WorkspaceTarget> {
 		throwIfAborted(signal);
-		if (!inputPath.trim().length) throw new Error('File path cannot be empty.');
-		if (isAbsolute(inputPath) || win32.isAbsolute(inputPath) || /^[A-Za-z]:/.test(inputPath))
-			throw new Error('Workspace file path must be relative.');
-		if (inputPath.includes('\\') || inputPath.includes('\0'))
-			throw new Error('Workspace paths must use / separators and contain no null characters.');
-		if (process.platform === 'win32' && inputPath.includes(':')) {
-			throw new Error('Workspace paths cannot select Windows alternate data streams.');
-		}
-		if (
-			process.platform === 'win32' &&
-			inputPath
-				.split('/')
-				.some(
-					(part) =>
-						part !== '.' &&
-						part !== '..' &&
-						(/[. ]$/.test(part) || /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i.test(part)),
-				)
-		)
-			throw new Error(`Unsupported Windows path component: ${inputPath}`);
+		validateWorkspaceRelativePath(inputPath);
 		const realWorkspaceRoot = await realpath(this.workspaceRoot);
 		throwIfAborted(signal);
 		const targetPath = resolve(realWorkspaceRoot, inputPath);
@@ -419,7 +401,6 @@ export class NodeWorkspaceFileSystem implements WorkspaceFilePort {
 	}
 }
 
-const normalizedPath = (path: string): string => path.split(sep).join('/');
 const assertFilePath = (path: string): void => {
 	if (path.endsWith('/')) throw new Error(`File path must not end with /: ${path}`);
 };
@@ -428,10 +409,6 @@ const comparePaths = (left: string, right: string): number =>
 const validateEntriesLimit = (limit: number): void => {
 	if (!Number.isInteger(limit) || limit <= 0)
 		throw new Error('Max list entries must be a positive integer.');
-};
-const assertContained = (root: string, target: string, input: string): void => {
-	if (!isPathInside(root, target))
-		throw new Error(`Cannot access file outside workspace: ${input}`);
 };
 const assertAllowedFile = (path: string, input: string): void => {
 	if (isProtectedFilePath(path)) throw new Error(`Cannot access protected file: ${input}`);

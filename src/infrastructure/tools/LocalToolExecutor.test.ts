@@ -186,6 +186,7 @@ describe('LocalToolRegistry', () => {
 			'replace_file',
 			'move_file',
 			'delete_path',
+			'run_process',
 		]);
 	});
 

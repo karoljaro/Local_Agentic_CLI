@@ -213,6 +213,35 @@ test.each([
 	}
 });
 
+test('process approval shows exact structured argv/cwd/timeout by default and still defaults to deny', async () => {
+	const ui = await setup();
+	try {
+		const decision = ui.runtime.approval(
+			{
+				sessionId: ui.app.conversation.sessionId,
+				toolCallId: asToolCallId('process-approval'),
+				toolName: 'run_process',
+				toolInput: { program: 'bun', args: ['test'], cwd: 'src', timeoutMs: 1000 },
+			},
+			{},
+		);
+		await settle(ui);
+		const frame = ui.captureCharFrame();
+		for (const text of [
+			'Run process',
+			'"program": "bun"',
+			'"test"',
+			'"cwd": "src"',
+			'"timeoutMs": 1000',
+		])
+			expect(frame).toContain(text);
+		ui.mockInput.pressEnter();
+		expect(await decision).toBe(false);
+	} finally {
+		await ui.app.shutdown();
+	}
+});
+
 test('approval Enter defaults deny; Escape denies, abort removes prompt and stale input cannot allow', async () => {
 	const ui = await setup();
 	try {

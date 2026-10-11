@@ -82,7 +82,7 @@ describe('bounded Context Compiler', () => {
 		expect(result.messages.slice(1)).toEqual(before);
 		expect(result.messages[1]).toBe(history[0]!);
 		expect(result.tools).toBe(tools);
-		expect(result.tools).toHaveLength(9);
+		expect(result.tools).toHaveLength(10);
 		expect(result.contextProfile).toEqual(TEST_CONTEXT_PROFILE);
 		expect(result.diagnostics).toMatchObject({
 			selectedCompletedTurns: 1,
@@ -123,13 +123,13 @@ describe('bounded Context Compiler', () => {
 		});
 	});
 
-	test('all nine tools consume fixed budget and can displace history', () => {
+	test('all ten tools consume fixed budget and can displace history', () => {
 		const history = [user('x'.repeat(5_000)), assistant('Old answer'), user('Current')];
 		const withoutTools = compile(history, smallProfile, []);
 		const withTools = compile(history, smallProfile);
 		expect(withoutTools.diagnostics.selectedCompletedTurns).toBe(1);
 		expect(withTools.diagnostics.selectedCompletedTurns).toBe(0);
-		expect(withTools.tools).toHaveLength(9);
+		expect(withTools.tools).toHaveLength(10);
 		expect(
 			withTools.diagnostics.estimatedFixedTokens - withoutTools.diagnostics.estimatedFixedTokens,
 		).toBe(tools.reduce((n, tool) => n + estimateToolTokens(tool), 0));
@@ -270,7 +270,7 @@ describe('bounded Context Compiler', () => {
 			const prefix = recovery.slice(0, end);
 			const result = compile([user('old'), assistant('x'.repeat(40_000)), ...prefix]);
 			expect(result.messages.slice(1)).toEqual(prefix);
-			expect(result.tools).toHaveLength(9);
+			expect(result.tools).toHaveLength(10);
 			const calls = prefix.flatMap((message) =>
 				message.role === 'assistant' ? (message.toolCalls ?? []) : [],
 			);
@@ -307,7 +307,7 @@ describe('bounded Context Compiler', () => {
 	test('empty state still compiles one system and all tools; hidden system injection is rejected', () => {
 		const result = compile([]);
 		expect(result.messages).toEqual([{ role: 'system', content: systemPrompt }]);
-		expect(result.tools).toHaveLength(9);
+		expect(result.tools).toHaveLength(10);
 		expect(result.diagnostics).toMatchObject({
 			selectedCompletedTurns: 0,
 			droppedCompletedTurns: 0,

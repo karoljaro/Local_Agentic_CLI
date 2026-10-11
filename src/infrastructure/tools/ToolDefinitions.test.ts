@@ -57,6 +57,13 @@ const contracts = [
 		deduplicate: false,
 	},
 	{ name: 'delete_path', keys: ['path'], required: ['path'], mutation: true, deduplicate: false },
+	{
+		name: 'run_process',
+		keys: ['program', 'args', 'cwd', 'timeoutMs'],
+		required: ['program'],
+		mutation: true,
+		deduplicate: false,
+	},
 ] as const;
 
 const properties = (tool: ToolDefinition): Record<string, Record<string, unknown>> =>
@@ -164,9 +171,19 @@ describe('production model tool definitions', () => {
 		};
 		expect(
 			createHash('sha256')
-				.update(JSON.stringify(stripDescriptions(createLocalToolExecutor().listTools())))
+				.update(
+					JSON.stringify(stripDescriptions(createLocalToolExecutor().listTools().slice(0, 9))),
+				)
 				.digest('hex'),
 		).toBe('59864a09db0ffff847b3df8aa3fe59eb68519574fd01f826810a60d346f03dcb');
+	});
+
+	test('keeps the entire original nine-tool surface byte-for-byte unchanged from Phase 18', () => {
+		expect(
+			createHash('sha256')
+				.update(JSON.stringify(createLocalToolExecutor().listTools().slice(0, 9)))
+				.digest('hex'),
+		).toBe('7fe844ddeadf547472c7cfdccdd3807921664abec8ecdb80b67fe5b3eedd6fca');
 	});
 
 	test('rejects obsolete and excessive capabilities through the public preparation path', () => {

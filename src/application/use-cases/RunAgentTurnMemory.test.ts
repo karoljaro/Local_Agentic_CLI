@@ -524,7 +524,7 @@ describe('real JSONL memory restore and independent retrieval', () => {
 				'Implement a file service. Use PostgreSQL.',
 			);
 			expect(request.messages.filter((message) => message.role === 'system')).toHaveLength(1);
-			expect(request.tools).toHaveLength(9);
+			expect(request.tools).toHaveLength(10);
 			expect((await readFile(path, 'utf8')).startsWith(prefix)).toBe(true);
 			expect(
 				reduceAgentState(

@@ -10,6 +10,7 @@ const TOOL_LABELS: Record<string, string> = {
 	replace_file: 'Replace file',
 	move_file: 'Move file',
 	delete_path: 'Delete path',
+	run_process: 'Run process',
 };
 
 export const formatToolName = (toolName: string): string => {

@@ -44,11 +44,13 @@ Application code should depend on ports and domain types, not concrete adapters.
 - `NodeWorkspaceFileSystem` for workspace file access;
 - `RipgrepSearch` for content search;
 - `LocalToolRegistry` and local tool definitions for model-visible workspace tools.
+- `BunProcessRunner` for one owned foreground child behind `ProcessRunnerPort`.
 
 Read-only tools run automatically. Mutating tools require approval:
 
 - read-only: `list_directory`, `find_files`, `read_file`, `search_text`;
 - mutating: `create_file`, `edit_file`, `replace_file`, `move_file`, `delete_path`.
+- process: `run_process` always requires approval, without command classifications.
 
 Each local tool owns one strict Zod input schema, its bound execution function, and approval/cache
 metadata. The registry generates the model JSON Schema from that schema. A complete model-call
@@ -85,9 +87,114 @@ owned through exclusive FileHandles and only owned files are cleaned. Cancellati
 between preparation steps, while filesystem commit
 and cleanup already started are awaited before reporting their actual outcome.
 
-All workspace tools enforce lexical and realpath containment and the protected-path/env policy in
-the filesystem/search adapters. No model-facing shell, process, git, package-manager, arbitrary
-network, directory-move, or recursive-delete capability is registered.
+All nine file tools retain lexical/realpath containment and the protected-path/env policy in
+the filesystem/search adapters. The tenth tool is `run_process`; no shell tool, git-specific tool,
+package installation tool, network policy engine, background job or TTY capability is registered.
+
+### Foreground process contract
+
+`RunProcessProvider` defines one strict Zod schema and registers through `LocalToolRegistry`:
+
+```ts
+run_process({ program, args = [], cwd = '.', timeoutMs = 60_000 })
+```
+
+Only `program` is required; unknown fields are rejected. Program is nonempty (no whitespace-only
+names), at most 1,024 UTF-8 bytes. Args remain literal strings, including empty strings and spaces:
+at most 128 args, 8,192 UTF-8 bytes each, 32,768 UTF-8 bytes total. Program/args/cwd reject NUL.
+Cwd is at most 4,096 UTF-8 bytes. Timeout is an integer from 1,000 through 300,000 ms.
+Schema parsing/preparation performs no filesystem IO, process discovery or process launch.
+
+Preparation binds normalized values separately from raw model input and freezes the serializable
+process projection, its args and prepared execution authority. Complete-batch preparation must
+succeed before any IDs/events/approval/execution, using the existing Phase 18.1 boundary.
+`ToolRunner` executes calls sequentially. Every invocation persists requested, awaits explicit
+approval of the exact prepared program/args/cwd/timeout, checks cancellation, persists started,
+checks cancellation again and invokes the bound execution. Missing approval defaults to deny;
+denial launches zero processes, reports `TOOL_APPROVAL_DENIED`, cancels siblings and ends the turn.
+Processes are not deduplicated. An approved attempt clears file discovery/search result references
+because processes may mutate files, including when they eventually fail. There is no expectedVersion,
+workspace scan, rollback or automatic retry for process effects.
+
+`BunProcessRunner` invokes `Bun.spawn({ cmd: [program, ...args], cwd, stdin: 'ignore',
+stdout: 'pipe', stderr: 'pipe' })` directly. There is no shell wrapper, shell parser, command DSL
+or execution of display strings. `&&`, `;`, `|`, `>` and other shell-looking syntax remain argv
+content unless the explicitly approved program interprets it. Environment is inherited and never
+included in approval or output. No model-controlled spawn options, stdin contents, env overrides,
+TTY, detached mode, PID handle or later process-management tool is exposed.
+
+Bare executable names use the runtime's inherited PATH without a preliminary `which` process.
+Path-like programs must be workspace-relative; absolute POSIX/Windows/drive-relative paths are
+rejected. `workspacePaths` extracts the existing filesystem relative-path and lexical containment
+policy for reuse, without weakening protected file-tool checks. `/` separators are required on
+both platforms. Process cwd and explicit executable paths use this shared policy plus realpath
+containment and a directory/file stat check. Internal symlinks are allowed if their canonical
+targets remain within the workspace (including `node_modules/.bin` executables). Explicit
+executable paths resolve from the workspace root, independently of cwd. Prepared cwd is the
+normalized relative path returned in results, even when an internal symlink resolves elsewhere
+inside the workspace. Final resolution and spawn are synchronous with no intervening await,
+rejecting disappearing paths and symlink escapes introduced during approval. Pathname checks
+cannot atomically eliminate a concurrent external OS replacement inside the final check/spawn
+gap; there is no directory-handle spawn primitive or filesystem isolation promised here.
+
+The adapter owns timeout and abort separately. Timeout marks `timedOut: true`, requests SIGTERM,
+continues draining both pipes, escalates to SIGKILL after 500 ms if the owned child has not settled,
+and allows a further 2,000 ms for settlement. It reports runtime-provided exitCode/signalCode only
+after exit and observation settle. If termination still cannot be observed, it repeats the supported
+hard kill and reports a truthful execution failure rather than a fabricated completed result.
+Windows signal/termination behavior is delegated to Bun's platform implementation; a reported
+signal may be null. Linux runtime evidence does not prove native Windows behavior.
+
+Turn/tool AbortSignal triggers the same owned-child cleanup promptly, awaits settlement and throws
+the existing `AbortError`. It never becomes `timedOut: true` or publishes a stale completed result.
+There is no guarantee of descendant termination. Descendants can inherit pipe handles; after
+the direct child's exit, the adapter allows 1,000 ms for pipes to close, then cancels its readers
+and reports an observation failure if they remain open. This keeps inherited pipes from holding
+foreground observation indefinitely without claiming ownership of descendants.
+
+Exit 0 and non-zero exits are normal results. Spawn failures (ENOENT, permission/OS errors),
+missing/non-directory cwd, escaping paths and runtime observation failures use existing
+`TOOL_FAILED` events and model-visible recovery. No fake exit code 127, fallback executable or
+automatic retry is introduced. OS errors retain their code and approved relative input, avoiding
+absolute workspace-root leakage from internal diagnostics.
+
+The stable result is:
+
+```ts
+{
+  program, args, cwd, exitCode, signal, timedOut, durationMs,
+  stdout, stderr, stdoutTruncated, stderrTruncated, stdoutBytes, stderrBytes
+}
+```
+
+ExitCode and signal are nullable runtime observations. Duration uses `performance.now()` and is
+nonnegative. Separate stdout/stderr capture does not reconstruct global interleaving. Each pipe
+drains continuously into a fixed 2,048-byte head plus 6,144-byte tail ring, never an unbounded full
+buffer. Complete valid text at or below 8,192 UTF-8 bytes is returned unchanged. Larger output
+returns the first up-to-2,048 decoded UTF-8 bytes, `\n[... output truncated ...]\n`, and the last
+up-to-6,116 decoded UTF-8 bytes (the 28-byte marker counts inside the 8,192-byte text cap).
+Partial valid UTF-8 characters at slice boundaries are omitted; invalid sequences decode with
+replacement. Replacement expansion is capped as well, even when raw bytes were below the cap.
+Truncation flags describe lost retained observation; counters always count actual observed
+process bytes, independently of decoding or retention. Hitting retention caps never stops pipe reads.
+
+Only bounded results enter the normal `tool.call.completed` JSONL event/reducer/replay path;
+no terminal database or raw output log exists. Replay requires no process launch or external output.
+Active context receives the exact bounded result. Phase 16 budgeting remains unchanged: mandatory
+active history can still overflow with non-ASCII output, large arguments or repeated process calls;
+the existing `ContextBudgetExceededError` reports that limit without truncating history or enlarging
+context. Phase 17 search projection still excludes raw tool bodies (only generic tool names flow
+through), and Phase 18 semantic evidence/schema/file projection never ingest process stdout/stderr.
+No semantic-memory lifecycle, opportunistic scheduling or model-selection policy changes apply.
+
+**This is approved local code execution, not a sandbox.** The guarantees are exact prepared argv,
+explicit approval, no implicit shell, checked workspace cwd/explicit paths, bounded observation and
+owned-child timeout/cancellation cleanup, and no model-controlled env/stdin/TTY/background options.
+The process still runs with the user's OS permissions: filesystem/network confinement, descendant
+containment, read-only purity and protection from intentionally approved malicious executables
+are not guaranteed. Explicit shells, language runtimes and package scripts may execute arbitrary
+code. No command allowlist, shell/interpreter denylist, automatic package installation, privilege
+injection or project-specific verification policy is added.
 
 ### Composition
 

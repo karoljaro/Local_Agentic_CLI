@@ -66,7 +66,7 @@ describe('single-system structured memory compiler', () => {
 			1,
 		);
 	});
-	test('one combined system section, all nine tools, exact active/previous and retrieved canonical payload', () => {
+	test('one combined system section, all ten tools, exact active/previous and retrieved canonical payload', () => {
 		const s = state();
 		const tools = createLocalToolExecutor().listTools();
 		const c = builder().build(
@@ -80,7 +80,7 @@ describe('single-system structured memory compiler', () => {
 		expect(c.messages.filter((message) => message.role === 'system')).toHaveLength(1);
 		expect(c.messages.slice(1)).toEqual(s.messages);
 		expect(c.tools).toEqual(tools);
-		expect(c.tools).toHaveLength(9);
+		expect(c.tools).toHaveLength(10);
 		expect(c.contextProfile).toEqual({ contextWindowTokens: 16384, maxOutputTokens: 4096 });
 		expect(c.diagnostics.safetyAllowanceTokens).toBe(1024);
 		expect(c.diagnostics.retrievedTurnCount).toBe(1);

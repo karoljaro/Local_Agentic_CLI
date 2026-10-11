@@ -28,6 +28,7 @@ const toolNames = [
 	'replace_file',
 	'move_file',
 	'delete_path',
+	'run_process',
 ];
 const toolResponse = (name: string, args: unknown) =>
 	new Response(
@@ -199,7 +200,7 @@ describe('production instruction surface at model request boundaries', () => {
 		['blank override', { SYSTEM_PROMPT: ' \t\n ' }],
 		['explicit override', { SYSTEM_PROMPT: '  Use current files.\nAnswer briefly.  ' }],
 	] as const) {
-		test(`sends ${name} once and all nine definitions through stale-edit recovery`, async () => {
+		test(`sends ${name} once and all ten definitions through stale-edit recovery`, async () => {
 			const { directory, cleanup } = await createTempDirectory('phase15-instructions-');
 			try {
 				const path = join(directory, 'settings.conf');

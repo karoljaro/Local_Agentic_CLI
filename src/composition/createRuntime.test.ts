@@ -535,7 +535,7 @@ describe('Phase 16 captured production context path', () => {
 							body.messages.filter((message: { role: string }) => message.role === 'system'),
 						).toEqual([{ role: 'system', content: resolved.SYSTEM_PROMPT }]);
 						expect(body.tools).toEqual(definitions.map(toOllamaTool));
-						expect(body.tools).toHaveLength(9);
+						expect(body.tools).toHaveLength(10);
 						expect(body.messages).toEqual(compiled.messages.map(toOllamaMessage));
 						expect(compiled.contextProfile).toEqual({ contextWindowTokens, maxOutputTokens });
 						expect(compiled.contextProfile).toBe(contexts[0]!.contextProfile);

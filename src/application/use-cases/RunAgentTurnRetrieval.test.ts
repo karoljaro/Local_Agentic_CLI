@@ -96,7 +96,7 @@ describe('RunAgentTurn retrieval and durable replay', () => {
 			const fresh = new SessionService(new JsonlSessionStore(join(directory, 'sessions')));
 			const replay = await fresh.readSessionState(sessionId);
 			for (const input of model.receivedInputs) {
-				expect(input.tools).toHaveLength(9);
+				expect(input.tools).toHaveLength(10);
 				expect(input.contextProfile).toEqual({ contextWindowTokens: 16384, maxOutputTokens: 4096 });
 				expect(
 					input.messages
