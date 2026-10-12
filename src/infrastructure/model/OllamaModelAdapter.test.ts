@@ -9,6 +9,118 @@ import { withMockedFetch } from '@/test-support/withMockedFetch';
 import { OllamaModelAdapter } from './OllamaModelAdapter';
 
 describe('OllamaModelAdapter', () => {
+	// Ollama v0.40.2 api/types.go and server/routes.go emit complete calls in
+	// message.tool_calls, with object arguments and optional provider IDs/indexes.
+	for (const content of [undefined, '', 'Reading the file.'] as const) {
+		test(`consumes native object calls with ${JSON.stringify(content)} content and provider metadata`, async () => {
+			await withMockedFetch(
+				async () =>
+					Response.json({
+						message: {
+							role: 'assistant',
+							...(content === undefined ? {} : { content }),
+							tool_calls: [
+								{
+									id: 'call_provider_1',
+									function: { index: 0, name: 'read_file', arguments: { path: 'example.txt' } },
+								},
+							],
+						},
+						done: true,
+						done_reason: 'stop',
+					}),
+				async () => {
+					expect(
+						await collectAsyncIterable(
+							new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL).streamChat({
+								messages: [],
+								contextProfile: TEST_CONTEXT_PROFILE,
+							}),
+						),
+					).toEqual([
+						{
+							contentDelta: content ?? '',
+							toolCalls: [{ name: 'read_file', arguments: { path: 'example.txt' } }],
+							finishReason: 'stop',
+						},
+					]);
+				},
+			);
+		});
+	}
+
+	test('accumulates complete native calls across byte boundaries, chunks and a terminal frame without newline', async () => {
+		const call = (index: number, path: string) => ({
+			id: `call_provider_${index}`,
+			function: { index, name: 'read_file', arguments: { path } },
+		});
+		const frames = [
+			{
+				message: { role: 'assistant', content: 'Reading ✓.', tool_calls: [call(0, 'a')] },
+				done: false,
+			},
+			{ message: { role: 'assistant', tool_calls: [call(1, 'b'), call(2, 'c')] }, done: false },
+			{
+				message: { role: 'assistant', content: '', tool_calls: [call(3, 'd')] },
+				done: true,
+				done_reason: 'stop',
+			},
+		];
+		const bytes = new TextEncoder().encode(frames.map((frame) => JSON.stringify(frame)).join('\n'));
+		await withMockedFetch(
+			async () =>
+				new Response(
+					new ReadableStream({
+						start(controller) {
+							for (const byte of bytes) controller.enqueue(new Uint8Array([byte]));
+							controller.close();
+						},
+					}),
+				),
+			async () => {
+				const chunks = await collectAsyncIterable(
+					new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL).streamChat({
+						messages: [],
+						contextProfile: TEST_CONTEXT_PROFILE,
+					}),
+				);
+				expect(chunks.map((chunk) => chunk.contentDelta)).toEqual(['Reading ✓.', '', '']);
+				expect(chunks.flatMap((chunk) => chunk.toolCalls ?? [])).toEqual(
+					['a', 'b', 'c', 'd'].map((path) => ({ name: 'read_file', arguments: { path } })),
+				);
+				expect(chunks.at(-1)?.finishReason).toBe('stop');
+			},
+		);
+	});
+
+	test('retains existing JSON-string argument compatibility only inside the native field', async () => {
+		// Adapter compatibility coverage; the installed local API emits objects.
+		await withMockedFetch(
+			async () =>
+				Response.json({
+					message: {
+						tool_calls: [{ function: { name: 'read_file', arguments: '{"path":"example.txt"}' } }],
+					},
+					done: true,
+				}),
+			async () => {
+				expect(
+					await collectAsyncIterable(
+						new OllamaModelAdapter('http://localhost:11434', SYNTHETIC_MODEL).streamChat({
+							messages: [],
+							contextProfile: TEST_CONTEXT_PROFILE,
+						}),
+					),
+				).toEqual([
+					{
+						contentDelta: '',
+						toolCalls: [{ name: 'read_file', arguments: { path: 'example.txt' } }],
+					},
+				]);
+			},
+		);
+	});
+
 	for (const [keepAlive, expected] of [
 		[' \t ', undefined],
 		[' 2m ', '2m'],

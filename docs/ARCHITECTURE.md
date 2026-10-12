@@ -59,6 +59,11 @@ execution uses the prepared function without another lookup. Raw public executio
 `ToolRunner` owns approval, cancellation, lifecycle persistence, and result references; providers
 never request approval. Results enter model context only after a completed or failed event.
 
+Only structured `ModelStreamChunk.toolCalls` can propose tool execution. Assistant `contentDelta`
+remains ordinary text even when it resembles a function call, JSON, or tagged tool syntax;
+it is never recovered into a call. Native calls are still untrusted inputs and must pass the
+same complete-batch schema preparation, conditional approval, and prepared `ToolRunner` execution.
+
 `list_directory` defaults to one level, permits depth 1–5, and returns bounded typed entries.
 `find_files` performs bounded path discovery with `*`, `**`, and `?` glob matching.
 `search_text` accepts literal single-line text and uses a fixed ripgrep binary/options; incremental NDJSON parsing,
