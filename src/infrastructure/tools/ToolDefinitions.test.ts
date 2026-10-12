@@ -70,6 +70,15 @@ const properties = (tool: ToolDefinition): Record<string, Record<string, unknown
 	tool.parameters['properties'] as Record<string, Record<string, unknown>>;
 
 describe('production model tool definitions', () => {
+	test('keeps all ten Phase 19 tool definitions unchanged while verification strategy lives in system guidance', () => {
+		const tools = createLocalToolExecutor().listTools();
+		expect(tools).toHaveLength(10);
+		expect(JSON.stringify(tools).length).toBe(5132);
+		expect(createHash('sha256').update(JSON.stringify(tools)).digest('hex')).toBe(
+			'f84801a5ccdf6bbe2d0c83db6e5fe25c82c7d617a28af83a0b53d80165068e95',
+		);
+		expect(JSON.stringify(tools.map(toOllamaTool)).length).toBe(5043);
+	});
 	test('exposes exactly the intended tools with simple distinct inputs and lifecycle metadata', () => {
 		const definitions = createLocalToolExecutor().listTools();
 		expect(definitions.map((tool) => tool.name)).toEqual(

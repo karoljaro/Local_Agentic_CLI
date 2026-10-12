@@ -27,7 +27,8 @@ import { TEST_CONTEXT_PROFILE } from '@/test-support/modelFixtures';
 import { abortError } from './cancellation';
 import { ToolRunner, ToolBatchValidationError, type ToolApprovalHandler } from './ToolRunner';
 import { SessionService } from './SessionService';
-import { ContextBuilder, ContextBudgetExceededError } from './ContextBuilder';
+import { ContextBuilder } from './ContextBuilder';
+import { estimateMessageTokens } from './ModelRequestEstimator';
 import { projectHistoryTurn } from './HistoryTurns';
 import { SessionMemoryService } from './SessionMemoryService';
 
@@ -320,14 +321,27 @@ test('bounded real process events persist/replay normally; stdout/stderr are exc
 			systemPrompt: 'Use workspace tools.',
 			contextProfile: TEST_CONTEXT_PROFILE,
 		});
-		expect(compiler.build(state, registry.listTools()).messages.slice(1)).toEqual(state.messages);
+		const compiled = compiler.build(state, registry.listTools());
+		expect(compiled.messages.slice(1, -1)).toEqual(state.messages.slice(0, -1));
+		const observation = JSON.parse(compiled.messages.at(-1)!.content);
+		expect(observation.contextProjection).toMatchObject({
+			stdoutTruncated: true,
+			stderrTruncated: true,
+		});
+		expect(observation).toMatchObject({
+			stdoutBytes: PROCESS_FIXTURE_LARGE_BYTES,
+			stderrBytes: PROCESS_FIXTURE_LARGE_BYTES,
+			stdoutTruncated: true,
+			stderrTruncated: true,
+		});
+		expect(compiler.build(replayed, registry.listTools())).toEqual(compiled);
 	} finally {
 		memory.dispose();
 		await temp.cleanup();
 	}
 });
 
-test('bounded output can still overflow mandatory active context; the existing compiler reports rather than truncates', () => {
+test('the Phase 19 overflow observation fits its model projection without changing canonical output or context limits', () => {
 	const f = harness();
 	const output = result(invocation);
 	output.stdout = '\ufffd'.repeat(2700);
@@ -349,6 +363,14 @@ test('bounded output can still overflow mandatory active context; the existing c
 		systemPrompt: 'Use workspace tools.',
 		contextProfile: TEST_CONTEXT_PROFILE,
 	});
-	expect(() => compiler.build(state, f.registry.listTools())).toThrow(ContextBudgetExceededError);
+	// Preserve the original overflow evidence, now resolved only at request projection.
+	expect(estimateMessageTokens(state.messages[1]!)).toBeGreaterThan(11264);
+	const compiled = compiler.build(state, f.registry.listTools());
+	expect(compiled.diagnostics.estimatedInputTokens).toBeLessThanOrEqual(11264);
+	expect(compiled.contextProfile).toEqual(TEST_CONTEXT_PROFILE);
+	expect(JSON.parse(compiled.messages.at(-1)!.content)).toMatchObject({
+		exitCode: 0,
+		contextProjection: { stdoutTruncated: true, stderrTruncated: true },
+	});
 	expect(state.messages[1]!.content).toBe(JSON.stringify(output));
 });

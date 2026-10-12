@@ -18,8 +18,38 @@ describe('readConfig', () => {
 		expect(prompt).toContain('user-visible ambiguity');
 		expect(prompt).toContain('Respect denials');
 		expect(prompt).toContain('actual arguments and error');
-		expect(prompt.length).toBeLessThanOrEqual(400);
+		expect(prompt.length).toBeLessThanOrEqual(1_400);
 		expect(prompt).not.toMatch(/ollama|qwen|gemma|llama|ministral/i);
+	});
+
+	test('adds concise evidence-grounded verification, attribution, bounded repair and truthful completion guidance', () => {
+		const prompt = readConfig({}).SYSTEM_PROMPT;
+		for (const rule of [
+			'user/repository command restrictions and required checks',
+			'material changes',
+			'bounded proportionate run_process checks',
+			'instructions/configuration/CI or user/prior successful commands',
+			'reuse known commands',
+			'may remain unverified',
+			'non-zero exits are diagnostic results, not tool failures',
+			'evidenced failures relevant to requested work',
+			'inspect narrowly if uncertain',
+			'Reverify repairs when useful',
+			'failure persists without new evidence',
+			'speculative/unrelated or broaden scope',
+			'execution is denied/unavailable',
+			'timeout/output prevents safe progress',
+			'No automatic dependency installation, downloads or network recovery',
+			'Never claim checks passed or failures fixed without current-task tool or trustworthy user evidence',
+			'edits alone prove neither',
+			'failed/unrun/blocked/inconclusive',
+			'repairs without re-verification',
+		])
+			expect(prompt).toContain(rule);
+		expect(prompt.length).toBe(1390);
+		expect(prompt).not.toMatch(
+			/bun test|cargo test|dotnet test|npm test|package\.json|Cargo\.toml|always run|verificationRetryCount/,
+		);
 	});
 
 	test('uses defaults when env values are missing', () => {
@@ -27,7 +57,8 @@ describe('readConfig', () => {
 			OLLAMA_BASE_URL: 'http://localhost:11434',
 			OLLAMA_KEEP_ALIVE: '0',
 			SYSTEM_PROMPT:
-				'Use workspace-relative paths. For clear requests, choose tools and recover from correctable tool errors autonomously. Use known paths directly. Ask only about user-visible ambiguity or required information tools cannot safely obtain. Respect denials; stop if safe recovery is unavailable. If asked about a failed call, explain its actual arguments and error, then continue safe unfinished work.',
+				'Use workspace-relative paths. For clear requests, choose tools and recover from correctable tool errors autonomously. Use known paths directly. Ask only about user-visible ambiguity or required information tools cannot safely obtain. Respect denials; stop if safe recovery is unavailable. If asked about a failed call, explain its actual arguments and error, then continue safe unfinished work. ' +
+				'Respect user/repository command restrictions and required checks. Verify material changes with bounded proportionate run_process checks from instructions/configuration/CI or user/prior successful commands; reuse known commands. Tiny text edits or unavailable/disproportionate checks may remain unverified. Read exit status/stdout/stderr: non-zero exits are diagnostic results, not tool failures. Repair only evidenced failures relevant to requested work; inspect narrowly if uncertain. Reverify repairs when useful. Stop when failure persists without new evidence, fixes are speculative/unrelated or broaden scope, execution is denied/unavailable, or timeout/output prevents safe progress. No automatic dependency installation, downloads or network recovery. Never claim checks passed or failures fixed without current-task tool or trustworthy user evidence; edits alone prove neither. Report verified scope and failed/unrun/blocked/inconclusive checks; disclose repairs without re-verification.',
 			MODEL_CONTEXT_TOKENS: 16_384,
 			MODEL_MAX_OUTPUT_TOKENS: 4_096,
 		});

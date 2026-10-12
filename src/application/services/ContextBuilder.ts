@@ -8,6 +8,7 @@ import type { ModelMessage } from '@/domain/ModelMessage';
 import type { ToolDefinition } from '@/domain/Tool';
 import { MEMORY_TOKEN_CAP, type SessionMemory } from '@/domain/SessionMemory';
 import { renderSessionMemory } from './SessionMemoryRenderer';
+import { projectProcessObservation } from './ProcessObservation';
 import type { HistoryRetrieval } from './HistoryRetriever';
 import { groupMessagesIntoTurns, isRetrievableTurn } from './HistoryTurns';
 import {
@@ -93,6 +94,16 @@ export class ContextBuilder {
 		memory?: SessionMemory,
 	): CompiledContext {
 		const turns = groupMessagesIntoTurns(history);
+		// Project lazily so history beyond the budget cutoff is never serialized.
+		const projectedTurns = new Map<number, ModelMessage[]>();
+		const modelTurn = (index: number): ModelMessage[] => {
+			let turn = projectedTurns.get(index);
+			if (turn === undefined) {
+				turn = (turns[index] ?? []).map(projectProcessObservation);
+				projectedTurns.set(index, turn);
+			}
+			return turn;
+		};
 		const safetyAllowanceTokens = Math.max(
 			128,
 			Math.ceil(this.contextProfile.contextWindowTokens / 16),
@@ -105,7 +116,7 @@ export class ContextBuilder {
 			ESTIMATED_REQUEST_FRAMING_TOKENS +
 			estimateMessageTokens(this.systemMessage) +
 			tools.reduce((total, tool) => total + estimateToolTokens(tool), 0);
-		const activeTurn = turns.at(-1) ?? [];
+		const activeTurn = modelTurn(turns.length - 1);
 		const estimatedActiveTurnTokens = measureTurn(activeTurn);
 		let renderedMemory = renderSessionMemory(this.systemMessage.content, undefined);
 		let estimatedSelectedHistoryTokens = 0;
@@ -164,7 +175,7 @@ export class ContextBuilder {
 			index >= (semantic ? Math.max(0, turns.length - 2) : 0);
 			index -= 1
 		) {
-			const turnCost = measureTurn(turns[index]!);
+			const turnCost = measureTurn(modelTurn(index));
 			if (
 				estimatedFixedTokens +
 					estimatedActiveTurnTokens +
@@ -192,7 +203,7 @@ export class ContextBuilder {
 				seen.add(candidate.turnId);
 				const index = byId.get(candidate.turnId);
 				if (index === undefined || selectedIndices.has(index)) continue;
-				const cost = measureTurn(turns[index]!);
+				const cost = measureTurn(modelTurn(index));
 				if (
 					estimatedFixedTokens +
 						estimatedActiveTurnTokens +
@@ -212,8 +223,10 @@ export class ContextBuilder {
 			}
 		}
 		const selectedHistory = semantic
-			? [...selectedIndices].sort((a, b) => a - b).flatMap((index) => turns[index]!)
-			: turns.slice(firstSelectedTurn, -1).flat();
+			? [...selectedIndices].sort((a, b) => a - b).flatMap(modelTurn)
+			: turns
+					.slice(firstSelectedTurn, -1)
+					.flatMap((_, offset) => modelTurn(firstSelectedTurn + offset));
 		return {
 			messages: [
 				{ role: 'system', content: renderedMemory.content },

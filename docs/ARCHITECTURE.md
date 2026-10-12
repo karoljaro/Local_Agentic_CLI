@@ -27,7 +27,7 @@ Important pieces:
 - ports such as `ModelPort`, `SessionStorePort`, `ToolExecutorPort`, `WorkspaceFilePort`, and `WorkspaceSearchPort`;
 - `AgentLoop`, exported through the existing `RunAgentTurn` use-case name, for model rounds, context, streaming, and stop conditions;
 - `ToolRunner` for tool preparation, approval, execution, per-turn deduplication, and tool lifecycle events;
-- `ContextBuilder`, which compiles exact current/history messages and optional derived notes within the configured context/output/safety budget;
+- `ContextBuilder`, which compiles current/history messages, request-only process observations and optional derived notes within the configured context/output/safety budget;
 - `SessionMemoryService` and `ModelSessionMemoryUpdater`, which maintain optional derived session state through exact event projection and bounded semantic deltas;
 - `InMemoryAgentMetrics`, which retains bounded resource summaries for the latest completed turns;
 - `SessionReducer`, which rebuilds chat/model state from durable events;
@@ -180,10 +180,11 @@ process bytes, independently of decoding or retention. Hitting retention caps ne
 
 Only bounded results enter the normal `tool.call.completed` JSONL event/reducer/replay path;
 no terminal database or raw output log exists. Replay requires no process launch or external output.
-Active context receives the exact bounded result. Phase 16 budgeting remains unchanged: mandatory
-active history can still overflow with non-ASCII output, large arguments or repeated process calls;
-the existing `ContextBudgetExceededError` reports that limit without truncating history or enlarging
-context. Phase 17 search projection still excludes raw tool bodies (only generic tool names flow
+ContextBuilder applies the request-only projection described below. Phase 16 budgeting remains
+unchanged: arbitrary large user/file content, exact call arguments, repeated process observations
+or small custom profiles can still overflow mandatory history. The existing
+`ContextBudgetExceededError` reports that limit without enlarging context. Phase 17 search
+projection still excludes raw tool bodies (only generic tool names flow
 through), and Phase 18 semantic evidence/schema/file projection never ingest process stdout/stderr.
 No semantic-memory lifecycle, opportunistic scheduling or model-selection policy changes apply.
 
@@ -195,6 +196,81 @@ containment, read-only purity and protection from intentionally approved malicio
 are not guaranteed. Explicit shells, language runtimes and package scripts may execute arbitrary
 code. No command allowlist, shell/interpreter denylist, automatic package installation, privilege
 injection or project-specific verification policy is added.
+
+### Verification and repair behavior
+
+Verification belongs to the model. The default system guidance asks it to verify material changes
+with a relevant, reasonably bounded non-interactive command when workspace/conversation evidence
+supports one. Focused tests, typechecks, build/check, formatter/linter checks and project scripts
+are verification classes, not an executable matrix. Instructions, existing configuration/scripts,
+CI, explicit user commands and successful commands in the current task ground command choice.
+Known commands and paths need no rediscovery; existing file/search tools suffice for inspection.
+User/repository requirements, prescribed scope/order and explicit command restrictions take precedence.
+
+Inspection/explanation, tiny text-only edits, unavailable meaningful verification or disproportionate
+execution cost may finish unverified. There is no post-edit runner, command detector, required
+process-before-final barrier, automatic retry or persisted verification-state subsystem. The ten
+tool descriptions and Phase 19 execution semantics are unchanged. A nonblank system override still
+replaces the default guidance.
+
+Exit 0 establishes success of that exact command. Non-zero is a completed diagnostic observation,
+not a tool infrastructure failure. The model examines exit/signal/timeout and stdout/stderr before
+attributing a failure. Changed file/line/symbol, focused behavior or a direct consequence can support
+repair. Untouched unrelated code, known baseline failures, missing services/toolchains or uncertain
+attribution do not justify speculative edits. Inspect narrowly or report uncertainty. A concrete
+relevant failure preventing requested completion and a supported corrective change permit bounded
+repair, followed by useful re-verification.
+
+Stop when the same failure persists without new evidence, the next fix is speculative/unrelated or
+materially broadens scope, a prerequisite/command is missing, execution is denied, timeout has no
+safe narrower check, output/context is insufficient, or genuine user input is needed. The unchanged
+generic loop permits twelve model rounds and their requested batches, then reports
+`TOOL_ITERATION_LIMIT_REACHED`; no repair-specific counter exists. Each further process is a
+deliberate model call with fresh normal approval. Denial still terminates the turn; no alternate
+hidden execution. No automatic dependency installation, downloads or network recovery.
+
+Never claim a test, build, typecheck, lint, formatter or other command passed, or that a failure was
+fixed, without actual current-task tool evidence or trustworthy user evidence. An edit alone proves
+neither. Report the exact observed scope: narrow success cannot establish broad validation. Disclose
+failed, partial, unrun, denied, unavailable, blocked or inconclusive checks, and a repair without
+re-verification. No rigid final-answer template, natural-language validator or second model enforces
+this contract. Deterministic scripted decisions verify runtime/evidence behavior; a real model's
+adherence remains behavioral and the bounded live smoke is supplemental.
+
+### Process observation context projection
+
+The Phase 19 canonical result retains its original up-to-8,192 UTF-8 bytes per stream. Two maximum
+non-ASCII streams can exceed the unchanged default estimated input allowance. ContextBuilder
+therefore lazily projects only valid completed `run_process` observations in considered turns before
+estimation/selection. Canonical JSONL, reducer content, approval authority and replay remain exact;
+the same pure projection is recomputed after resume and for selected historical observations.
+Errors and unrelated tool results are untouched. History beyond the budget cutoff is not serialized.
+
+Model-facing text limits, inclusive of the marker, are **1,024 UTF-8 bytes each for stdout/stderr**,
+**256 each for program/cwd**, and **512 for oversized args JSON preview**. Small fields stay exact;
+args remain an array when its serialized UTF-8 size is at most 512 bytes, otherwise a bounded
+equivalent `{ count, preview }`. Approved/canonical assistant-call argv stays exact. Identity-preview
+compaction prevents duplicate large result metadata from consuming the observation allowance; it
+does not expand the limits for large mandatory calls.
+
+For a string exceeding its limit, retain the first `floor((limit - 40) / 2)` UTF-8 bytes and last
+`limit - 40 - head` bytes around `\n[... context projection truncated ...]\n` (40 bytes).
+Omit partial UTF-8 characters at boundaries. Phase 19's invalid UTF-8 replacements are already
+decoded text; the projection preserves retained replacements and bounds their UTF-8 size. Streams
+remain separate. Original exitCode/signal/timedOut/durationMs, stdoutBytes/stderrBytes and
+stdoutTruncated/stderrTruncated remain visible. Additional context-only `contextProjection`
+flags (`programTruncated`, `argsTruncated`, `cwdTruncated`, `stdoutTruncated`, `stderrTruncated`)
+describe this second shortening layer, independently of execution retention. Entire small results
+remain byte-identical and receive no redundant context flags.
+
+Bounds were derived with Phase 16's existing conservative serialized UTF-8 estimator, including
+nested JSON escaping. The default profile remains 16,384 total / 4,096 output / 1,024 safety,
+allowing 11,264 estimated input tokens. A 2,048-byte stream cap can overflow ordinary mandatory
+structure on control-character output; the chosen 1,024-byte cap and small identity bounds fit one
+maximum retained observation alongside ordinary inspection/edit/call context. These estimates do
+not claim exact tokenizer counts or safety for arbitrary accumulated turns/custom profiles.
+Unrelated mandatory overflow still fails. Raw and projected process bodies never enter Phase 17
+embedding/search projection or Phase 18 semantic-memory evidence; their contracts remain unchanged.
 
 ### Composition
 
@@ -283,10 +359,11 @@ current user instructions, workspace/tool evidence and conflicting exact history
 Exact file activity and application failures are projected from committed events, separately from
 model interpretations of goals, decisions, constraints and task state.
 
-The compiler reserves mandatory system/tools/exact active history/output/safety before admitting
-bounded notes. It then includes the exact previous whole turn when it fits and Phase 17's exact
-retrieved older turns where available; unavailable retrieval uses Phase 16 recency fallback.
-This precedence and exactness are application contracts, not guarantees about a model's next answer.
+The compiler reserves mandatory system/tools/active chain/output/safety before admitting bounded
+notes. It then includes the previous whole turn when it fits and Phase 17's retrieved older turns
+where available; unavailable retrieval uses Phase 16 recency fallback. Process observations use
+the request-only projection above; all other selected payloads stay exact. This precedence is an
+application contract, not a guarantee about a model's next answer.
 
 ### Mechanical Provider Capability
 
@@ -376,8 +453,9 @@ Cancelled, superseded and disposed operations discard late extraction rather tha
 
 Missing, corrupt, incompatible, foreign or invalid-provenance memory yields no semantic notes;
 canonical events rebuild deterministic observations without inference or semantic backfill. Empty
-memory contributes no system section. The next turn uses exact canonical active/current history,
-budgeted previous/retrieved history and any still-valid prior notes without waiting for freshness.
+memory contributes no system section. The next turn uses the canonical active/current chain with
+the request-only process projection, budgeted previous/retrieved history and any still-valid prior
+notes without waiting for freshness.
 Canonical storage/model/context errors retain their ordinary behavior; semantic fallback does not
 hide them. Losing optional updates on exit cannot lose the committed answer.
 

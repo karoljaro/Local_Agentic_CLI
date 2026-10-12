@@ -63,6 +63,12 @@ user prompt
 
 If a tool requiring approval is denied, the turn ends immediately. This prevents the model from repeatedly requesting the same action until the tool iteration limit is reached.
 
+The model chooses proportionate verification for material changes using commands supported by
+project/user evidence. Every check needs normal process approval; non-zero exits may justify a
+relevant bounded repair. There is no automatic test runner. Completion must state the actual
+verification scope, including checks not run or blocked and repairs not reverified.
+See the [verification contract](docs/ARCHITECTURE.md#verification-and-repair-behavior).
+
 ## Tools
 
 File-tool paths and process cwd are relative to the workspace root. The ten tools include
@@ -245,7 +251,7 @@ MODEL_MAX_OUTPUT_TOKENS=4096
 
 Defaults are defined in `src/composition/config.ts`.
 
-Leave `SYSTEM_PROMPT` unset or blank to use the built-in guidance for workspace-relative paths, autonomous tool choices, safe recovery and user-visible clarification. A nonblank value replaces that guidance.
+Leave `SYSTEM_PROMPT` unset or blank to use the built-in guidance for workspace-relative paths, autonomous tool choices, safe recovery, evidence-grounded verification and truthful completion. A nonblank value replaces that guidance.
 
 `MODEL_CONTEXT_TOKENS` sets the total model window; `MODEL_MAX_OUTPUT_TOKENS` reserves the
 maximum generation space. Both must be positive integers, with output smaller than the window.
@@ -260,11 +266,14 @@ one estimated token per three ASCII bytes, one per non-ASCII byte, plus framing 
 These are estimates, not exact model tokenizer counts. Safety is `max(128, ceil(total / 16))`
 tokens; unusual model templates/tokenizers may still exceed estimates.
 
-The entire current user turn stays exact across tool rounds. When semantic retrieval is unavailable,
+The current user/tool chain stays complete across tool rounds; large process observations use a
+deterministic context-only head/tail projection (1,024 UTF-8 bytes per stream), with status, original
+byte counts and separate truncation flags. Canonical process results retain up to 8,192 bytes per
+stream. When semantic retrieval is unavailable,
 previous turns are retained as a contiguous recent window, newest first, then sent chronologically.
 If the next older complete turn does not fit, selection stops; its calls/results drop together.
 Durable events and resumed transcripts remain complete. An oversized active request fails before
-model invocation instead of truncating user text or tool results or reducing the output reservation.
+model invocation without reducing the output reservation or rewriting other mandatory content.
 The former `MAX_CONTEXT_CHARACTERS` setting is removed; migrate to
 these two token settings rather than converting its character value.
 
@@ -276,10 +285,11 @@ a response stopped; prompt/output usage, when reported, is diagnostic only.
 Semantic history retrieval is optional. Set `HISTORY_EMBEDDING_MODEL` to an already installed Ollama
 embedding model; it is independent of `OLLAMA_MODEL`, `TEST_MODEL` and the chat model preference. No
 embedding model is selected or downloaded automatically. With retrieval available, each request
-keeps the active turn exact, the immediately previous complete turn exact when it fits, and at most
+keeps the active chain, the immediately previous complete turn when it fits, and at most
 three relevant older complete turns. Old candidates must meet cosine similarity 0.65; unused input
 budget stays unused. All selected content uses the same 16384-token window, 4096-token output
-reservation and default 1024-token safety allowance. Token counts remain estimates.
+reservation and default 1024-token safety allowance. The same process-observation projection
+applies to selected history; other payloads remain exact. Token counts remain estimates.
 
 The disposable index lives under `.agent/history-index/<session-id>.bin`, contains vectors and
 source metadata rather than another transcript, and is rebuilt from reducer-owned durable JSONL
