@@ -20,7 +20,7 @@ const RESPONSE_SCHEMA = z.toJSONSchema(MemoryDeltaSchema) as Record<string, unkn
 export class ModelSessionMemoryUpdater implements SessionMemoryUpdaterPort {
 	constructor(
 		private readonly model: ModelPort,
-		private readonly profile: ModelContextProfile,
+		private readonly profile: ModelContextProfile | (() => ModelContextProfile),
 		private readonly selectedIdentity?: () => string | undefined,
 	) {}
 	async update(input: MemoryUpdateInput): Promise<unknown> {
@@ -45,9 +45,10 @@ export class ModelSessionMemoryUpdater implements SessionMemoryUpdaterPort {
 			),
 			files: input.memory.files.map(({ path, activity, from }) => ({ path, activity, from })),
 		};
+		const profile = typeof this.profile === 'function' ? this.profile() : this.profile;
 		const contextProfile = {
-			contextWindowTokens: this.profile.contextWindowTokens,
-			maxOutputTokens: Math.min(1024, this.profile.maxOutputTokens),
+			contextWindowTokens: profile.contextWindowTokens,
+			maxOutputTokens: Math.min(1024, profile.maxOutputTokens),
 		};
 		const messages = [
 			{

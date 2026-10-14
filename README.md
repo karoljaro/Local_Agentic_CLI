@@ -237,26 +237,86 @@ The CLI uses the current terminal directory as the workspace, so file tools oper
 
 ## Configuration
 
-Configuration is read from environment variables. A `.env` file can be used.
+Use `/settings` to inspect, edit, validate and save preferences inside OpenTUI. A clean installation
+starts with built-in defaults and requires no `.env` or available Ollama server to edit settings.
+Use ↑/↓ to select, Enter to edit and confirm a save, Esc to cancel/back, and R to prepare a reset
+of the selected setting to its built-in default. Reset still requires Enter; there is no Reset All.
+PgUp/PgDn scroll the selected setting's details. Mouse clicks select/edit while the modal is open;
+closing it restores the chat's terminal-native selection. Unsaved text is retained when an error
+dialog or model/session activity occurs. Opening Settings does not cancel active generation.
 
-```env
-OLLAMA_BASE_URL=http://localhost:11434
-# Optional explicit override; use a name from the installed-model picker:
-# OLLAMA_MODEL=<installed-model-name>
-# Optional override; leave unset to keep the built-in tool autonomy and recovery guidance:
-# SYSTEM_PROMPT=Use workspace-relative paths.
-MODEL_CONTEXT_TOKENS=16384
-MODEL_MAX_OUTPUT_TOKENS=4096
-# Optional; independently installed embedding model for current-session history:
-# HISTORY_EMBEDDING_MODEL=<installed-embedding-model>
+| Setting | First-run default | Application rule |
+| --- | --- | --- |
+| Ollama server URL | `http://localhost:11434` | Saved for restart; current endpoint displayed separately |
+| Default model | Automatic, no forced model | Existing picker; persisted only after confirmed selection; R clears startup preference on restart |
+| Keep alive | `0`, unload after request | Next provider request; choices include 5m, 30m, indefinite (`-1`) and provider default |
+| Context window | 16,384 tokens | Next new turn, with one immutable budget across its requests/tool continuations |
+| Max output tokens | 4,096 tokens | Next new turn, including output reservation in ContextBuilder |
+
+Model selection waits until the current turn/session discovery finishes. It reuses `/model`,
+does not download/preload models and does not prove VRAM residency. Retention controls ordinary
+requests, including bounded memory extraction; explicit switching still unloads the old model
+with zero retention, and explicit activation uses the provider's load behavior. Existing valid
+legacy retention durations are preserved and selectable as the current duration. Theme and General
+sections are omitted: rendering already follows terminal colors, with no application theme switch;
+operational prompts, retrieval setup and internal limits are outside user Settings.
+
+Preferences use one human-readable, versioned `settings.json`:
+
+- Linux: `$XDG_CONFIG_HOME/codesh/settings.json`, falling back to `~/.config/codesh/settings.json`.
+- Windows: `%APPDATA%\codesh\settings.json` (fallback: the user's `AppData\Roaming`).
+- macOS: `~/Library/Application Support/codesh/settings.json`.
+
+For example, the complete default document is:
+
+```json
+{
+  "version": 1,
+  "preferences": {
+    "ollamaBaseUrl": "http://localhost:11434",
+    "lastSelectedModel": null,
+    "keepAlive": "0",
+    "contextWindowTokens": 16384,
+    "maxOutputTokens": 4096
+  }
+}
 ```
 
-Defaults are defined in `src/composition/config.ts`.
+The file can be read/edited without launching Codesh; restart after manual edits. Missing fields
+use built-in defaults. Unknown fields, unsupported versions, malformed JSON and invalid combinations
+are reported through the Error Dialog, with original bytes preserved and saving disabled until the
+file is repaired and Codesh restarted. Writes are limited to 16 KiB, use private files/directories
+where supported and replace the file atomically after validation. Conflicting saves within Codesh
+serialize; another process's active lock reports a retryable error. After a terminated process,
+remove a leftover `settings.json.lock` and matching `.tmp` files only after all Codesh processes
+exit. Cancellation before replacement preserves the previous document; a replacement already
+committed remains saved. Hardware/power-loss durability is not guaranteed.
 
-Leave `SYSTEM_PROMPT` unset or blank to use the built-in guidance for workspace-relative paths, autonomous tool choices, safe recovery, evidence-grounded verification and truthful completion. A nonblank value replaces that guidance.
+Production precedence is saved preferences → legacy fallbacks on a missing file → built-in defaults.
+For first-run compatibility only, `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `OLLAMA_KEEP_ALIVE`,
+`MODEL_CONTEXT_TOKENS` and `MODEL_MAX_OUTPUT_TOKENS` can seed preferences when there is no settings
+file. Bun's existing environment/`.env` loading remains; Codesh does not edit environment variables.
+Once a settings file exists, these legacy variables are ignored, including stale or invalid values;
+missing JSON fields use defaults. A save materializes all supported preferences, so a stale `.env`
+cannot undo a saved value or reset. The legacy workspace `.agent/model-preference.json` takes
+precedence over a legacy `OLLAMA_MODEL`, migrates deterministically when no settings file exists,
+and is archived as `.agent/model-preference.json.migrated` only after a confirmed settings write.
+Later startups use the shared application preference rather than importing another workspace's file.
+Migration failure preserves the old file and remembered selection and reports the failure; a retry
+through Settings can persist those values. Invalid legacy env is reported and can also be replaced
+through Settings. An existing archive is preserved; archive failure leaves the old file inactive.
 
-`MODEL_CONTEXT_TOKENS` sets the total model window; `MODEL_MAX_OUTPUT_TOKENS` reserves the
-maximum generation space. Both must be positive integers, with output smaller than the window.
+`SYSTEM_PROMPT` and `HISTORY_EMBEDDING_MODEL` remain explicit operational/development environment
+configuration, separate from preferences. Leave `SYSTEM_PROMPT` unset/blank for the unchanged built-in
+tool/recovery/verification guidance; a nonblank value replaces it. `TEST_MODEL` remains solely for
+optional development smoke scripts, is never imported or exposed, and is never a production default.
+Any model tag that the server lists can still be selected normally.
+
+Built-in preference defaults and shared validation are defined in `src/domain/UserSettings.ts`.
+Context accepts 8,192–1,048,576 tokens; output accepts 1–262,144. Both must be integers and leave
+at least 4,096 input tokens after output and the internal safety allowance (more if operational
+instructions/tools require it). Unsupported model context capabilities may still fail at the provider;
+these are application bounds, not promises about installed models or GPU memory.
 The defaults reserve 4,096 of 16,384 tokens for output. The 12,288-token theoretical input ceiling
 also leaves a 1,024-token safety allowance, so estimated input must fit within 11,264 tokens.
 Every Ollama inference request explicitly sends these context/output limits; daemon defaults
@@ -341,22 +401,17 @@ Similarity quality depends on the chosen embedding model; replacing a mutable mo
 dimension requires deleting the derived index to force rebuilding. Summaries, structured session
 memory and cross-session personal memory remain outside Phase 17.
 
-`OLLAMA_MODEL` is optional; unset or blank means no explicit model configuration. An installed
-explicit model wins over remembered preference. If it is unavailable, the CLI starts with a clear
-error and `/model` recovery; choosing another model affects this runtime without changing the
-external configuration. The next launch checks the explicit override again.
-
-Without an explicit override, startup uses the last successfully selected model if still installed,
+Startup uses the shared last successfully selected model if still installed,
 then the sole installed model. Multiple installed models require `/model`; zero installed models
 leave inference unavailable until you install and select one. Startup only discovers availability;
 it does not load or unload a model. Model-specific failures include `/model` recovery guidance;
 service, transport and permission failures retain their actual cause.
 
 Successful manual selection confirms provider activation, updates the header, and remembers the
-choice in `.agent/model-preference.json` as `{"lastSelectedModel":"<identifier>"}`. This small
-application preference is shared by sessions in the workspace. Writes use a temporary file and
-atomic rename; missing/corrupt preferences are ignored. A preference-write failure warns while
-keeping successful runtime activation. If activation fails after unloading the previous model,
+choice as `preferences.lastSelectedModel` in the same `settings.json` used by `/settings`.
+This application preference is shared by workspaces and sessions; Settings displays both the saved
+startup choice and the currently confirmed runtime model. A preference-write failure opens the
+Error Dialog while keeping successful runtime activation. If activation fails after unloading the previous model,
 the header shows no selected model and the attempted choice is not remembered.
 
 Resuming a session retains the current runtime model selection. Historical model IDs in session
@@ -371,9 +426,10 @@ Inside the chat:
 /model <ollama-model-name>
 /resume
 /changes
+/settings
 ```
 
-`/model` opens the local Ollama model picker. `/model <name>` switches the model directly for subsequent turns. `/resume` opens the session picker.
+`/model` opens the local Ollama model picker. `/model <name>` switches the model directly for subsequent turns. `/resume` opens the session picker. `/settings` opens persistent application preferences and uses the same model-selection workflow.
 
 In normal chat, drag without Shift to select visible text using your terminal's own highlight.
 In Fedora/Ptyxis, Ctrl+Shift+C uses the terminal's native Copy action. Codesh leaves mouse

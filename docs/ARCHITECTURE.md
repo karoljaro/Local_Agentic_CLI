@@ -4,6 +4,61 @@ Local Agentic CLI is currently a small local coding-agent MVP. The architecture 
 
 The project should stay simple. Add new layers only when they remove real duplication or make an existing boundary clearer.
 
+## Effective configuration and Settings
+
+Production terminal startup awaits `createConfiguredRuntime` before provider construction.
+`UserSettings` owns the production preference defaults and strict version-1 schema; `SettingsService`
+owns the validated saved values, sources, immutable startup endpoint and confirmed publication.
+`SettingsPort` exposes typed edits/reset and the existing `ModelPreferencePort`; rendering never
+reads/modifies environment variables or assembles provider requests.
+
+`JsonSettingsStore` uses the platform application config directory (`codesh/settings.json` in XDG/
+Windows roaming appdata, macOS Application Support). Reads are bounded to 16 KiB and reject symlink
+targets, invalid JSON/values, unknown fields and unsupported versions without overwriting bytes.
+Updates serialize a fresh validated read/modify operation, acquire an exclusive filesystem lock,
+write/sync a mode-0600 same-directory temporary file and rename atomically. A fingerprint check
+detects intervening manual edits before commit. Failed/cancelled pre-commit writes preserve the
+original; cleanup is awaited. Post-commit cancellation retains the successful document. Another
+process's lock fails visibly instead of losing updates. Terminated-process locks/scratch files
+require explicit cleanup after all instances exit; there is no watcher/retry timer or guaranteed
+power-loss durability. Existing parent-directory permissions are not changed.
+
+Saved preferences take precedence over ordinary legacy environment variables. Only when the file
+is absent do the five supported legacy fields seed values; the first successful save materializes
+the complete preference set. Missing keys in an existing version-1 document mean built-in defaults,
+never a hidden environment fallback. A valid legacy `.agent/model-preference.json` wins over the
+legacy model environment fallback, migrates once into the same store and is archived after confirmed
+persistence. A failed migration retains its selection/file and reports the problem; Settings can
+retry persistence. Invalid legacy env permits a validated replacement from Settings, while corrupt/
+unreadable files remain read-only. Existing archives survive; failed archival leaves an inactive file.
+`SYSTEM_PROMPT` and `HISTORY_EMBEDDING_MODEL` stay separate explicit operational configuration.
+`TEST_MODEL` and release/native diagnostics remain development/test infrastructure. Explicit
+`readConfig`/`createRuntime(config)` construction remains available to scripted boundaries; the
+production entry point always composes persisted settings first.
+
+Endpoint changes persist for restart; existing chat/catalog/embedding clients keep their startup
+endpoint. HTTP/HTTPS URLs support remote hosts/ports and proxy paths while rejecting credentials,
+query/fragment, invalid hosts/ports and controls. No validation probe/warmup is sent. Context/output
+changes construct a new immutable ContextBuilder at the next new turn; an active turn and its tool
+continuations retain their original profile. Every adapter request receives its compiler profile.
+Application bounds require context 8192–1048576, output 1–262144 and input capacity after output plus
+`max(128, ceil(context/16))` safety of at least `max(4096, fixed instruction/tool estimate + 1024)`.
+Reserves, retrieval, overflow detection and canonical history semantics are unchanged.
+
+Memory extraction snapshots the same effective profile at its own next operation, retaining its
+existing output cap and lifecycle. Keep-alive is snapshotted per provider request in the existing
+Ollama adapter; explicit activation/unload behavior is unchanged. Model picker and Settings reuse
+the same `ModelSelection` and preference owner. Selection commits/persists only after activation;
+write failure retains actual selection and opens the existing Error Dialog with a warning. Resetting
+the model clears the startup preference for restart without unloading/reselecting the active model.
+
+`TerminalApp` owns one native `SettingsView`, temporary editor focus, nested existing model picker,
+Error Dialog and shutdown cleanup. One edit is explicitly confirmed; validation is inline and save
+errors use Phase 21's bounded/redacted diagnostics. Pending restart/effective endpoint and saved/
+confirmed model are displayed separately. Local edits remain available during model discovery or
+generation; model selection waits for the current turn/discovery. Modal mouse reporting restores
+terminal-native chat selection on final closure. No alternate theme mechanism is introduced.
+
 ## Layers
 
 ### Domain

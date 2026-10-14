@@ -1,8 +1,8 @@
 export type CommandDefinition = {
-	name: '/model' | '/resume' | '/changes';
+	name: '/model' | '/resume' | '/changes' | '/settings';
 	usage: string;
 	description: string;
-	action: 'select-model' | 'resume-session' | 'workspace-changes';
+	action: 'select-model' | 'resume-session' | 'workspace-changes' | 'settings';
 	acceptsArgument: boolean;
 };
 
@@ -28,6 +28,13 @@ export const COMMANDS: readonly CommandDefinition[] = [
 		action: 'workspace-changes',
 		acceptsArgument: false,
 	},
+	{
+		name: '/settings',
+		usage: '/settings',
+		description: 'Inspect and edit application preferences',
+		action: 'settings',
+		acceptsArgument: false,
+	},
 ];
 
 export type ParsedCommand =
@@ -35,6 +42,7 @@ export type ParsedCommand =
 	| { type: 'switch-model'; modelName: string }
 	| { type: 'resume-session' }
 	| { type: 'workspace-changes' }
+	| { type: 'settings' }
 	| { type: 'invalid'; message: string };
 
 export const parseCommand = (input: string): ParsedCommand | null => {
@@ -61,6 +69,7 @@ export const parseCommand = (input: string): ParsedCommand | null => {
 	if (definition.action === 'workspace-changes') {
 		return { type: 'workspace-changes' };
 	}
+	if (definition.action === 'settings') return { type: 'settings' };
 
 	return argument.length === 0
 		? { type: 'select-model' }

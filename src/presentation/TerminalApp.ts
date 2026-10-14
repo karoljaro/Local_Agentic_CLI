@@ -19,12 +19,17 @@ import { Conversation, type ConversationChange } from './Conversation';
 import { ModelPicker } from './ModelPicker';
 import { SessionPicker } from './SessionPicker';
 import { WorkspaceChangesView } from './WorkspaceChangesView';
+import { SettingsView } from './SettingsView';
 import { getCommandSuggestions, parseCommand } from './commands/commands';
 import type { TranscriptEntry } from './TranscriptLog';
 import type { PresentationRuntime, StartupMode } from './types';
 import { createAppClipboard, copyResultFeedback, type CopyClipboard } from './clipboard';
 import { ErrorDialog } from './ErrorDialog';
-import { safeDiagnosticText, type OperationError } from './formatters/operationError';
+import {
+	operationError,
+	safeDiagnosticText,
+	type OperationError,
+} from './formatters/operationError';
 
 const ACCENT = '#8bbcd1';
 const MUTED = '#888888';
@@ -54,6 +59,7 @@ export class TerminalApp {
 	private readonly syntax: SyntaxStyle;
 	private readonly committed: Renderable[] = [];
 	private picker: SessionPicker | ModelPicker | WorkspaceChangesView | null = null;
+	private settingsView: SettingsView | null = null;
 	private readonly pickerLoads = new Set<Promise<void>>();
 	private approval: ApprovalPrompt | null = null;
 	private cancelApproval: (() => void) | null = null;
@@ -194,7 +200,7 @@ export class TerminalApp {
 			textColor: RGBA.defaultForeground(),
 			focusedTextColor: RGBA.defaultForeground(),
 			cursorColor: ACCENT,
-			placeholder: 'Ask anything · /model · /resume · /changes',
+			placeholder: 'Ask anything · /model · /resume · /changes · /settings',
 			placeholderColor: MUTED,
 			keyBindings: [
 				{ name: 'return', action: 'submit' },
@@ -234,7 +240,10 @@ export class TerminalApp {
 						this.cancelApproval = null;
 						prompt.close();
 						this.updateMouseMode();
-						if (!this.disposed) this.composer.focus();
+						if (!this.disposed) {
+							if (this.settingsView) this.settingsView.focus();
+							else this.composer.focus();
+						}
 					}
 					if (cancelled) reject(abortError());
 					else resolve(allowed);
@@ -258,6 +267,18 @@ export class TerminalApp {
 		this.ready = this.conversation.initialize().then(() => {
 			if (!this.disposed && initialMode === 'resume') this.openSessions();
 		});
+		const settingsProblem = runtime.settings?.getSnapshot().problem;
+		if (settingsProblem)
+			this.showError(
+				operationError(
+					'Could not load settings',
+					'Settings — startup',
+					runtime.settings?.getSnapshot().readOnly
+						? 'Configuration is unavailable. Original bytes are preserved; repair the file and restart before saving.'
+						: 'Legacy configuration could not be applied. Use /settings to save supported preferences; valid previous model preferences are retained.',
+					settingsProblem,
+				),
+			);
 	}
 
 	private readonly onConversationChange = (change: ConversationChange): void => {
@@ -351,6 +372,7 @@ export class TerminalApp {
 						: this.conversation.running
 							? 'Working…  Esc to cancel'
 							: '');
+		this.settingsView?.refresh();
 	}
 
 	private updateSuggestions(): void {
@@ -366,6 +388,7 @@ export class TerminalApp {
 			!this.disposed &&
 			!this.suggestionsDismissed &&
 			!this.picker &&
+			!this.settingsView &&
 			!this.approval &&
 			!this.errorDialog &&
 			matches.length > 0;
@@ -375,22 +398,27 @@ export class TerminalApp {
 		if (
 			this.disposed ||
 			this.picker ||
+			this.settingsView ||
 			this.approval ||
 			this.errorDialog ||
-			this.commandRequest ||
-			this.conversation.loading ||
-			this.conversation.running
+			this.commandRequest
 		)
 			return;
 		const prompt = this.composer.plainText.trim();
 		if (!prompt) return;
 		const command = parseCommand(prompt);
+		// Local Settings remains usable during discovery/generation; opening it never cancels a turn.
+		if (command?.type !== 'settings' && (this.conversation.loading || this.conversation.running))
+			return;
 		if (command === null) {
 			if (this.conversation.submit(prompt)) this.composer.clear();
 			return;
 		}
 		this.composer.clear();
 		switch (command.type) {
+			case 'settings':
+				this.openSettings();
+				break;
 			case 'select-model':
 				this.openModels();
 				break;
@@ -417,7 +445,19 @@ export class TerminalApp {
 		this.updateStatus();
 		try {
 			const switched = await this.conversation.switchModel(name, request.signal);
-			if (switched && !this.disposed && !request.signal.aborted) this.closePicker();
+			if (switched && !this.disposed && !request.signal.aborted) {
+				this.closePicker();
+				const model = this.runtime.getModelSelection();
+				if (model.status === 'selected' && model.warning)
+					this.showError(
+						operationError(
+							'Could not save model preference',
+							'Settings — model preference',
+							'Model selection was confirmed, but its preference was not saved. Check Settings before restarting.',
+							model.warning,
+						),
+					);
+			}
 		} finally {
 			if (this.commandRequest === request) this.commandRequest = null;
 			if (this.picker instanceof ModelPicker) this.picker.setCurrent();
@@ -442,7 +482,7 @@ export class TerminalApp {
 	}
 
 	private openSessions(): void {
-		if (this.disposed || this.approval || this.commandRequest) return;
+		if (this.disposed || this.approval || this.commandRequest || this.settingsView) return;
 		this.closePicker();
 		this.picker = new SessionPicker(
 			this.renderer,
@@ -463,6 +503,7 @@ export class TerminalApp {
 		if (
 			this.disposed ||
 			this.approval ||
+			this.settingsView ||
 			this.conversation.running ||
 			this.conversation.loading ||
 			this.commandRequest
@@ -473,6 +514,47 @@ export class TerminalApp {
 			this.closePicker(),
 		);
 		this.showPicker();
+	}
+
+	private openSettings(): void {
+		if (
+			this.disposed ||
+			this.approval ||
+			this.commandRequest ||
+			this.settingsView ||
+			!this.runtime.settings
+		)
+			return;
+		this.closePicker();
+		this.settingsView = new SettingsView(
+			this.renderer,
+			this.runtime.settings,
+			() => (this.commandRequest ? this.confirmedModel : this.runtime.getModelName()),
+			() => {
+				if (this.conversation.running || this.conversation.loading) return false;
+				this.openModels();
+				return true;
+			},
+			() => this.closeSettings(),
+			(error) => this.showError(error),
+		);
+		this.composer.blur();
+		this.suggestions.visible = false;
+		this.shell.add(this.settingsView.root);
+		this.settingsView.focus();
+		this.updateMouseMode();
+	}
+	private closeSettings(): void {
+		if (!this.settingsView) return;
+		this.closeError();
+		const view = this.settingsView;
+		this.settingsView = null;
+		view.close();
+		const work = view.whenIdle();
+		this.pickerLoads.add(work);
+		void work.finally(() => this.pickerLoads.delete(work));
+		this.updateMouseMode();
+		if (!this.disposed && !this.approval && !this.picker) this.composer.focus();
 	}
 
 	private showPicker(): void {
@@ -502,7 +584,12 @@ export class TerminalApp {
 		this.picker?.close();
 		this.picker = null;
 		this.updateMouseMode();
-		if (!this.disposed && !this.approval) this.composer.focus();
+		if (!this.disposed && !this.approval) {
+			if (this.settingsView) {
+				this.settingsView.refresh();
+				this.settingsView.focus();
+			} else this.composer.focus();
+		}
 	}
 
 	private readonly onKey = (key: KeyEvent): void => {
@@ -524,6 +611,13 @@ export class TerminalApp {
 			key.preventDefault();
 			key.stopPropagation();
 			this.errorDialog.handleKey(key);
+			return;
+		}
+		if (this.settingsView && !this.picker && !this.approval) {
+			if (this.settingsView.handleKey(key)) {
+				key.preventDefault();
+				key.stopPropagation();
+			}
 			return;
 		}
 		if (key.name === 'escape') {
@@ -678,7 +772,9 @@ export class TerminalApp {
 	};
 	private updateMouseMode(): void {
 		if (this.renderer.isDestroyed) return;
-		const interactive = !this.disposed && Boolean(this.picker || this.approval || this.errorDialog);
+		const interactive =
+			!this.disposed &&
+			Boolean(this.picker || this.settingsView || this.approval || this.errorDialog);
 		if (this.renderer.useMouse === interactive) return;
 		this.renderer.clearSelection();
 		this.renderer.useMouse = interactive;
@@ -695,8 +791,10 @@ export class TerminalApp {
 		this.unregisterApproval();
 		this.cancelApproval?.();
 		this.closePicker();
+		this.closeSettings();
 		const closing = Promise.allSettled([
 			this.conversation.dispose(),
+			this.runtime.settings?.whenIdle(),
 			...this.pickerLoads,
 			this.copyWork,
 			this.clipboard.dispose(),

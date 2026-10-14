@@ -4,7 +4,7 @@ import {
 	RGBA,
 	type CliRendererErrorEvent,
 } from '@opentui/core';
-import { createRuntime } from '@/composition/createRuntime';
+import { createConfiguredRuntime } from '@/composition/createConfiguredRuntime';
 import { TerminalApp } from './TerminalApp';
 import type { PresentationRuntime, StartupMode } from './types';
 
@@ -30,7 +30,7 @@ export async function startTerminal(
 	});
 	let app: TerminalApp;
 	try {
-		app = new TerminalApp(renderer, runtime ?? createRuntime(), initialMode);
+		app = new TerminalApp(renderer, runtime ?? (await createConfiguredRuntime()), initialMode);
 	} catch (error) {
 		renderer.destroy();
 		throw error;

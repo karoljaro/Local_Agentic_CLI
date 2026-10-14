@@ -12,6 +12,7 @@ export type SessionOption = {
 // Presentation consumes the real composition contract without a parallel method surface.
 export type PresentationRuntime = Pick<
 	Runtime,
+	| 'settings'
 	| 'createSessionId'
 	| 'dispose'
 	| 'getModelName'

@@ -20,16 +20,24 @@ import { toOllamaMessage, toOllamaTool } from './mappers/OllamaChatMapper';
 export class OllamaModelAdapter implements ModelPort, ModelMemoryPort, ModelActivationPort {
 	private readonly client: OllamaHttpClient;
 	private readonly modelName: string;
-	private readonly keepAlive: OllamaKeepAlive | undefined;
+	private readonly keepAlive: OllamaKeepAlive | undefined | (() => string);
 
-	constructor(baseUrl: string, modelName: string, keepAlive?: string | undefined) {
+	constructor(baseUrl: string, modelName: string, keepAlive?: string | (() => string) | undefined) {
 		this.client = new OllamaHttpClient(baseUrl);
 		this.modelName = normalizeOllamaModelName(modelName);
-		this.keepAlive = normalizeOllamaKeepAlive(keepAlive);
+		this.keepAlive =
+			typeof keepAlive === 'function' ? keepAlive : normalizeOllamaKeepAlive(keepAlive);
 	}
 
 	async *streamChat(input: ModelChatInput): AsyncIterable<ModelStreamChunk> {
 		validateModelContextProfile(input.contextProfile);
+		const retention = typeof this.keepAlive === 'function' ? this.keepAlive() : this.keepAlive;
+		const keepAlive =
+			retention === 'default'
+				? undefined
+				: typeof retention === 'string'
+					? normalizeOllamaKeepAlive(retention)
+					: retention;
 		try {
 			const response = await this.client.postJson({
 				path: '/api/chat',
@@ -38,7 +46,7 @@ export class OllamaModelAdapter implements ModelPort, ModelMemoryPort, ModelActi
 				body: {
 					model: this.modelName,
 					messages: input.messages.map(toOllamaMessage),
-					...(this.keepAlive === undefined ? {} : { keep_alive: this.keepAlive }),
+					...(keepAlive === undefined ? {} : { keep_alive: keepAlive }),
 					...(input.tools === undefined || input.tools.length === 0
 						? {}
 						: { tools: input.tools.map(toOllamaTool) }),

@@ -25,7 +25,13 @@ describe('commands', () => {
 			type: 'invalid',
 			message: 'Unknown command: /missing',
 		});
-		expect(getCommandSuggestions('/')).toHaveLength(3);
+		expect(getCommandSuggestions('/')).toHaveLength(4);
+		expect(parseCommand('/settings')).toEqual({ type: 'settings' });
+		expect(parseCommand('/settings extra')).toEqual({
+			type: 'invalid',
+			message: '/settings does not accept arguments.',
+		});
+		expect(getCommandSuggestions('/set').map((command) => command.name)).toEqual(['/settings']);
 		expect(getCommandSuggestions('/co')).toEqual([]);
 		expect(getCommandSuggestions('/cha').map((command) => command.name)).toEqual(['/changes']);
 		expect(getCommandSuggestions('/mo').map((command) => command.name)).toEqual(['/model']);

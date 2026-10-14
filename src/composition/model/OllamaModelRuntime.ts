@@ -9,12 +9,16 @@ export type { RuntimeListModelsOptions } from '@/application/services/ModelSelec
 
 /** Provider composition only; selection policy lives in the application layer. */
 export class OllamaModelRuntime extends ModelSelection {
-	constructor(config: AppConfig, preference: ModelPreferencePort = new JsonModelPreferenceStore()) {
+	constructor(
+		config: AppConfig,
+		preference: ModelPreferencePort = new JsonModelPreferenceStore(),
+		keepAlive?: () => string,
+	) {
 		super({
 			configuredModel: config.OLLAMA_MODEL,
 			catalog: new OllamaModelCatalog(config.OLLAMA_BASE_URL),
 			createModel: (name) =>
-				new OllamaModelAdapter(config.OLLAMA_BASE_URL, name, config.OLLAMA_KEEP_ALIVE),
+				new OllamaModelAdapter(config.OLLAMA_BASE_URL, name, keepAlive ?? config.OLLAMA_KEEP_ALIVE),
 			preference,
 		});
 	}

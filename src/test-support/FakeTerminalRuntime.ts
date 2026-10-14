@@ -7,9 +7,15 @@ import { assistantMessageCompletedEvent, promptSubmittedEvent } from './AgentEve
 import { SYNTHETIC_MODEL } from './modelFixtures';
 import type { ModelSelectionState } from '@/application/services/ModelSelection';
 import type { WorkspaceChangesPort } from '@/application/ports/WorkspaceChangesPort';
+import { SettingsService } from '@/application/services/SettingsService';
+import { InMemorySettingsStore } from './InMemorySettingsStore';
 
 export class FakeTerminalRuntime implements PresentationRuntime {
-	dispose(): void {}
+	readonly settingsStore = new InMemorySettingsStore();
+	settings = new SettingsService(this.settingsStore);
+	dispose(): void {
+		this.settings.dispose();
+	}
 	readonly workspacePath = '/test-workspace';
 	workspaceChanges: WorkspaceChangesPort = {
 		status: async () => ({ entries: [], truncated: false }),
@@ -69,6 +75,7 @@ export class FakeTerminalRuntime implements PresentationRuntime {
 		if (signal?.aborted) throw new DOMException('Cancelled', 'AbortError');
 		this.switches.push(name);
 		this.model = name;
+		await this.settings.writeLastSelectedModel(name);
 		return name;
 	}
 	async *runTurn(input: TurnInput): AsyncIterable<TurnDelta> {

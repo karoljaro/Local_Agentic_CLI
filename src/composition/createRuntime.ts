@@ -13,7 +13,7 @@ import {
 } from '@/application/services/InMemoryAgentMetrics';
 import { SessionService } from '@/application/services/SessionService';
 import { RunAgentTurn, type ToolApprovalHandler } from '@/application/use-cases/RunAgentTurn';
-import { readConfig, type AppConfig } from '@/composition/config';
+import type { AppConfig } from '@/composition/config';
 import {
 	OllamaModelRuntime,
 	type RuntimeListModelsOptions,
@@ -29,11 +29,13 @@ import type { StoredSession } from '@/application/ports/SessionStorePort';
 import type { ModelSelectionState } from '@/application/services/ModelSelection';
 import type { WorkspaceChangesPort } from '@/application/ports/WorkspaceChangesPort';
 import { GitWorkspaceChanges } from '@/infrastructure/git/GitWorkspaceChanges';
+import type { SettingsPort } from '@/application/ports/SettingsPort';
 
 export type { RuntimeListModelsOptions } from '@/composition/model/OllamaModelRuntime';
 export type { AgentMetricsSnapshot } from '@/application/services/InMemoryAgentMetrics';
 
 export type Runtime = {
+	settings?: SettingsPort;
 	dispose: () => void;
 	createSessionId: () => SessionId;
 	runTurn: RunAgentTurn['run'];
@@ -56,10 +58,14 @@ export type Runtime = {
 	subscribeSessionEvents: (listener: (event: AgentEvent) => void) => () => void;
 };
 
-export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
+export const createRuntime = (config: AppConfig, settings?: SettingsPort): Runtime => {
 	const workspacePath = process.cwd();
 	const sessionStore = new SessionService(new JsonlSessionStore());
-	const modelRuntime = new OllamaModelRuntime(config);
+	const modelRuntime = new OllamaModelRuntime(
+		config,
+		settings,
+		settings ? () => settings.getSnapshot().effective.keepAlive : undefined,
+	);
 	const idGenerator = new BunUuidV7IdGenerator();
 	const clock = new TemporalClock();
 	const monotonicClock = new PerformanceMonotonicClock();
@@ -67,13 +73,16 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 	const toolExecutor = createLocalToolExecutor();
 	let currentToolApprovalHandler: ToolApprovalHandler = async () => false;
 
-	const contextBuilder = new ContextBuilder({
-		systemPrompt: config.SYSTEM_PROMPT,
-		contextProfile: {
-			contextWindowTokens: config.MODEL_CONTEXT_TOKENS,
-			maxOutputTokens: config.MODEL_MAX_OUTPUT_TOKENS,
-		},
-	});
+	const getContextProfile = () =>
+		settings
+			? {
+					contextWindowTokens: settings.getSnapshot().effective.contextWindowTokens,
+					maxOutputTokens: settings.getSnapshot().effective.maxOutputTokens,
+				}
+			: {
+					contextWindowTokens: config.MODEL_CONTEXT_TOKENS,
+					maxOutputTokens: config.MODEL_MAX_OUTPUT_TOKENS,
+				};
 
 	const historyRetriever =
 		config.HISTORY_EMBEDDING_MODEL === undefined
@@ -85,36 +94,40 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 	const sessionMemory = new SessionMemoryService(
 		sessionStore,
 		new JsonSessionMemoryStore(),
-		new ModelSessionMemoryUpdater(
-			modelRuntime,
-			{
-				contextWindowTokens: config.MODEL_CONTEXT_TOKENS,
-				maxOutputTokens: config.MODEL_MAX_OUTPUT_TOKENS,
-			},
-			() => modelRuntime.getModelName(),
+		new ModelSessionMemoryUpdater(modelRuntime, getContextProfile, () =>
+			modelRuntime.getModelName(),
 		),
 	);
-	const runAgentTurn = new RunAgentTurn({
-		sessionMemory,
-		...(historyRetriever === undefined ? {} : { historyRetriever }),
-		sessionStore,
-		model: modelRuntime,
-		contextBuilder,
-		clock,
-		idGenerator,
-		agentMetrics,
-		monotonicClock,
-		toolExecutor,
-		approveToolCall: (request, options) => currentToolApprovalHandler(request, options),
-	});
+	const createTurn = () =>
+		new RunAgentTurn({
+			sessionMemory,
+			...(historyRetriever === undefined ? {} : { historyRetriever }),
+			sessionStore,
+			model: modelRuntime,
+			contextBuilder: new ContextBuilder({
+				systemPrompt: config.SYSTEM_PROMPT,
+				contextProfile: getContextProfile(),
+			}),
+			clock,
+			idGenerator,
+			agentMetrics,
+			monotonicClock,
+			toolExecutor,
+			approveToolCall: (request, options) => currentToolApprovalHandler(request, options),
+		});
 
 	return {
-		dispose: () => sessionMemory.dispose(),
+		...(settings ? { settings } : {}),
+		dispose: () => {
+			settings?.dispose();
+			sessionMemory.dispose();
+		},
 		createSessionId: () => idGenerator.nextSessionId(),
 		runTurn: async function* (input) {
 			sessionMemory.cancelPending();
 			const modelName = await modelRuntime.requireModel(input.signal);
-			yield* runAgentTurn.run({ ...input, modelName });
+			// Immutable compiler per turn: an active request/continuation keeps its coherent budget.
+			yield* createTurn().run({ ...input, modelName });
 		},
 		listSessionEvents: async (sessionId) => {
 			sessionMemory.selectSession(sessionId);
