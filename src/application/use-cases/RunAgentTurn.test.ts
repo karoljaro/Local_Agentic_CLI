@@ -40,7 +40,7 @@ import {
 } from '@/test-support/AgentEventFixtures';
 import type { ClockPort } from '../ports/ClockPort';
 import type { IdGeneratorPort } from '../ports/IdGeneratorPort';
-import type { ModelPort, ModelStreamChunk } from '../ports/ModelPort';
+import type { ModelPort, ModelStreamChunk, ModelChatInput } from '../ports/ModelPort';
 import type { MonotonicClockPort } from '../ports/MonotonicClockPort';
 import { ContextBudgetExceededError, ContextBuilder } from '../services/ContextBuilder';
 import { InMemoryAgentMetrics } from '../services/InMemoryAgentMetrics';
@@ -387,6 +387,86 @@ const createRunAgentTurnHarness = ({
 };
 
 describe('RunAgentTurn', () => {
+	test('presentation observation distinguishes native activity from transport metadata without changing tool/message protocol', async () => {
+		const continueStream = createDeferred<void>();
+		const notified = createDeferred<void>();
+		let started = 0;
+		const calls = [readFileToolCall('README.md')];
+		const model = new (class extends ScriptedModel {
+			override async *streamChat(input: ModelChatInput) {
+				this.receivedInputs.push(input);
+				if (this.receivedInputs.length > 1) {
+					yield { contentDelta: 'done' };
+					return;
+				}
+				yield { contentDelta: '', usage: { promptTokens: 3 } };
+				expect(started).toBe(0);
+				yield { contentDelta: '', toolCalls: calls };
+				await continueStream.promise;
+			}
+		})([]);
+		const { useCase, sessionStore, sessionId } = createRunAgentTurnHarness({
+			model,
+			toolExecutor: createReadToolExecutor(),
+		});
+		const work = collectAsyncIterable(
+			useCase.run({
+				sessionId,
+				prompt: 'question',
+				onResponseStarted: () => {
+					started++;
+					notified.resolve();
+				},
+			}),
+		);
+		await notified.promise;
+		expect(started).toBe(1);
+		expect(sessionStore.events.map((event) => event.type)).toEqual(['prompt.submitted']);
+		continueStream.resolve();
+		await work;
+		expect(sessionStore.events.map((event) => event.type)).toEqual([
+			'prompt.submitted',
+			'assistant.tool_calls.completed',
+			'tool.call.requested',
+			'tool.call.started',
+			'tool.call.completed',
+			'assistant.message.completed',
+		]);
+		expect(sessionStore.events[1]).toMatchObject({
+			toolCalls: [{ name: 'read_file', arguments: { path: 'README.md' } }],
+		});
+	});
+
+	test('presentation observer fires once for content, tolerates observer failure and ignores empty completion', async () => {
+		for (const chunks of [
+			textResponse('first', 'second'),
+			[{ contentDelta: '', finishReason: 'stop' as const }],
+		]) {
+			const { useCase, sessionStore, sessionId } = createRunAgentTurnHarness({
+				model: new ScriptedModel([chunks]),
+			});
+			let started = 0;
+			const output = await collectAsyncIterable(
+				useCase.run({
+					sessionId,
+					prompt: 'question',
+					onResponseStarted: () => {
+						started++;
+						throw new Error('UI failed');
+					},
+				}),
+			);
+			expect(started).toBe(chunks[0]?.contentDelta ? 1 : 0);
+			expect(output.map((chunk) => chunk.contentDelta).join('')).toBe(
+				chunks.map((chunk) => chunk.contentDelta).join(''),
+			);
+			expect(sessionStore.events.map((event) => event.type)).toEqual([
+				'prompt.submitted',
+				'assistant.message.completed',
+			]);
+		}
+	});
+
 	test('stores prompt, streams model chunks, and stores completed assistant message', async () => {
 		const model = new ScriptedModel([textResponse('Hello', ' there')]);
 		const { sessionStore, sessionId, useCase } = createRunAgentTurnHarness({

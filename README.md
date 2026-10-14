@@ -24,6 +24,8 @@ Implemented:
 - model picker with `/model` and direct switching with `/model <name>`
 - focused model and resume pickers that preserve the prompt draft on cancellation
 - subtle current model and session context above the conversation
+- terminal-native mouse text selection and clipboard copying with Ctrl+Shift+C
+- model-list/selection feedback, first-response waiting and readable operation error dialogs
 - `Ctrl+C` cancels an active response and exits the CLI when no response is running
 - resume session picker with `New session`, last activity, and prompt preview
 - persisted sessions in `.agent/sessions/<session-id>/events.jsonl`
@@ -372,6 +374,38 @@ Inside the chat:
 ```
 
 `/model` opens the local Ollama model picker. `/model <name>` switches the model directly for subsequent turns. `/resume` opens the session picker.
+
+In normal chat, drag without Shift to select visible text using your terminal's own highlight.
+In Fedora/Ptyxis, Ctrl+Shift+C uses the terminal's native Copy action. Codesh leaves mouse
+reporting off in chat and ignores a distinguishable forwarded Ctrl+Shift+C event, so it cannot
+cancel/exit or enter the editor. Ordinary Ctrl+C retains its cancel/exit behavior. If a terminal
+sends identical Ctrl+C bytes for both shortcuts, Codesh cannot distinguish them; keep the
+terminal's native Copy binding configured. The obsolete `/copy` command has been removed
+because Codesh cannot inspect a terminal-owned selection.
+
+Mouse reporting is enabled for model/session pickers, approvals, error dialogs and Workspace
+Changes, then disabled when returning to chat. Mouse-wheel handling in chat belongs to the
+terminal; in an alternate screen it may scroll locally or send ordinary arrow keys according
+to terminal settings. Use PageUp/PageDown and Ctrl+Home/End to scroll Codesh's conversation
+history. Up/Down retain composer/menu navigation. Native copying follows the terminal's
+selection/wrapping rules and does not generate application clipboard feedback or chat events.
+
+The model picker shows “Fetching available models…” and supports R to refresh. Changing a
+model shows “Applying model selection…” during the existing asynchronous operation, retaining
+the previous confirmed name until it settles. “Waiting for model…” appears after submitting a
+prompt, then gives way to the usual response/tool presentation when content or native tool
+activity begins. These labels do not claim a cold start or GPU residency; selection uses the
+existing provider activation policy without additional warmup requests.
+
+Model discovery/selection and session-picker failures open a readable error dialog. Use ↑/↓,
+PageUp/PageDown, Home/End or the mouse wheel to inspect wrapped details; C copies the safe
+diagnostic text. Tab selects Close or Copy details, then Enter activates it;
+the actions also accept mouse clicks. Esc closes the dialog and restores the previous focus
+and draft. Long details have an explicit truncation marker. Close the dialog, then press R in
+the model picker for a user-initiated refresh. Explicit Copy details uses OpenTUI's native host
+clipboard (Linux Wayland/X11, macOS, Windows where supported), with OSC 52 fallback. Host
+success reports “Copied to clipboard”; OSC 52 reports an unconfirmed send. Ordinary agent/tool
+errors remain in chat.
 
 `/changes` opens **Workspace Changes** while chat is idle. The list shows current Git changes
 inside the workspace: the first status column is staged, the second is unstaged, `·` means no

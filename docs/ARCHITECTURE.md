@@ -315,6 +315,56 @@ The composition runtime publishes a durable event only after its JSONL append su
 subscribes with an explicit cleanup function. Tool execution, model/provider access, session policy,
 approval consequences, and durable state remain outside presentation. No React or Ink renderer remains.
 
+Chat text selection/copying belongs to the host terminal. `startTerminal` configures OpenTUI
+0.5.14 with `useMouse: false`; `TerminalApp` also enforces this when composed with an existing
+renderer. Its supported `useMouse` setter changes native mouse reporting and resets captured
+mouse/button state. Existing picker, approval and error lifecycles enable reporting only while
+interactive; final closure and shutdown disable it and clear renderer selection. Closing an
+error over a still-open picker retains interactive mode. There are no additional listeners,
+terminal escape sequences, selection snapshots, theme-selection hooks or `/copy` command.
+Terminal selection, visual wrapping and clipboard semantics stay with the emulator.
+
+Ptyxis normally consumes Ctrl+Shift+C for native Copy. A distinguishable forwarded event is
+consumed before Ctrl+C in every view, without an application clipboard write, editor input or
+cancellation. Uppercase key names are normalized; the cancellation branch explicitly excludes
+Shift. Identical raw Ctrl+C bytes retain the established policy. Mouse-wheel handling in chat
+is terminal-owned, and terminal-generated arrow events keep their existing composer/menu
+semantics; PageUp/PageDown and Ctrl+Home/End remain deterministic history navigation.
+
+`clipboard.ts` composes OpenTUI's native host clipboard and renderer OSC 52 adapter using its
+`best-available` policy (terminal on remote connections). Native platform IO remains inside
+OpenTUI, with a 1,500 ms timeout, 1 MiB write limit and one concurrent host operation. No shell,
+clipboard executable or added dependency is used. It now serves only the error dialog's
+explicit C/Copy details action. `TerminalApp` owns cancellation/shutdown and one 3-second
+non-blocking feedback timer, distinguishing native `written` success from OSC 52's
+unacknowledged `attempted` result. Normal terminal-native copying has no application feedback.
+
+`ModelPicker` owns immediate list-loading feedback, explicit refresh and close/abort fencing.
+Repeated refresh during a pending fetch is ignored; late closed-picker results cannot update
+nodes or open dialogs. Existing runtime caching and model selection policy are unchanged.
+The confirmed model header remains visible during actual asynchronous selection and is
+reconciled to runtime truth afterward, including an unavailable previous model after failure.
+`Conversation` derives first-response waiting from its existing owned turn. The only engine
+integration is an optional, exception-isolated `onResponseStarted` observation at the first
+content/native-tool chunk of each model request. It carries no tool data, execution authority
+or new protocol/event. Transport-only metadata does not end waiting; completion, failure,
+cancellation, session replacement and disposal do. Indicators are static text without animation
+timers or transcript rerenders per frame.
+
+`ErrorDialog` reuses native Box/ScrollBox/Select and `TerminalApp`'s existing temporary modal
+focus lifecycle. It shows operation/summary and scrollable technical details, with keyboard
+and mouse copy/close actions; compact terminals drop decorations to retain a scrollable body.
+Model discovery/application and the equivalent session-list failure use it. Cancellation is
+silent; details-copy failures use temporary feedback, and canonical agent/tool errors keep
+their existing chat lifecycle. One dialog retains the first error until closed, without stacking
+or an error queue; model-list retry is the picker's explicit R refresh.
+
+`operationError` retains only exception messages, scalar codes and at most two nested causes,
+never serializing arbitrary objects, stacks, environment or request bodies. Diagnostic display
+and copy escape terminal controls/directional overrides, redact recognized credential fields,
+authorization values and URL credentials, and cap text at 16,384 UTF-16 characters with an
+explicit truncation marker. These are presentation projections, not durable event rewrites.
+
 ### Read-only workspace Git inspection
 
 `/changes` uses the existing command registry and temporary OpenTUI modal lifecycle.

@@ -4,13 +4,15 @@ import type { EventId, SessionId } from '@/domain/Ids';
 import { StreamBuffer } from './state/StreamBuffer';
 import { TranscriptLog, type TranscriptEntry } from './TranscriptLog';
 import type { PresentationRuntime } from './types';
+import { operationError, type OperationError } from './formatters/operationError';
 
 export type ConversationChange =
 	| { type: 'reset' }
 	| { type: 'entry'; entry: TranscriptEntry }
 	| { type: 'live'; content: string }
 	| { type: 'status' }
-	| { type: 'metadata' };
+	| { type: 'metadata' }
+	| { type: 'operation-error'; error: OperationError };
 
 type Selection = {
 	id: SessionId;
@@ -22,6 +24,7 @@ type Turn = {
 	selection: Selection;
 	controller: AbortController;
 	durableErrorDisplayed: boolean;
+	responseStarted: boolean;
 };
 
 export class Conversation {
@@ -65,6 +68,11 @@ export class Conversation {
 	}
 	get running(): boolean {
 		return this.active !== null;
+	}
+	get waitingForResponse(): boolean {
+		return Boolean(
+			this.active && !this.active.responseStarted && !this.active.controller.signal.aborted,
+		);
 	}
 	get history(): readonly TranscriptEntry[] {
 		return this.log.history;
@@ -116,7 +124,17 @@ export class Conversation {
 			const model = await this.runtime.initializeModels(selection.controller.signal);
 			if (!this.isSelected(selection)) return;
 			this.emit({ type: 'metadata' });
-			if (model.status !== 'selected') this.appendNotice(model.message, true);
+			if (model.status === 'unresolved')
+				this.emit({
+					type: 'operation-error',
+					error: operationError(
+						'Could not load models',
+						'Ollama — model discovery',
+						'The model list could not be retrieved.',
+						model.message,
+					),
+				});
+			else if (model.status !== 'selected') this.appendNotice(model.message, true);
 		} catch (error) {
 			if (this.isSelected(selection)) this.appendNotice(errorMessage(error), true);
 		} finally {
@@ -134,6 +152,7 @@ export class Conversation {
 			selection: this.selection,
 			controller: new AbortController(),
 			durableErrorDisplayed: false,
+			responseStarted: false,
 		};
 		this.active = turn;
 		this.stream.start();
@@ -147,6 +166,7 @@ export class Conversation {
 
 	cancel(): void {
 		this.active?.controller.abort();
+		this.emit({ type: 'status' });
 	}
 
 	switchModel(name: string, signal?: AbortSignal): Promise<boolean> {
@@ -174,8 +194,16 @@ export class Conversation {
 			if (model.status === 'selected' && model.warning) this.appendNotice(model.warning);
 			return true;
 		} catch (error) {
-			if (this.isSelected(selection) && !(request.signal.aborted && isAbortError(error))) {
-				this.appendNotice(errorMessage(error), true);
+			if (this.isSelected(selection) && !request.signal.aborted && !isAbortError(error)) {
+				this.emit({
+					type: 'operation-error',
+					error: operationError(
+						'Could not select model',
+						'Ollama — model selection',
+						'The model selection could not be applied. Check the current model before continuing.',
+						error,
+					),
+				});
 			}
 			return false;
 		} finally {
@@ -223,9 +251,13 @@ export class Conversation {
 				prompt,
 				...(this.modelName === undefined ? {} : { modelName: this.modelName }),
 				signal: turn.controller.signal,
+				onResponseStarted: () => this.responseStarted(turn),
 			})) {
 				if (!this.isActive(turn)) return;
-				if (chunk.contentDelta) this.stream.push(chunk.contentDelta);
+				if (chunk.contentDelta) {
+					this.responseStarted(turn);
+					this.stream.push(chunk.contentDelta);
+				}
 			}
 			if (!this.isActive(turn)) return;
 			throwIfAborted(turn.controller.signal);
@@ -275,6 +307,7 @@ export class Conversation {
 				event.type === 'assistant.message.completed' ||
 				event.type === 'assistant.tool_calls.completed'
 			) {
+				this.responseStarted(turn);
 				this.stream.flush();
 				this.stream.reset();
 			} else if (event.type === 'agent.error') {
@@ -302,6 +335,12 @@ export class Conversation {
 		const content = this.stream.flush();
 		this.stream.reset();
 		if (content.trim()) this.append({ id: this.localId('partial'), kind: 'assistant', content });
+	}
+
+	private responseStarted(turn: Turn): void {
+		if (!this.isActive(turn) || turn.controller.signal.aborted || turn.responseStarted) return;
+		turn.responseStarted = true;
+		this.emit({ type: 'status' });
 	}
 
 	private append(entry: TranscriptEntry): void {

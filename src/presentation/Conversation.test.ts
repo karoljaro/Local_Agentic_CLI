@@ -169,7 +169,10 @@ test('every model round streams before completion and raw deltas leave committed
 		await turn.delta('First round visible.');
 		await waitFor(() => p.conversation.liveContent === 'First round visible.');
 		expect(p.conversation.history).toBe(history);
-		expect(p.changes.slice(initialChanges).map((change) => change.type)).toEqual(['live']);
+		expect(p.changes.slice(initialChanges).map((change) => change.type)).toEqual([
+			'status',
+			'live',
+		]);
 		p.runtime.publish(assistantToolCallsCompletedEvent({ content: 'First round visible.' }));
 		p.runtime.publish(toolCallRequestedEvent());
 		p.runtime.publish(toolCallStartedEvent());
@@ -246,7 +249,10 @@ test('Markdown boundary flushes preserve history and clear live before authorita
 			expect(conversation.history).toBe(history);
 			expect(conversation.history).toHaveLength(1);
 			expect(conversation.history[0]).toBe(entry);
-			expect(changes.slice(before)).toEqual([{ type: 'live', content }]);
+			expect(changes.slice(before)).toEqual([
+				...(content === '#' ? [{ type: 'status' as const }] : []),
+				{ type: 'live', content },
+			]);
 			expect(runtime.listeners.size).toBe(1);
 		}
 		const event = assistantMessageCompletedEvent({
@@ -608,7 +614,7 @@ test('model switch awaits runtime, updates metadata once and uses the returned m
 	}
 });
 
-test('model switch failure preserves previous model and records the actual runtime error', async () => {
+test('model switch failure preserves previous model and exposes an operation error without transcript mutation', async () => {
 	const p = await setup();
 	p.runtime.switchModel = async () => {
 		throw new Error('actual unload failure');
@@ -616,9 +622,11 @@ test('model switch failure preserves previous model and records the actual runti
 	try {
 		expect(await p.conversation.switchModel('other-model')).toBe(false);
 		expect(p.conversation.modelName).toBe(SYNTHETIC_MODEL);
-		expect(p.conversation.history.map((entry) => [entry.kind, entry.content])).toEqual([
-			['error', 'actual unload failure'],
-		]);
+		expect(p.conversation.history).toEqual([]);
+		expect(p.changes.findLast((change) => change.type === 'operation-error')).toMatchObject({
+			type: 'operation-error',
+			error: { details: 'actual unload failure' },
+		});
 	} finally {
 		await p.cleanup();
 	}

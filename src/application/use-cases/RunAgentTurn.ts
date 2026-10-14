@@ -34,6 +34,8 @@ type RunAgentTurnInput = {
 	prompt: string;
 	modelName?: string;
 	signal?: AbortSignal;
+	/** Optional presentation observation; no tool data or execution authority. */
+	onResponseStarted?: () => void;
 };
 
 type AgentTurnChunk = {
@@ -133,6 +135,7 @@ export class AgentLoop {
 					sessionId,
 					withSignal(request, signal),
 					turnMetrics,
+					input.onResponseStarted,
 				);
 
 				throwIfAborted(signal);
@@ -270,9 +273,11 @@ export class AgentLoop {
 		sessionId: SessionId,
 		input: ModelChatInput,
 		turnMetrics: AgentTurnMetricsPort | undefined,
+		onResponseStarted?: () => void,
 	): AsyncGenerator<AgentTurnChunk, StreamedModelResponse> {
 		const contentDeltas: string[] = [];
 		const toolCalls: ModelToolCall[] = [];
+		let responseStarted = false;
 		throwIfAborted(input.signal);
 		recordModelRequestMetric(turnMetrics, measureModelRequestCharacters(input));
 		throwIfAborted(input.signal);
@@ -280,6 +285,16 @@ export class AgentLoop {
 		try {
 			for await (const chunk of this.dependencies.model.streamChat(input)) {
 				throwIfAborted(input.signal);
+				if (
+					!responseStarted &&
+					(chunk.contentDelta.length > 0 || (chunk.toolCalls?.length ?? 0) > 0)
+				) {
+					responseStarted = true;
+					// Presentation feedback cannot change model/tool execution.
+					try {
+						onResponseStarted?.();
+					} catch {}
+				}
 				if (chunk.finishReason === 'length') {
 					throw new ModelOutputTruncatedError();
 				}

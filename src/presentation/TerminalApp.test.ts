@@ -737,6 +737,8 @@ test('model picker failure displays the runtime error and keeps the previous mod
 		expect(ui.captureCharFrame()).toContain('Unload failed');
 		expect(ui.app.composer.focused).toBe(false);
 		ui.mockInput.pressEscape();
+		expect(ui.renderer.currentFocusedRenderable?.id).toBe('model-choices');
+		ui.mockInput.pressEscape();
 		expect(ui.app.composer.focused).toBe(true);
 	} finally {
 		await ui.app.shutdown();
@@ -903,9 +905,7 @@ test('failed activation clears an unloaded old selection, shows the real error, 
 		ui.mockInput.pressEnter();
 		await settle(ui);
 		expect(headerContent(ui.app)).toContain('No model selected');
-		expect(ui.app.conversation.history.at(-1)?.content).toContain(
-			'Model activation failed. Use /model',
-		);
+		expect(ui.captureCharFrame()).toContain('Model activation failed. Use /model');
 		expect(
 			ui.app.conversation.history.some((entry) => entry.content.startsWith('Model switched')),
 		).toBe(false);
@@ -914,6 +914,7 @@ test('failed activation clears an unloaded old selection, shows the real error, 
 		ui.mockInput.pressKey('F2');
 		await settle(ui);
 		fail = false;
+		ui.mockInput.pressKey('HOME');
 		ui.mockInput.pressEnter();
 		await settle(ui);
 		expect(runtime.getModelName()).toBe(SYNTHETIC_MODEL);
@@ -940,7 +941,7 @@ test('header cannot claim the candidate during pending activation', async () => 
 		ui.mockInput.pressArrow('down');
 		ui.mockInput.pressEnter();
 		await settle(ui);
-		expect(headerContent(ui.app)).toContain('Switching model…');
+		expect(headerContent(ui.app)).toContain(`${SYNTHETIC_MODEL} · Applying model selection…`);
 		expect(headerContent(ui.app)).not.toContain('other-model');
 		pending.resolve('other-model');
 		await settle(ui);

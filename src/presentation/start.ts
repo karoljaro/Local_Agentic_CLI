@@ -23,6 +23,7 @@ export async function startTerminal(
 		consoleMode: 'disabled',
 		openConsoleOnError: false,
 		autoFocus: false,
+		useMouse: false,
 		backgroundColor: RGBA.defaultBackground(),
 		targetFps: 30,
 		maxFps: 60,

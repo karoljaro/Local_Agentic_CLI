@@ -12,6 +12,7 @@ describe('commands', () => {
 		});
 		expect(parseCommand('/resume')).toEqual({ type: 'resume-session' });
 		expect(parseCommand('/changes')).toEqual({ type: 'workspace-changes' });
+		expect(parseCommand('/copy')).toEqual({ type: 'invalid', message: 'Unknown command: /copy' });
 		expect(parseCommand('/changes extra')).toEqual({
 			type: 'invalid',
 			message: '/changes does not accept arguments.',
@@ -25,6 +26,7 @@ describe('commands', () => {
 			message: 'Unknown command: /missing',
 		});
 		expect(getCommandSuggestions('/')).toHaveLength(3);
+		expect(getCommandSuggestions('/co')).toEqual([]);
 		expect(getCommandSuggestions('/cha').map((command) => command.name)).toEqual(['/changes']);
 		expect(getCommandSuggestions('/mo').map((command) => command.name)).toEqual(['/model']);
 		expect(getCommandSuggestions('/nothing')).toEqual([]);

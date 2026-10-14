@@ -10,6 +10,8 @@ import {
 import type { SessionId } from '@/domain/Ids';
 import { buildSessionOption } from './state/sessionSummary';
 import type { PresentationRuntime } from './types';
+import { isAbortError } from '@/application/services/cancellation';
+import { operationError, type OperationError } from './formatters/operationError';
 
 export class SessionPicker {
 	readonly root: BoxRenderable;
@@ -23,6 +25,7 @@ export class SessionPicker {
 		currentSessionId: SessionId,
 		onSelect: (sessionId: SessionId | null) => void,
 		onCancel: () => void,
+		onError: (error: OperationError) => void,
 	) {
 		const background = RGBA.defaultBackground();
 		this.root = new BoxRenderable(renderer, {
@@ -151,9 +154,16 @@ export class SessionPicker {
 				status.content =
 					summaries.length === 0 ? 'No saved sessions yet' : 'Saved conversations, newest first';
 			} catch (error) {
-				if (this.closed) return;
-				status.fg = '#e98282';
-				status.content = `Could not load sessions: ${error instanceof Error ? error.message : String(error)}`;
+				if (this.closed || isAbortError(error)) return;
+				status.content = 'Sessions unavailable · Esc return to chat';
+				onError(
+					operationError(
+						'Could not load sessions',
+						'Session discovery',
+						'Saved sessions could not be retrieved.',
+						error,
+					),
+				);
 			}
 		})();
 	}
