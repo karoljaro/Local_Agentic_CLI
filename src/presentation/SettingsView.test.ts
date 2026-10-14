@@ -74,7 +74,7 @@ test('/settings opens native configuration without model discovery, navigates an
 		discovery++;
 		throw new Error('offline');
 	};
-	expect(ui.renderer.useMouse).toBe(false);
+	expect(ui.renderer.useMouse).toBe(true);
 	await open(ui);
 	expect(ui.captureCharFrame()).toContain('Settings');
 	expect(ui.captureCharFrame()).toContain('http://localhost:11434');
@@ -90,7 +90,7 @@ test('/settings opens native configuration without model discovery, navigates an
 	expect(choices(ui).getSelectedIndex()).toBe(0);
 	ui.mockInput.pressEscape();
 	expect(ui.app.composer.focused).toBe(true);
-	expect(ui.renderer.useMouse).toBe(false);
+	expect(ui.renderer.useMouse).toBe(true);
 	expect(ui.runtime.turns).toEqual([]);
 	expect(ui.app.conversation.history).toEqual([]);
 });
@@ -148,7 +148,7 @@ test('cancel text edit restores list focus and keeps prior preferences', async (
 	expect(ui.runtime.settingsStore.document).toBeUndefined();
 	expect(ui.captureCharFrame()).not.toContain('unsaved.example');
 	ui.mockInput.pressEscape();
-	expect(ui.renderer.useMouse).toBe(false);
+	expect(ui.renderer.useMouse).toBe(true);
 });
 test('valid numeric edits/save and selected-setting reset keep the model and other preferences', async () => {
 	const ui = await setup();
@@ -257,7 +257,7 @@ test('overlapping save attempts deduplicate; cancellation keeps edit input and r
 	expect((node(ui, 'settings-editor') as InputRenderable).value).toBe('2048');
 	ui.mockInput.pressEscape();
 	ui.mockInput.pressEscape();
-	expect(ui.renderer.useMouse).toBe(false);
+	expect(ui.renderer.useMouse).toBe(true);
 });
 test('shutdown cancels pending settings save and waits for it without late UI/persistence publication', async () => {
 	const ui = await setup();
@@ -344,9 +344,9 @@ test('failed activation reconciles actual selection and preserves remembered mod
 	expect(ui.renderer.currentFocusedRenderable?.id).toBe('settings-choices');
 	expect(ui.renderer.useMouse).toBe(true);
 	ui.mockInput.pressEscape();
-	expect(ui.renderer.useMouse).toBe(false);
+	expect(ui.renderer.useMouse).toBe(true);
 });
-test('closing nested model discovery suppresses stale results and restores Settings then native chat', async () => {
+test('closing nested model discovery suppresses stale results and restores Settings then interactive chat', async () => {
 	const ui = await setup();
 	await open(ui);
 	const gate = createDeferred<void>();
@@ -364,7 +364,7 @@ test('closing nested model discovery suppresses stale results and restores Setti
 	gate.resolve();
 	await settle(ui);
 	expect(node(ui, 'error-dialog')).toBeUndefined();
-	expect(ui.renderer.useMouse).toBe(false);
+	expect(ui.renderer.useMouse).toBe(true);
 });
 test('Settings opens during pending startup discovery and active generation without cancelling either', async () => {
 	const runtime = new FakeTerminalRuntime();
@@ -433,7 +433,7 @@ test('narrow terminal keeps active navigation/edit controls visible and restores
 	expect(node(ui, 'settings-editor')).toBeDefined();
 	ui.mockInput.pressEscape();
 	ui.mockInput.pressEscape();
-	expect(ui.renderer.useMouse).toBe(false);
+	expect(ui.renderer.useMouse).toBe(true);
 	expect(ui.app.composer.focused).toBe(true);
 });
 
@@ -475,5 +475,5 @@ test('narrow inline validation remains visible and details can be scrolled with 
 	expect(ui.captureSpans().rows).toBe(6);
 	ui.mockInput.pressEscape();
 	ui.mockInput.pressEscape();
-	expect(ui.renderer.useMouse).toBe(false);
+	expect(ui.renderer.useMouse).toBe(true);
 });

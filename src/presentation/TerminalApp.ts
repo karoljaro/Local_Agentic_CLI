@@ -77,9 +77,9 @@ export class TerminalApp {
 		private readonly treeSitterClient?: TreeSitterClient,
 		clipboard?: CopyClipboard,
 	) {
-		// Leave unmodified dragging and clipboard shortcuts to the host terminal.
+		// OpenTUI owns scrolling; Shift + mouse selection stays with the host terminal.
 		renderer.clearSelection();
-		renderer.useMouse = false;
+		renderer.useMouse = true;
 		this.clipboard = clipboard ?? createAppClipboard(renderer);
 		this.confirmedModel = runtime.getModelName();
 		this.closed = new Promise((resolve) => {
@@ -127,7 +127,11 @@ export class TerminalApp {
 			stickyStart: 'bottom',
 			viewportCulling: true,
 			contentOptions: { flexDirection: 'column', paddingTop: 1, paddingBottom: 1 },
-			scrollbarOptions: { visible: false },
+			verticalScrollbarOptions: {
+				width: 1,
+				trackOptions: { foregroundColor: ACCENT, backgroundColor: RGBA.defaultBackground() },
+			},
+			horizontalScrollbarOptions: { visible: false },
 		});
 		this.liveRegion = new BoxRenderable(renderer, {
 			id: 'live-round',
@@ -772,12 +776,11 @@ export class TerminalApp {
 	};
 	private updateMouseMode(): void {
 		if (this.renderer.isDestroyed) return;
-		const interactive =
-			!this.disposed &&
-			Boolean(this.picker || this.settingsView || this.approval || this.errorDialog);
-		if (this.renderer.useMouse === interactive) return;
 		this.renderer.clearSelection();
-		this.renderer.useMouse = interactive;
+		// The public setter resets capture and parser button state when disabled.
+		// Reset at view boundaries, then keep reporting enabled for chat as well as modals.
+		this.renderer.useMouse = false;
+		if (!this.disposed) this.renderer.useMouse = true;
 	}
 
 	shutdown(): Promise<void> {

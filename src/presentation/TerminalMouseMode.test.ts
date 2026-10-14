@@ -1,6 +1,5 @@
 import { afterEach, expect, spyOn, test } from 'bun:test';
 import {
-	TextBufferRenderable,
 	TextRenderable,
 	resolveRenderLib,
 	type KeyEvent,
@@ -28,6 +27,7 @@ async function setup(
 		initialMode?: 'new' | 'resume';
 		kittyKeyboard?: boolean;
 		otherModifiersMode?: boolean;
+		useMouse?: boolean;
 	} = {},
 ) {
 	const runtime = options.runtime ?? new FakeTerminalRuntime();
@@ -39,6 +39,7 @@ async function setup(
 		exitOnCtrlC: false,
 		exitSignals: [],
 		autoFocus: false,
+		useMouse: options.useMouse ?? true,
 		kittyKeyboard: options.kittyKeyboard ?? true,
 		otherModifiersMode: options.otherModifiersMode ?? false,
 	});
@@ -82,29 +83,21 @@ async function settle(ui: { parser: MockTreeSitterClient; renderOnce: () => Prom
 const nodes = (root: Renderable): Renderable[] => [root, ...root.getChildren().flatMap(nodes)];
 const node = (ui: UI, id: string) => nodes(ui.renderer.root).find((child) => child.id === id)!;
 
-test('chat disables native reporting rather than only selection styling; unshifted drag is not consumed by OpenTUI', async () => {
-	const disable = spyOn(resolveRenderLib(), 'disableMouse');
+test('chat enables native reporting even on an existing mouse-disabled renderer; copying stays terminal-owned', async () => {
+	const enable = spyOn(resolveRenderLib(), 'enableMouse');
 	try {
-		const ui = await setup();
-		expect(disable).toHaveBeenCalled();
-		expect(ui.renderer.useMouse).toBe(false);
-		ui.runtime.complete(ui.app.conversation.sessionId, 'Select this in Ptyxis');
-		await settle(ui);
-		const text = nodes(ui.app.transcript).find(
-			(child) =>
-				child instanceof TextBufferRenderable && child.plainText === 'Select this in Ptyxis',
-		) as TextBufferRenderable;
-		const history = ui.app.conversation.history;
-		await ui.mockMouse.drag(text.x, text.y, text.x + text.width - 1, text.y);
+		const ui = await setup({ useMouse: false });
+		expect(enable).toHaveBeenCalled();
+		expect(ui.renderer.useMouse).toBe(true);
+		ui.runtime.complete(ui.app.conversation.sessionId, 'Hold Shift to select in Ptyxis');
 		await settle(ui);
 		expect(ui.renderer.hasSelection).toBe(false);
 		expect(ui.app.composer.focused).toBe(true);
 		expect(ui.app.composer.plainText).toBe('');
-		expect(ui.app.conversation.history).toBe(history);
 		expect(ui.copies).toEqual([]);
-		expect(ui.captureCharFrame()).toContain('Select this in Ptyxis');
+		expect(ui.captureCharFrame()).toContain('Hold Shift to select in Ptyxis');
 	} finally {
-		disable.mockRestore();
+		enable.mockRestore();
 	}
 });
 
@@ -118,7 +111,7 @@ for (const initialMode of ['new', 'resume'] as const)
 				expect(ui.renderer.useMouse).toBe(true);
 				ui.mockInput.pressEscape();
 			}
-			expect(ui.renderer.useMouse).toBe(false);
+			expect(ui.renderer.useMouse).toBe(true);
 			await ui.mockInput.typeText('preserved draft');
 			for (const key of ['F2', 'F3']) {
 				ui.mockInput.pressKey(key);
@@ -134,7 +127,7 @@ for (const initialMode of ['new', 'resume'] as const)
 				expect(ui.renderer.hasSelection).toBe(true);
 				ui.mockInput.pressEscape();
 				await settle(ui);
-				expect(ui.renderer.useMouse).toBe(false);
+				expect(ui.renderer.useMouse).toBe(true);
 				expect(ui.renderer.hasSelection).toBe(false);
 				expect(disable).toHaveBeenCalled();
 				expect(ui.app.composer.focused).toBe(true);
@@ -146,7 +139,7 @@ for (const initialMode of ['new', 'resume'] as const)
 		}
 	});
 
-test('model option wheel/click applies the selection then returns to terminal-owned chat', async () => {
+test('model option wheel/click applies the selection then returns to interactive chat', async () => {
 	const ui = await setup();
 	ui.mockInput.pressKey('F2');
 	await settle(ui);
@@ -156,13 +149,13 @@ test('model option wheel/click applies the selection then returns to terminal-ow
 	await ui.mockMouse.click(choices.x + 3, choices.y + 1);
 	await settle(ui);
 	expect(ui.runtime.getModelName()).toBe('other-model');
-	expect(ui.renderer.useMouse).toBe(false);
+	expect(ui.renderer.useMouse).toBe(true);
 	expect(ui.app.composer.focused).toBe(true);
 	ui.mockInput.pressKey('F3');
 	await settle(ui);
 	ui.mockInput.pressEnter();
 	await settle(ui);
-	expect(ui.renderer.useMouse).toBe(false);
+	expect(ui.renderer.useMouse).toBe(true);
 	expect(ui.app.composer.focused).toBe(true);
 });
 
@@ -187,11 +180,11 @@ test('nested error dialog preserves interactive picker mouse mode; details wheel
 	expect(ui.renderer.currentFocusedRenderable?.id).toBe('model-choices');
 	expect(ui.renderer.useMouse).toBe(true);
 	ui.mockInput.pressEscape();
-	expect(ui.renderer.useMouse).toBe(false);
+	expect(ui.renderer.useMouse).toBe(true);
 	expect(ui.app.composer.focused).toBe(true);
 });
 
-test('error directly over chat enables reporting and returns to terminal-native mode on close', async () => {
+test('error directly over chat retains reporting and restores chat focus on close', async () => {
 	const ui = await setup();
 	ui.runtime.switchModel = async () => {
 		throw new Error('could not apply selection');
@@ -203,12 +196,12 @@ test('error directly over chat enables reporting and returns to terminal-native 
 	expect(node(ui, 'error-dialog')).toBeDefined();
 	ui.mockInput.pressEnter();
 	await settle(ui);
-	expect(ui.renderer.useMouse).toBe(false);
+	expect(ui.renderer.useMouse).toBe(true);
 	expect(ui.app.composer.focused).toBe(true);
 });
 
 for (const action of ['deny', 'abort'] as const)
-	test(`approval retains mouse input and restores native chat after ${action}`, async () => {
+	test(`approval retains mouse input and restores interactive chat after ${action}`, async () => {
 		const ui = await setup();
 		const controller = new AbortController();
 		const decision = ui.runtime.approval(
@@ -234,7 +227,7 @@ for (const action of ['deny', 'abort'] as const)
 		if (action === 'abort') controller.abort();
 		else ui.mockInput.pressEscape();
 		expect(await result).toBe(action === 'abort' ? 'AbortError' : false);
-		expect(ui.renderer.useMouse).toBe(false);
+		expect(ui.renderer.useMouse).toBe(true);
 		expect(ui.app.composer.focused).toBe(true);
 	});
 
@@ -246,9 +239,7 @@ test('Workspace Changes owns mouse scrolling until returning to chat; normal cha
 	const bottom = ui.app.transcript.scrollTop;
 	await ui.mockMouse.scroll(10, 8, 'up');
 	await settle(ui);
-	// Chat reporting is off. A terminal may scroll locally or send ordinary keys;
-	// Codesh does not reinterpret an indistinguishable arrow as a wheel event.
-	expect(ui.app.transcript.scrollTop).toBe(bottom);
+	expect(ui.app.transcript.scrollTop).toBeLessThan(bottom);
 	ui.mockInput.pressKey('\x1b[5~');
 	await settle(ui);
 	expect(ui.app.transcript.scrollTop).toBeLessThan(bottom);
@@ -281,7 +272,7 @@ test('Workspace Changes owns mouse scrolling until returning to chat; normal cha
 	ui.mockInput.pressEscape();
 	expect(ui.renderer.useMouse).toBe(true);
 	ui.mockInput.pressEscape();
-	expect(ui.renderer.useMouse).toBe(false);
+	expect(ui.renderer.useMouse).toBe(true);
 	await ui.mockInput.typeText('first');
 	ui.mockInput.pressEnter({ shift: true });
 	await ui.mockInput.typeText('second');
@@ -353,7 +344,7 @@ test('ordinary Ctrl+C cancels active work and exits idle; indistinguishable lega
 	expect(legacy.copies).toEqual([]);
 });
 
-test('closing a fetching modal restores native mode immediately; late events and shutdown cannot reenable reporting', async () => {
+test('closing a fetching modal restores interactive chat immediately; late events and shutdown cannot reenable reporting', async () => {
 	const ui = await setup();
 	const pending = createDeferred<void>();
 	let signal: AbortSignal | undefined;
@@ -365,12 +356,12 @@ test('closing a fetching modal restores native mode immediately; late events and
 	ui.mockInput.pressKey('F2');
 	expect(ui.renderer.useMouse).toBe(true);
 	ui.mockInput.pressEscape();
-	expect(ui.renderer.useMouse).toBe(false);
+	expect(ui.renderer.useMouse).toBe(true);
 	expect(signal?.aborted).toBe(true);
 	pending.resolve();
 	await settle(ui);
 	expect(node(ui, 'error-dialog')).toBeUndefined();
-	expect(ui.renderer.useMouse).toBe(false);
+	expect(ui.renderer.useMouse).toBe(true);
 	ui.runtime.listModels = async () => ui.runtime.models;
 	ui.mockInput.pressKey('F2');
 	await settle(ui);

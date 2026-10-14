@@ -56,8 +56,8 @@ the model clears the startup preference for restart without unloading/reselectin
 Error Dialog and shutdown cleanup. One edit is explicitly confirmed; validation is inline and save
 errors use Phase 21's bounded/redacted diagnostics. Pending restart/effective endpoint and saved/
 confirmed model are displayed separately. Local edits remain available during model discovery or
-generation; model selection waits for the current turn/discovery. Modal mouse reporting restores
-terminal-native chat selection on final closure. No alternate theme mechanism is introduced.
+generation; model selection waits for the current turn/discovery. Closing a modal restores chat
+focus and interactive mouse reporting. No alternate theme mechanism is introduced.
 
 ## Layers
 
@@ -370,21 +370,26 @@ The composition runtime publishes a durable event only after its JSONL append su
 subscribes with an explicit cleanup function. Tool execution, model/provider access, session policy,
 approval consequences, and durable state remain outside presentation. No React or Ink renderer remains.
 
-Chat text selection/copying belongs to the host terminal. `startTerminal` configures OpenTUI
-0.5.14 with `useMouse: false`; `TerminalApp` also enforces this when composed with an existing
-renderer. Its supported `useMouse` setter changes native mouse reporting and resets captured
-mouse/button state. Existing picker, approval and error lifecycles enable reporting only while
-interactive; final closure and shutdown disable it and clear renderer selection. Closing an
-error over a still-open picker retains interactive mode. There are no additional listeners,
-terminal escape sequences, selection snapshots, theme-selection hooks or `/copy` command.
-Terminal selection, visual wrapping and clipboard semantics stay with the emulator.
+Chat text copying belongs to the host terminal: hold Shift while selecting with the mouse, then
+use Ctrl+Shift+C or the terminal's copy shortcut. `startTerminal` configures OpenTUI 0.5.14 with
+`useMouse: true`; `TerminalApp` also enables it when composed with an existing renderer. Wheel
+events bubble through chat content to the native `ScrollBoxRenderable`. Its vertical scrollbar
+uses native overflow visibility and `SliderRenderable` track clicks/thumb dragging; the native
+scroll callbacks update content translation and sticky-follow state. Reading older messages
+suspends following new output until the user returns to the bottom.
+
+Picker, Settings, approval, error and Workspace Changes transitions clear renderer selection and
+reset mouse capture/button state through the supported `useMouse` setter, then reenable reporting.
+Final closure restores the underlying view's focus and mouse ownership; shutdown leaves reporting
+disabled. There are no custom terminal escape sequences, selection snapshots, theme-selection
+hooks or `/copy` command. Shift selection and clipboard semantics stay with the emulator where
+supported; ordinary dragging is delivered to OpenTUI.
 
 Ptyxis normally consumes Ctrl+Shift+C for native Copy. A distinguishable forwarded event is
 consumed before Ctrl+C in every view, without an application clipboard write, editor input or
 cancellation. Uppercase key names are normalized; the cancellation branch explicitly excludes
-Shift. Identical raw Ctrl+C bytes retain the established policy. Mouse-wheel handling in chat
-is terminal-owned, and terminal-generated arrow events keep their existing composer/menu
-semantics; PageUp/PageDown and Ctrl+Home/End remain deterministic history navigation.
+Shift. Identical raw Ctrl+C bytes retain the established policy. Arrow keys keep their existing
+composer/menu semantics; PageUp/PageDown and Ctrl+Home/End remain history navigation.
 
 `clipboard.ts` composes OpenTUI's native host clipboard and renderer OSC 52 adapter using its
 `best-available` policy (terminal on remote connections). Native platform IO remains inside

@@ -142,3 +142,100 @@ terminated process require cleanup; atomic replacement is not a hardware power-l
   persistence. Endpoint/reset-model restart semantics and active-request boundaries are explicit.
 - Completion decision: **Phase 22 complete**. All requested gates passed; no Phase 22.1 or model
   investigation begins. No commit created.
+
+## Pre-release correction — chat scrolling and terminal copying
+
+This is a focused bugfix before the first stable release, with no new development or diagnostic
+phase. It supersedes the reporting-disabled chat behavior described above and in Phase 21's
+terminal-selection correction; those earlier validation records remain historical.
+
+- Fix baseline HEAD: `36fd9e16d47a11003055d8c057d966bddd9a2b2b`. No applicable `AGENTS.md`.
+  Changes preserve the surrounding README and unrelated work. No commit, tag, publication,
+  application-version, dependency or lockfile change.
+- Before editing, inspected the real `TerminalApp.transcript` ScrollBox, startup configuration,
+  modal/focus lifecycles, native input routing, and installed OpenTUI **0.5.14** declarations and
+  implementations for renderer, ScrollBox, ScrollBar and Slider. Also checked the
+  [versioned upstream ScrollBox source](https://raw.githubusercontent.com/anomalyco/opentui/v0.5.14/packages/core/src/renderables/ScrollBox.ts).
+- Root cause: startup and normal chat explicitly disabled mouse reporting, so parsed wheel and
+  pointer events could not reach chat hit testing. The general scrollbar configuration also
+  requested `visible: false`; this version can recalculate that initial visibility on overflow,
+  yielding a drawn scrollbar whose interaction is still disabled by mouse mode. A visible bar
+  or a `useMouse` assertion alone therefore does not prove working interaction.
+- Restore reporting at startup and when composed with an existing renderer. Use the native
+  overflow-controlled vertical scrollbar, with a one-column track and existing accent/default
+  terminal colors. OpenTUI's Slider handles track clicks, thumb dragging and capture; its existing
+  ScrollBar/ScrollBox callbacks update content translation and sticky-follow state. No custom
+  scrollbar event implementation or dependency patch.
+- On view transitions, clear renderer selection and briefly disable/re-enable reporting through
+  the supported setter. Disabling resets native capture and parsed button state, including a
+  drag interrupted by closing a modal. Chat and every interactive modal retain reporting;
+  shutdown leaves it disabled. Existing focus restoration remains intact.
+- PageUp/PageDown and Ctrl+Home/End retain their behavior, as do composer arrows and ordinary
+  Ctrl+C cancellation/exit. Existing distinguishable Ctrl+Shift+C handling remains ahead of
+  Ctrl+C, with no cancellation, exit, draft input or chat clipboard write. Indistinguishable raw
+  Ctrl+C bytes retain the existing policy. Neither `/copy` nor the removed chat-selection/
+  clipboard implementation was restored; Error Dialog's existing Copy details action is retained.
+- README now says: "To copy text, hold Shift while selecting it with your mouse, then press
+  Ctrl+Shift+C (or your terminal's copy shortcut)." Ordinary dragging is delivered to OpenTUI.
+  Architecture notes reflect application scrolling and terminal-native Shift selection.
+- No model, agent, tool, provider, streaming, Conversation, canonical history, Git inspection,
+  settings storage or persistence implementation changed.
+
+### Regression coverage and evidence boundaries
+
+- Added **11** native-renderer regression cases in `ChatScrolling.test.ts`. SGR input is simulated,
+  while the installed native renderer performs actual layout, hit testing, mouse capture,
+  viewport culling and scrolling. Assertions check both positions/content translation and rendered
+  messages, rather than only the reporting flag.
+- Cover wheel up/down through chat content; visible scrollbar track clicks; thumb dragging both
+  ways and outside its track across render frames at 70×24 and 32×12; keyboard pages/ends; draft,
+  focus and position preservation; resize; following streamed output at the bottom; staying on
+  older messages during live growth/commit; wheel/scrollbar use after completion.
+- Open/close model and session pickers, Settings, approval, Error Dialog and Workspace Changes.
+  Interrupt a live modal drag, then verify restored chat focus/position and functioning wheel and
+  scrollbar. Check overlay mouse routing does not scroll chat underneath. Existing modal tests
+  retain nested Settings/model/error focus, mouse actions, error/detail and Workspace Changes
+  scrolling, late-result fencing, Ctrl+C, Kitty/modifyOtherKeys Ctrl+Shift+C and shutdown cleanup.
+- Updated only obsolete reporting-disabled assertions in the existing mouse/Settings tests;
+  retained shutdown-disabled assertions and existing keyboard/cancellation contracts.
+- Focused native renderer run: **94 passed, 0 failed, 1,548 assertions across 7 files**.
+  Evidence: `/tmp/codesh-chat-scroll-focused.log`.
+- Controlled real-PTY smoke uses the actual renderer with the existing fake runtime and a mock
+  syntax parser, injecting SGR mouse and keyboard bytes through a real PTY. It performs no model
+  inference, provider requests, tool execution, session/settings disk writes or clipboard writes.
+  This verifies application behavior and terminal protocol output, rather than physical mouse
+  gestures or desktop clipboard integration.
+- Initial PTY runs reached the scrolling/modal/stream/copy-shortcut checks, then the temporary
+  observer read `composer.plainText` after shutdown and raised `EditBuffer is destroyed`.
+  Corrected only that observer to avoid destroyed-node access; final PTY result is recorded below.
+- Final controlled PTY smoke **passed**, exit code **0**, with **46** successful checks and **56**
+  state/frame captures. Verified wheel directions, scrollbar track click and out-of-track thumb
+  capture, keyboard pages/ends, all six modal lifecycles, nested error return to model picker,
+  approval/error/Workspace Changes detail scrolling, stream follow/older-message preservation,
+  post-stream scrolling, distinguishable Ctrl+Shift+C without exit, ordinary Ctrl+C shutdown,
+  and native mouse-mode enable/disable sequences on the PTY wire. Evidence:
+  `/tmp/codesh-chat-scroll-pty-evidence.json` and `/tmp/codesh-chat-scroll-pty.log`;
+  reproducible temporary harness: `/tmp/codesh-chat-scroll-pty.py` plus
+  `/tmp/codesh-chat-scroll-pty.ts`. No physical selection/copy result is inferred from this smoke.
+- **Manual Ptyxis acceptance: passed, reported by the user in this session.** The user confirmed
+  working scroll/mouse and scrollbar interaction, plus Shift + mouse selection followed by
+  Ctrl+Shift+C copying, in response to the requested check that Codesh stays open. This is manual
+  user-observed evidence, separate from the simulated native-renderer input and controlled PTY.
+
+### Required release validation
+
+| Command | Result | Evidence |
+| --- | --- | --- |
+| `bun test` | Passed: 1,323 tests, 0 failures, 9,234 assertions, 81 files | `/tmp/codesh-chat-scroll-test.log` |
+| `bun run typecheck` | Passed | `/tmp/codesh-chat-scroll-typecheck.log` |
+| `bun run format:check` | Passed: 219 files | `/tmp/codesh-chat-scroll-format-check.log` |
+| `bun run build:linux` | Passed | `/tmp/codesh-chat-scroll-build-linux.log` |
+| `bun run build:windows` | Passed, cross-build | `/tmp/codesh-chat-scroll-build-windows.log` |
+| `bun run smoke:build` | Passed | `/tmp/codesh-chat-scroll-smoke-build.log` |
+| `bun run release:check` | Passed: format/typecheck, all 1,323 tests, both builds, artifact smoke | `/tmp/codesh-chat-scroll-release-check.log` |
+| `git diff --check` | Passed, including final documentation | Working-tree check |
+
+Final documentation-only format and diff checks passed after recording these results. HEAD remains
+the fix baseline. This pre-release bugfix is complete; no commit, tag, publication or version change.
+Windows/macOS physical terminal interactions are not exercised by Linux tests or a Windows
+cross-build. The required manual Ptyxis checks are complete; no further phase is opened.

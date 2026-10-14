@@ -69,8 +69,8 @@ Essential shortcuts:
 - **PageUp / PageDown:** scroll history. **Ctrl+Home / Ctrl+End:** jump to its ends.
 - At an approval prompt, **y** allows the action; **n** or **Esc** denies it.
 
-Select chat text using your terminal's native selection and copy with its shortcut, commonly
-**Ctrl+Shift+C**. Terminal shortcuts may vary.
+To copy text, hold Shift while selecting it with your mouse, then press Ctrl+Shift+C (or your
+terminal's copy shortcut).
 
 Sessions are stored locally in `.agent/sessions/<session-id>/events.jsonl` inside each workspace.
 
