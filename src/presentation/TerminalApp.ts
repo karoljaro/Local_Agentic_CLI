@@ -318,10 +318,14 @@ export class TerminalApp {
 			width: '100%',
 			flexDirection: 'row',
 			flexShrink: 0,
-			marginY: entry.kind === 'user' || entry.kind === 'assistant' ? 1 : 0,
+			marginTop: entry.kind === 'user' || entry.kind === 'assistant' ? 1 : 0,
+			marginBottom: entry.kind === 'assistant' ? 1 : 0,
 			paddingLeft: entry.kind === 'user' ? 0 : 2,
 		});
 		if (entry.kind === 'user') {
+			// The prompt owns its separator, replacing the existing bottom margin.
+			node.border = ['bottom'];
+			node.borderColor = MUTED;
 			node.add(
 				new TextRenderable(this.renderer, {
 					content: '› ',
