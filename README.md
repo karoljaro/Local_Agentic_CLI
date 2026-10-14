@@ -3,7 +3,7 @@
 Codesh is a terminal coding agent powered by local models through Ollama. Chat with a model,
 inspect your workspace, and approve file changes or process execution from an OpenTUI interface.
 
-<!-- After adding docs/assets/codesh.png, replace this comment with: ![Codesh terminal interface](docs/assets/codesh.png) -->
+![Codesh terminal interface](docs/assets/codesh.png)
 
 ## Features
 
