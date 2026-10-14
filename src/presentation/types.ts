@@ -26,6 +26,7 @@ export type PresentationRuntime = Pick<
 	| 'subscribeSessionEvents'
 	| 'switchModel'
 	| 'workspacePath'
+	| 'workspaceChanges'
 >;
 export type TurnInput = Parameters<Runtime['runTurn']>[0];
 export type TurnOutput = ReturnType<Runtime['runTurn']>;

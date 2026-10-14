@@ -27,6 +27,8 @@ import type { SessionId } from '@/domain/Ids';
 import type { AgentEvent } from '@/domain/AgentEvent';
 import type { StoredSession } from '@/application/ports/SessionStorePort';
 import type { ModelSelectionState } from '@/application/services/ModelSelection';
+import type { WorkspaceChangesPort } from '@/application/ports/WorkspaceChangesPort';
+import { GitWorkspaceChanges } from '@/infrastructure/git/GitWorkspaceChanges';
 
 export type { RuntimeListModelsOptions } from '@/composition/model/OllamaModelRuntime';
 export type { AgentMetricsSnapshot } from '@/application/services/InMemoryAgentMetrics';
@@ -39,6 +41,7 @@ export type Runtime = {
 	readSessionPreviewEvents: (sessionId: SessionId) => Promise<AgentEvent[]>;
 	listSessions: () => Promise<StoredSession[]>;
 	workspacePath: string;
+	workspaceChanges: WorkspaceChangesPort;
 	getModelName: () => string | undefined;
 	getModelSelection: () => ModelSelectionState;
 	initializeModels: (signal?: AbortSignal) => Promise<ModelSelectionState>;
@@ -54,6 +57,7 @@ export type Runtime = {
 };
 
 export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
+	const workspacePath = process.cwd();
 	const sessionStore = new SessionService(new JsonlSessionStore());
 	const modelRuntime = new OllamaModelRuntime(config);
 	const idGenerator = new BunUuidV7IdGenerator();
@@ -118,7 +122,8 @@ export const createRuntime = (config: AppConfig = readConfig()): Runtime => {
 		},
 		readSessionPreviewEvents: (sessionId) => sessionStore.readPreviewEvents(sessionId),
 		listSessions: () => sessionStore.listSessions(),
-		workspacePath: process.cwd(),
+		workspacePath,
+		workspaceChanges: new GitWorkspaceChanges(workspacePath),
 		getModelName: () => modelRuntime.getModelName(),
 		getModelSelection: () => modelRuntime.getModelSelection(),
 		initializeModels: (signal) => modelRuntime.initialize(signal),

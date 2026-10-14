@@ -11,6 +11,11 @@ describe('commands', () => {
 			modelName: SYNTHETIC_MODEL,
 		});
 		expect(parseCommand('/resume')).toEqual({ type: 'resume-session' });
+		expect(parseCommand('/changes')).toEqual({ type: 'workspace-changes' });
+		expect(parseCommand('/changes extra')).toEqual({
+			type: 'invalid',
+			message: '/changes does not accept arguments.',
+		});
 		expect(parseCommand('normal prompt')).toBeNull();
 	});
 
@@ -19,7 +24,8 @@ describe('commands', () => {
 			type: 'invalid',
 			message: 'Unknown command: /missing',
 		});
-		expect(getCommandSuggestions('/')).toHaveLength(2);
+		expect(getCommandSuggestions('/')).toHaveLength(3);
+		expect(getCommandSuggestions('/cha').map((command) => command.name)).toEqual(['/changes']);
 		expect(getCommandSuggestions('/mo').map((command) => command.name)).toEqual(['/model']);
 		expect(getCommandSuggestions('/nothing')).toEqual([]);
 	});

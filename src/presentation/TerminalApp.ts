@@ -17,6 +17,7 @@ import { ApprovalPrompt } from './ApprovalPrompt';
 import { Conversation, type ConversationChange } from './Conversation';
 import { ModelPicker } from './ModelPicker';
 import { SessionPicker } from './SessionPicker';
+import { WorkspaceChangesView } from './WorkspaceChangesView';
 import { getCommandSuggestions, parseCommand } from './commands/commands';
 import type { TranscriptEntry } from './TranscriptLog';
 import type { PresentationRuntime, StartupMode } from './types';
@@ -40,7 +41,7 @@ export class TerminalApp {
 	private readonly suggestions: SelectRenderable;
 	private readonly syntax: SyntaxStyle;
 	private readonly committed: Renderable[] = [];
-	private picker: SessionPicker | ModelPicker | null = null;
+	private picker: SessionPicker | ModelPicker | WorkspaceChangesView | null = null;
 	private readonly pickerLoads = new Set<Promise<void>>();
 	private approval: ApprovalPrompt | null = null;
 	private cancelApproval: (() => void) | null = null;
@@ -164,7 +165,7 @@ export class TerminalApp {
 			textColor: RGBA.defaultForeground(),
 			focusedTextColor: RGBA.defaultForeground(),
 			cursorColor: ACCENT,
-			placeholder: 'Ask anything · /model · /resume',
+			placeholder: 'Ask anything · /model · /resume · /changes',
 			placeholderColor: MUTED,
 			keyBindings: [
 				{ name: 'return', action: 'submit' },
@@ -345,6 +346,9 @@ export class TerminalApp {
 			case 'resume-session':
 				this.openSessions();
 				break;
+			case 'workspace-changes':
+				this.openChanges();
+				break;
 			case 'switch-model':
 				void this.switchModel(command.modelName);
 				break;
@@ -407,6 +411,22 @@ export class TerminalApp {
 		this.showPicker();
 	}
 
+	private openChanges(): void {
+		if (
+			this.disposed ||
+			this.approval ||
+			this.conversation.running ||
+			this.conversation.loading ||
+			this.commandRequest
+		)
+			return;
+		this.closePicker();
+		this.picker = new WorkspaceChangesView(this.renderer, this.runtime.workspaceChanges, () =>
+			this.closePicker(),
+		);
+		this.showPicker();
+	}
+
 	private showPicker(): void {
 		if (!this.picker) return;
 		const load = this.picker.load;
@@ -422,6 +442,13 @@ export class TerminalApp {
 	}
 
 	private closePicker(): void {
+		if (this.picker instanceof WorkspaceChangesView) {
+			const picker = this.picker;
+			picker.close();
+			const cleanup = picker.whenIdle();
+			this.pickerLoads.add(cleanup);
+			void cleanup.finally(() => this.pickerLoads.delete(cleanup));
+		}
 		this.picker?.close();
 		this.picker = null;
 		if (!this.disposed && !this.approval) this.composer.focus();
@@ -438,6 +465,7 @@ export class TerminalApp {
 		if (key.name === 'escape') {
 			key.stopPropagation();
 			if (this.approval) this.approval.handleKey(key);
+			else if (this.picker instanceof WorkspaceChangesView) this.picker.handleKey(key);
 			else if (this.picker) {
 				this.commandRequest?.abort();
 				this.closePicker();
@@ -453,6 +481,10 @@ export class TerminalApp {
 			return;
 		}
 		if (this.picker) {
+			if (this.picker instanceof WorkspaceChangesView) {
+				if (this.picker.handleKey(key)) key.stopPropagation();
+				return;
+			}
 			if (this.commandRequest) {
 				key.stopPropagation();
 				return;

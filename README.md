@@ -7,7 +7,7 @@
 <br>
 
 > [!NOTE]
-> This CLI is intentionally in a simple MVP state. It does not include extra UI polish, rich tool timelines, diff previews, or settings yet. The focus is the simplest working local agent loop.
+> This CLI is intentionally in a simple MVP state. It does not include extra UI polish, rich tool timelines, approval diff previews, or settings yet. The focus is the simplest working local agent loop.
 
 Local Agentic CLI is a local terminal coding agent for Ollama models. It is an MVP focused on a simple working loop: chat with a local model, let the model inspect the current workspace, approve file edits, and persist the session as JSONL events.
 
@@ -368,9 +368,28 @@ Inside the chat:
 /model
 /model <ollama-model-name>
 /resume
+/changes
 ```
 
 `/model` opens the local Ollama model picker. `/model <name>` switches the model directly for subsequent turns. `/resume` opens the session picker.
+
+`/changes` opens **Workspace Changes** while chat is idle. The list shows current Git changes
+inside the workspace: the first status column is staged, the second is unstaged, `·` means no
+change in that column, and `??` means untracked. These are read-only snapshots of the workspace,
+with no attribution to a particular agent turn.
+
+Use ↑/↓, PageUp/PageDown, or Home/End to choose a file, then Enter to inspect its unified diff.
+Tab switches staged/unstaged when both exist; ↑/↓, PageUp/PageDown, and Home/End scroll the diff.
+R refreshes status and returns to the list, preserving the selected path if it still exists.
+Esc returns from the diff to the list, then to chat. Existing chat shortcuts are unchanged.
+Untracked files have no Git diff yet; binary and empty diffs show an explanation.
+
+Git must be available on PATH and support `--no-lazy-fetch`. Missing Git, non-repositories, and
+inspection errors leave chat usable. Lists stop at 1,000 entries; diff previews stop at 128 KiB
+or 2,000 lines and clearly show when incomplete. Each Git process has a 5-second timeout.
+Submodule changes, symlink diff paths, non-UTF-8 names/text, and repositories with configured
+content filters are unsupported; the view reports limitations instead of running configured
+commands or broadening the workspace scope.
 
 `F2` and `F3` also open the model and session pickers. Enter submits a prompt; Shift+Enter or Ctrl+J
 inserts a newline. Escape closes a picker, denies approval, or cancels the active response. PageUp

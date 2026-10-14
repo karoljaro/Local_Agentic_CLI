@@ -67,6 +67,10 @@ class ControlledTurn implements AsyncIterableIterator<TurnDelta> {
 class ControlledRuntime implements PresentationRuntime {
 	dispose(): void {}
 	readonly workspacePath = '/workspace';
+	readonly workspaceChanges: PresentationRuntime['workspaceChanges'] = {
+		status: async () => ({ entries: [], truncated: false }),
+		diff: async () => ({ text: '', truncated: false }),
+	};
 	readonly turns: ControlledTurn[] = [];
 	readonly listeners = new Set<(event: AgentEvent) => void>();
 	readonly loaded: AgentEvent[] = [];
@@ -761,6 +765,10 @@ const realRuntime = (
 		getModelSelection: () => ({ status: 'selected', modelName: SYNTHETIC_MODEL }),
 		initializeModels: async () => ({ status: 'selected', modelName: SYNTHETIC_MODEL }),
 		workspacePath: '/workspace',
+		workspaceChanges: {
+			status: async () => ({ entries: [], truncated: false }),
+			diff: async () => ({ text: '', truncated: false }),
+		},
 		listModels: async () => [],
 		listSessions: () => service.listSessions(),
 		listSessionEvents: (sessionId) => service.activateSession(sessionId),

@@ -1,0 +1,10 @@
+export const GIT_TIMEOUT_MS = 5_000;
+export const GIT_TERMINATION_GRACE_MS = 500;
+export const GIT_KILL_WAIT_MS = 2_000;
+export const GIT_PIPE_CLOSE_MS = 1_000;
+export const GIT_STATUS_BYTES = 512 * 1_024;
+export const GIT_DIFF_BYTES = 128 * 1_024;
+export const GIT_DIAGNOSTIC_BYTES = 4 * 1_024;
+export const GIT_METADATA_BYTES = 16 * 1_024;
+export const GIT_MAX_FILTERS = 128;
+export const GIT_MAX_ENTRIES = 1_000;

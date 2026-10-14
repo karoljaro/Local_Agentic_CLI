@@ -315,6 +315,96 @@ The composition runtime publishes a durable event only after its JSONL append su
 subscribes with an explicit cleanup function. Tool execution, model/provider access, session policy,
 approval consequences, and durable state remain outside presentation. No React or Ink renderer remains.
 
+### Read-only workspace Git inspection
+
+`/changes` uses the existing command registry and temporary OpenTUI modal lifecycle.
+`WorkspaceChangesView` owns native Select/ScrollBox presentation; `WorkspaceChangesState`
+owns one status snapshot, selected path, staged/unstaged view and one preview. Composition
+binds `WorkspaceChangesPort` to `GitWorkspaceChanges` at the same `workspacePath` used by chat.
+This port is exclusively user-facing: it is absent from `ModelPort`, `LocalToolRegistry`,
+`RunAgentTurn`, `ToolRunner`, approvals, and canonical JSONL events. All ten tools are unchanged.
+
+The infrastructure-only `BoundedGitProcess` accepts four fixed typed operations: repository
+discovery, content-filter name inspection, status, and per-file diff. It launches direct
+`Bun.spawn` argv with ignored stdin and separate pipes, without a shell or terminal. Commands are:
+
+```text
+git [fixed global flags] rev-parse --show-toplevel
+git [fixed global flags] config --null --name-only --get-regexp '^filter\..*\.(clean|smudge|process|required)$'
+git [fixed global flags] status --porcelain=v1 -z --untracked-files=all --ignore-submodules=all --renames -- .
+git [fixed global flags] diff [--cached] --patch --no-ext-diff --no-textconv --no-color --no-relative --ignore-submodules=all --find-renames --find-copies --unified=3 --src-prefix=a/ --dst-prefix=b/ -- <path> [<original-path>]
+```
+
+Fixed global flags include `--no-pager`, `--no-optional-locks`, `--literal-pathspecs`,
+`--no-lazy-fetch`, and `-c` overrides for `color.ui=false`, empty `core.fsmonitor` and
+`diff.external`, `core.untrackedCache=false`, `gc.auto=0`, `maintenance.auto=false`,
+`diff.renameLimit=1000`, `core.quotePath=true`, and denied Git protocols. Inherited `GIT_*`
+overrides are removed; fixed environment disables optional locks, lazy fetching, interactive
+prompts and system attributes, with C-locale diagnostics. No hooks, network, Git writes,
+external diff helpers, textconv or arbitrary commands are requested. Content-filter names
+are inspected before status/diff: configured filters cause an explicit unsupported-state
+error. Disabling clean conversion and calling the resulting raw comparison normal Git status
+would misrepresent clean filtered files, so no such comparison is published.
+
+Discovery runs from the canonical configured workspace. Ordinary repositories and `.git`
+files in linked worktrees are supported without assuming `.git` is a directory. The discovered
+worktree root must contain the workspace; status uses a literal `.` pathspec and its porcelain
+repository-relative paths are independently checked against the workspace prefix. Out-of-scope
+entries and cross-boundary rename/copy pairs are omitted with a scope notice, without publishing
+the outside paths. Diff paths are workspace-relative literal argv after `--`, including both
+in-scope endpoints only for a rename in the selected side. Copies and unstaged previews of
+staged renames inspect only the destination, avoiding unrelated source-file changes.
+Each component is checked before diff; symlink paths fail closed,
+while missing paths permit Git's deleted-file diff or a clear empty/stale result. Discovery is
+repeated before diff instead of trusting a previous root indefinitely. Repository metadata
+needed for discovery/index/blob access can reside outside the workspace in a normal worktree;
+unrelated working-tree paths and contents are never selected for inspection.
+
+Porcelain v1 `-z` preserves both status columns and parses rename/copy records as destination
+then source. Filename decoding is strict UTF-8; spaces, Unicode, tabs, newlines, option-like
+names and pathspec magic remain literal path identity. Presentation escapes terminal controls
+and directional overrides separately from raw paths. Unified headers, hunks, +/- and context
+lines stay literal, with existing accent/error/foreground colors and character wrapping.
+Untracked files have no content preview. Binary output is retained as Git's explanation,
+never fabricated text. Empty, unavailable and failed diffs direct the user to refresh.
+
+Resource limits are explicit:
+
+| Resource | Limit |
+| --- | --- |
+| Each Git child | 5,000 ms before termination |
+| Termination | SIGTERM, SIGKILL after 500 ms, 2,000 ms further settlement deadline |
+| Pipes after direct child exit | 1,000 ms, then reader cancellation and observation error |
+| Captured status stdout | 524,288 raw bytes |
+| Captured diff stdout | 131,072 raw bytes |
+| Captured stderr per command | 4,096 raw bytes |
+| Discovery/config stdout | 16,384 raw bytes; at most 128 distinct filter names |
+| Displayed changed-file entries | 1,000 |
+| Rendered selected diff | 131,072 UTF-8 bytes and 2,000 lines/style chunks |
+| Selected preview retention | One raw preview up to 131,072 UTF-8 bytes plus one bounded rendered preview; no file-preview cache |
+
+Both pipes drain after retention caps. Status truncation retains complete NUL records only;
+diff byte/line truncation is visibly incomplete, including persistent footer feedback while
+scrolling. An open/refresh or diff request performs at most three sequential bounded commands;
+its normal execution allowance is therefore at most 15 seconds plus bounded termination/pipe
+cleanup. Metadata truncation fails closed. Parsing, stored snapshots and rendering operate only
+on these bounded captures; native viewport culling and a single styled text owner avoid one
+renderable per diff line.
+
+Opening, Enter inspection, Tab switching and R refresh are user initiated. Selecting another
+file, returning from a diff, closing, superseding refresh and shutdown abort owned requests.
+AbortController identity checks fence every result against supersession and disposal, including
+adapters that resolve late. Chat shutdown awaits tracked inspection settlement before destroying
+the renderer. There is no polling, retry, durable Git record or change attribution.
+
+Inspection is a read-only, non-atomic snapshot: external edits can change Git state between
+status and diff. Path/config checks do not provide OS filesystem isolation against concurrent
+external replacements. Unsupported layouts fail closed; submodule changes are excluded rather
+than recursively inspecting another repository. Non-UTF-8 paths/text and symlink diff paths
+report limitations. Git must support `--no-lazy-fetch`; older incompatible versions receive
+bounded Git error feedback. Linux tests and a Windows cross-build do not establish native
+Windows subprocess or terminal behavior.
+
 ## Runtime Data
 
 Session data is stored under the workspace where the CLI is started:

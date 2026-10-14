@@ -373,6 +373,10 @@ describe('agent memory completion boundaries', () => {
 			getModelSelection: () => ({ status: 'selected', modelName: 'test-chat' }),
 			initializeModels: async () => ({ status: 'selected', modelName: 'test-chat' }),
 			workspacePath: '/workspace',
+			workspaceChanges: {
+				status: async () => ({ entries: [], truncated: false }),
+				diff: async () => ({ text: '', truncated: false }),
+			},
 			listModels: async () => [],
 			listSessions: () => h.sessions.listSessions(),
 			listSessionEvents: (id) => h.sessions.activateSession(id),

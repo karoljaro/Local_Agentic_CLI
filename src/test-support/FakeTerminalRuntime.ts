@@ -6,10 +6,15 @@ import type { PresentationRuntime, TurnDelta, TurnInput } from '@/presentation/t
 import { assistantMessageCompletedEvent, promptSubmittedEvent } from './AgentEventFixtures';
 import { SYNTHETIC_MODEL } from './modelFixtures';
 import type { ModelSelectionState } from '@/application/services/ModelSelection';
+import type { WorkspaceChangesPort } from '@/application/ports/WorkspaceChangesPort';
 
 export class FakeTerminalRuntime implements PresentationRuntime {
 	dispose(): void {}
 	readonly workspacePath = '/test-workspace';
+	workspaceChanges: WorkspaceChangesPort = {
+		status: async () => ({ entries: [], truncated: false }),
+		diff: async () => ({ text: '', truncated: false }),
+	};
 	readonly listeners = new Set<(event: AgentEvent) => void>();
 	readonly events = new Map<SessionId, AgentEvent[]>();
 	readonly turns: TurnInput[] = [];
